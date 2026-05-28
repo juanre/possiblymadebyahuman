@@ -42,6 +42,9 @@ COPY --from=web-builder --chown=pmbah:pmbah /app/apps/web/dist /app/web/dist
 COPY --from=site-builder --chown=pmbah:pmbah /site-public /app/site/public
 USER pmbah
 EXPOSE 8000
+# Render and similar platforms inject PORT at runtime and may not use 8000.
+# The HEALTHCHECK runs under /bin/sh in shell form, so ${PORT:-8000} expands
+# to the runtime port with a sensible fallback for local docker run.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-  CMD curl -fsS http://localhost:8000/ready >/dev/null || exit 1
+  CMD curl -fsS "http://localhost:${PORT:-8000}/ready" >/dev/null || exit 1
 CMD ["node", "apps/ingest-api/scripts/start-production.mjs"]
