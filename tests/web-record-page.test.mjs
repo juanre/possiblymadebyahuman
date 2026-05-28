@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { buildTimelinePoints, verifyRecordChain } from "../apps/web/src/record-utils.ts";
+import { buildTimelinePoints, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "../apps/web/src/record-utils.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -59,13 +59,79 @@ test("RecordPage source defines required public record sections without verdict 
     "VerificationPanel",
     "ChainVerificationButton",
     "ManifestDetails",
+    "ObservationStatusLine",
+    "ObservationCommitmentsList",
     "Edit timeline",
     "Analyzer signals as facts",
+    "Server observed checkpoints.",
+    "Partially observed.",
+    "Not observed.",
+    "No observation requested.",
+    "Server-observed commitments",
+    "Server-observed span:",
+    "Server metadata",
   ]) {
     assert.match(source, new RegExp(snippet));
   }
   assert.doesNotMatch(source, /percentage-human|certificate of humanity|humanness/i);
   assert.doesNotMatch(source, new RegExp(`\\b${["hon", "est"].join("")}(ly|y)?\\b`, "i"));
+});
+
+test("ObservationStatusLine source uses only public state names, never producer-core local names", async () => {
+  const source = await readFile("apps/web/src/components.tsx", "utf8");
+  // Public state values that MAY appear in user-facing strings, JSX class names,
+  // and discriminated-union case branches.
+  const publicStates = ["observed", "partial", "unobserved", "not_requested"];
+  for (const value of publicStates) {
+    assert.ok(source.includes(value), `components.tsx must reference public state ${value}`);
+  }
+  // Producer-core local-state name `diverged` is unique and must never reach the
+  // UI: by storage contract the public surface only carries observed / partial /
+  // unobserved / not_requested. (The other producer-core local names — known,
+  // unknown, disabled — overlap with normal English and a class/case guard is
+  // already enforced by the ObservationState TS union at the type boundary.)
+  assert.doesNotMatch(source, /["']diverged["']/, "components.tsx must not emit internal state name 'diverged'");
+  // Defence in depth: no observation case branches off producer-core local names.
+  for (const internal of ["known", "unknown", "disabled", "diverged"]) {
+    const switchPattern = new RegExp(`case\\s+["']${internal}["']`);
+    assert.doesNotMatch(source, switchPattern, `components.tsx must not branch on internal state name "${internal}"`);
+    const classPattern = new RegExp(`observation-status-${internal}`);
+    assert.doesNotMatch(source, classPattern, `components.tsx must not emit class observation-status-${internal}`);
+  }
+});
+
+test("docs page for server-observed commitments anchors the load-bearing span definition", async () => {
+  const docPath = "apps/site/content/docs/server-observed-commitments.md";
+  const body = await readFile(docPath, "utf8");
+  // Verbatim load-bearing definition required by the v5 wording sketch.
+  assert.ok(
+    body.includes("wall-clock distance between the first and last commitments — it does not count active typing, and it includes any idle gaps between commitments."),
+    "load-bearing span definition must appear verbatim",
+  );
+  // Honest-family ban (already enforced by tests/copy-audit.test.mjs but locked here too).
+  assert.doesNotMatch(body, new RegExp(`\\b${["hon", "est"].join("")}(ly|y)?\\b`, "i"));
+});
+
+test("ObservationStatusLine UI strings avoid positive-claim phrasings that would mislead", async () => {
+  // The UI surface (status line + commitments list) is short and has no
+  // negative-claim explanatory paragraphs, so a strict positive-claim ban is
+  // appropriate here. The long-form docs page uses the same words in negative
+  // form ("they are not a measurement of continuous typing") and is exercised
+  // by the load-bearing-sentence test above instead.
+  const source = await readFile("apps/web/src/components.tsx", "utf8");
+  const positiveClaims = [
+    /\bproof of authorship\b/i,
+    /\bcontinuous\s+typing\b/i,
+    /\btime\s+spent\s+writing\b/i,
+    /\bactive\s+writing\s+time\b/i,
+    /\bbadge\s+of\s+humanity\b/i,
+    /\bcertificate\s+of\s+humanity\b/i,
+    /\bhumanness\b/i,
+    /\bproves\b/i,
+  ];
+  for (const pattern of positiveClaims) {
+    assert.doesNotMatch(source, pattern, `components.tsx leaked overclaim: ${pattern}`);
+  }
 });
 
 test("CaptureContextSummary renders browser.title and emacs.major_mode when present", async () => {
@@ -98,6 +164,17 @@ test("edit timeline points track document length and markers", async () => {
   assert.equal(points[1].source, "paste");
   assert.equal(points[1].ins_len, 6);
   assert.equal(points.some((point) => point.isLargeInsert), false);
+});
+
+test("formatUtcMinute renders an ISO instant as 'YYYY-MM-DD HH:MM UTC'", () => {
+  assert.equal(formatUtcMinute("2026-05-28T14:02:11.000Z"), "2026-05-28 14:02 UTC");
+});
+
+test("formatServerObservedSpan rounds to seconds, minutes, then hours+minutes", () => {
+  assert.equal(formatServerObservedSpan(45_000), "45 seconds");
+  assert.equal(formatServerObservedSpan(1_964_000), "33 minutes");
+  assert.equal(formatServerObservedSpan(3_600_000), "1 hour");
+  assert.equal(formatServerObservedSpan(3_780_000), "1 hour 3 minutes");
 });
 
 test("edit timeline points preserve unknown process measurements", () => {

@@ -17,6 +17,7 @@ const requiredDocPages = [
   "threat-model.md",
   "conformance.md",
   "routing.md",
+  "server-observed-commitments.md",
 ];
 
 const sectionsCoveringProductPromise = [
@@ -29,6 +30,18 @@ const sectionsCoveringProductPromise = [
   { file: "docs/threat-model.md", needs: ["adversary", "Retype an AI draft", "hash chain detects any change"] },
   { file: "docs/conformance.md", needs: ["Canonicalization vectors", "Capability accuracy", "Content-opacity", "Capture-context preview"] },
   { file: "docs/routing.md", needs: ["/api/", "/docs/", "short_signature", "SITE_DIST_DIR"] },
+  {
+    file: "docs/server-observed-commitments.md",
+    needs: [
+      "Server observed checkpoints",
+      "Partially observed",
+      "Not observed",
+      "No observation requested",
+      "Server-observed span",
+      "wall-clock distance between the first and last commitments — it does not count active typing, and it includes any idle gaps between commitments.",
+      "after-the-fact fabrication materially more work",
+    ],
+  },
 ];
 
 const banVerdictPatterns = [

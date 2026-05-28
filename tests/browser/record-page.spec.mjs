@@ -56,4 +56,38 @@ test.describe("public record page", () => {
     await expect(verification).toContainText("Full record hash");
     await expect(verification).toContainText("Computed hash");
   });
+
+  test("observation status line shows public state copy without overclaim", async ({ page }) => {
+    const status = page.getByRole("region", { name: "Observation status" });
+    await expect(status).toContainText("Server observed checkpoints.");
+    await expect(status).toContainText("2026-05-28 14:02 UTC");
+    await expect(status).toContainText("2026-05-28 14:34 UTC");
+    await expect(status).toContainText("The last commitment covered the final 4 events.");
+    await expect(status).toContainText("Server-observed span: 33 minutes.");
+    const text = (await status.innerText()).toLowerCase();
+    for (const term of ["proof of authorship", "proves who", "active writing time", "continuous typing", "humanness"]) {
+      expect(text.includes(term), `observation status leaked overclaim: ${term}`).toBe(false);
+    }
+  });
+
+  test("server-observed commitments list discloses every chain tip via title attribute", async ({ page }) => {
+    const verification = page.locator("section.card", { hasText: "Verification" });
+    await expect(verification).toContainText("Server metadata");
+    await expect(verification).not.toContainText("Attestations");
+    const details = verification.locator("details.observation-commitments");
+    await details.locator("summary").click();
+    await expect(details).toContainText("4 server-observed commitments");
+    const items = details.locator(".observation-commitment");
+    await expect(items).toHaveCount(4);
+    await expect(items.first()).toContainText("1 event");
+    await expect(items.last()).toContainText("4 events");
+    // Truncated chain-tip display + full hash discoverable on hover via title attr.
+    const fullHash = "b3:7c4a000000000000000000000000000000000000000000000000000000000abc";
+    const titles = await items.locator(".commitment-chain").evaluateAll((els) => els.map((el) => el.getAttribute("title")));
+    expect(titles).toContain(fullHash);
+    // ISO instant must remain on the <time> element so screen readers and machine
+    // consumers get the canonical timestamp without relying on the truncated label.
+    const datetimes = await items.locator("time.utc-instant").evaluateAll((els) => els.map((el) => el.getAttribute("datetime")));
+    expect(datetimes).toContain("2026-05-28T14:34:55.000Z");
+  });
 });

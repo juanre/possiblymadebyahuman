@@ -63,3 +63,27 @@ export function formatDuration(ms: number): string {
 export function sourceClass(source: string): string {
   return `source-${source.replace(/[^a-z0-9_-]/gi, "-")}`;
 }
+
+export function formatUtcMinute(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const min = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd} ${hh}:${min} UTC`;
+}
+
+export function formatServerObservedSpan(ms: number): string {
+  if (ms < 60_000) {
+    const seconds = Math.max(1, Math.round(ms / 1000));
+    return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+  }
+  const totalMinutes = Math.round(ms / 60_000);
+  if (totalMinutes < 60) return `${totalMinutes} ${totalMinutes === 1 ? "minute" : "minutes"}`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  return `${hours} ${hours === 1 ? "hour" : "hours"} ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+}

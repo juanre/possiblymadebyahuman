@@ -91,7 +91,42 @@ const signals = [
   },
 ];
 
-const fixtureRecord = { manifest: record.manifest, events: record.events, stats, signals };
+const observation = {
+  state: "observed",
+  observed_session_id: "00000000-0000-4000-8000-0000aaaaaaaa",
+  commitments: [
+    {
+      checkpoint_id: "cp-1",
+      event_count: 1,
+      chain_tip: "b3:7c4a000000000000000000000000000000000000000000000000000000000abc",
+      observed_at: "2026-05-28T14:02:11.000Z",
+    },
+    {
+      checkpoint_id: "cp-2",
+      event_count: 2,
+      chain_tip: "b3:5183000000000000000000000000000000000000000000000000000000000def",
+      observed_at: "2026-05-28T14:09:42.000Z",
+    },
+    {
+      checkpoint_id: "cp-3",
+      event_count: 3,
+      chain_tip: "b3:2bd0000000000000000000000000000000000000000000000000000000000123",
+      observed_at: "2026-05-28T14:18:03.000Z",
+    },
+    {
+      checkpoint_id: "cp-4",
+      event_count: 4,
+      chain_tip: record.manifest.record_hash,
+      observed_at: "2026-05-28T14:34:55.000Z",
+    },
+  ],
+  checkpoint_count: 4,
+  first_observed_at: "2026-05-28T14:02:11.000Z",
+  last_observed_at: "2026-05-28T14:34:55.000Z",
+  server_observed_span_ms: 1_964_000,
+};
+
+const fixtureRecord = { manifest: record.manifest, events: record.events, stats, signals, observation };
 
 const server = createServer(async (req, res) => {
   try {

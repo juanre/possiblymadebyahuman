@@ -98,3 +98,33 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   cursor: pointer;
   padding: 10px 16px;
 }
+
+.observation-status {
+  border-top: 1px solid #eadfce;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+.observation-status-line { margin: 0; }
+.observation-status-line strong { color: #202124; margin-right: 4px; }
+.observation-status-observed { color: #44504a; }
+.observation-status-partial { color: #6e5631; }
+.observation-status-unobserved, .observation-status-not_requested { color: #5e554a; }
+.observation-span { margin: 6px 0 0; font-size: 0.92rem; }
+.utc-instant { font-variant-numeric: tabular-nums; }
+.observation-commitments summary { cursor: pointer; }
+.observation-commitments-list {
+  list-style: none;
+  padding: 6px 0 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.observation-commitment {
+  display: grid;
+  grid-template-columns: minmax(150px, 200px) minmax(70px, 110px) 1fr;
+  gap: 10px;
+  font-size: 0.9rem;
+  align-items: baseline;
+}
+.commitment-count { color: #675f56; }
+.commitment-chain { color: #514a40; overflow-wrap: anywhere; }

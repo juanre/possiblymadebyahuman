@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
-import { buildTimelinePoints, formatDuration, sourceClass, verifyRecordChain } from "./record-utils.ts";
+import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
+import { buildTimelinePoints, formatDuration, formatServerObservedSpan, formatUtcMinute, sourceClass, verifyRecordChain } from "./record-utils.ts";
 import type { RecordApiResponse } from "./types.ts";
 
 export function DisclaimerBanner() {
@@ -110,6 +111,7 @@ export function VerificationPanel({ record }: { record: RecordApiResponse }) {
       <h2>Verification</h2>
       <ChainVerificationButton onVerify={() => setVerification(verifyRecordChain(record))} ok={verification.ok} />
       <p className={verification.ok ? "ok" : "error"}>{verification.messages.join(" ")}</p>
+      <ObservationStatusLine record={record} />
       <ManifestDetails record={record} computedRecordHash={verification.computedRecordHash} />
     </section>
   );
@@ -117,6 +119,80 @@ export function VerificationPanel({ record }: { record: RecordApiResponse }) {
 
 export function ChainVerificationButton({ onVerify, ok }: { onVerify: () => void; ok: boolean }) {
   return <button className="verify-button" type="button" onClick={onVerify}>{ok ? "Re-verify chain" : "Retry verification"}</button>;
+}
+
+export function ObservationStatusLine({ record }: { record: RecordApiResponse }) {
+  const observation = record.observation;
+  const eventCount = record.manifest.event_count;
+  const statusCopy = observationStatusCopy(observation, eventCount);
+  return (
+    <section className="observation-status" aria-label="Observation status">
+      <p className={`observation-status-line observation-status-${observation.state}`}>
+        <strong>{statusCopy.headline}</strong> {statusCopy.body}
+      </p>
+      {observation.server_observed_span_ms !== null && observation.server_observed_span_ms > 0 ? (
+        <p className="observation-span muted">
+          Server-observed span: {formatServerObservedSpan(observation.server_observed_span_ms)}.
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+function observationStatusCopy(observation: RecordObservation, eventCount: number): { headline: string; body: React.ReactNode } {
+  switch (observation.state) {
+    case "observed": {
+      const first = observation.first_observed_at;
+      const last = observation.last_observed_at;
+      const lastCommitment = observation.commitments[observation.commitments.length - 1];
+      const coveredCount = lastCommitment?.event_count ?? eventCount;
+      return {
+        headline: "Server observed checkpoints.",
+        body: (
+          <>
+            The server received commitments to this event-chain across a span from{" "}
+            <UtcInstant iso={first} /> to <UtcInstant iso={last} />. The last commitment covered the final {coveredCount} {coveredCount === 1 ? "event" : "events"}.
+          </>
+        ),
+      };
+    }
+    case "partial": {
+      const first = observation.first_observed_at;
+      const last = observation.last_observed_at;
+      const lastCommitment = observation.commitments[observation.commitments.length - 1];
+      const covered = lastCommitment?.event_count ?? 0;
+      const gap = Math.max(0, eventCount - covered);
+      return {
+        headline: "Partially observed.",
+        body: (
+          <>
+            The server received commitments between <UtcInstant iso={first} /> and <UtcInstant iso={last} />.{" "}
+            {gap} {gap === 1 ? "event" : "events"} after the last commitment {gap === 1 ? "was" : "were"} not committed to the server.
+          </>
+        ),
+      };
+    }
+    case "unobserved":
+      return {
+        headline: "Not observed.",
+        body: "No server commitment was received for this session. The hash chain in this record is still verifiable in your browser; the server cannot confirm when it saw the editing process.",
+      };
+    case "not_requested":
+    default:
+      return {
+        headline: "No observation requested.",
+        body: "The producer that signed this record did not request server observation.",
+      };
+  }
+}
+
+function UtcInstant({ iso }: { iso: string | null }) {
+  if (!iso) return <span className="utc-instant unknown">unknown</span>;
+  return (
+    <time className="utc-instant" dateTime={iso} title={iso}>
+      {formatUtcMinute(iso)}
+    </time>
+  );
 }
 
 export function ManifestDetails({ record, computedRecordHash }: { record: RecordApiResponse; computedRecordHash?: string }) {
@@ -127,10 +203,43 @@ export function ManifestDetails({ record, computedRecordHash }: { record: Record
       {computedRecordHash && <><dt>Computed hash</dt><dd>{computedRecordHash}</dd></>}
       <dt>Producer</dt><dd>{manifest.producer.id} v{manifest.producer.version}</dd>
       <dt>Capabilities</dt><dd>{manifest.producer.capabilities.join(", ") || "none declared"}</dd>
-      <dt>Attestations</dt><dd>{manifest.ingested_server_t ? "server ingestion timestamp present" : "client-claimed time only"}</dd>
+      <dt>Server metadata</dt><dd>{manifest.ingested_server_t ? "ingestion time present" : "client-claimed time only"}</dd>
       <dt>Analyzer versions</dt><dd>{record.signals.map((signal) => `${signal.analyzer_id}@${signal.analyzer_version}`).join(", ") || "none"}</dd>
+      <dt>Server-observed commitments</dt><dd><ObservationCommitmentsList commitments={record.observation.commitments} state={record.observation.state} /></dd>
     </dl>
   );
+}
+
+export function ObservationCommitmentsList({ commitments, state }: { commitments: ObservationCommitment[]; state: RecordObservation["state"] }) {
+  if (commitments.length === 0) {
+    return state === "not_requested" ? <span className="muted">not requested</span> : <span className="muted">none</span>;
+  }
+  const summary = state === "partial"
+    ? `${commitments.length} server-observed commitments (partial)`
+    : `${commitments.length} server-observed ${commitments.length === 1 ? "commitment" : "commitments"}`;
+  return (
+    <details className="observation-commitments" data-state={state}>
+      <summary>{summary}</summary>
+      <ol className="observation-commitments-list">
+        {commitments.map((commitment) => (
+          <li key={commitment.checkpoint_id} className="observation-commitment">
+            <time className="utc-instant" dateTime={commitment.observed_at} title={commitment.observed_at}>
+              {formatUtcMinute(commitment.observed_at)}
+            </time>
+            <span className="commitment-count">
+              {commitment.event_count} {commitment.event_count === 1 ? "event" : "events"}
+            </span>
+            <span className="commitment-chain" title={commitment.chain_tip}>chain tip {truncateHash(commitment.chain_tip)}</span>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+function truncateHash(hash: string): string {
+  if (hash.length <= 14) return hash;
+  return `${hash.slice(0, 9)}…${hash.slice(-4)}`;
 }
 
 export function RecordPage({ record }: { record: RecordApiResponse }) {
