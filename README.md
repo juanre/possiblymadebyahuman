@@ -12,7 +12,7 @@ Release-readiness work is in progress. Implemented pieces include the content-bl
 
 ## Browser extension distribution prep
 
-Public v0 requires a real Chrome Web Store install path for the browser extension; do not publish placeholder or "coming soon" install links. Draft listing, privacy-disclosure, permission-justification, and human publisher checklists live in [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md). That document is preparatory only until the extension implementation, package artifact, human approval, and real Chrome Web Store URL exist.
+Public v0 requires a real Chrome Web Store install path for the browser extension; do not publish placeholder or "coming soon" install links. Packaging/release details live in [`docs/browser-extension-release.md`](docs/browser-extension-release.md). Draft listing, privacy-disclosure, permission-justification, and human publisher checklists live in [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md). Those documents are preparatory only until the extension implementation, package artifact, human approval, and real Chrome Web Store URL exist.
 
 ## Commands
 
@@ -28,6 +28,8 @@ make local-container-test  # full local Docker+Postgres HTTP e2e journey
 make local-container-down
 make build-site             # build the Hugo landing/docs into apps/site/public
 make dev-site               # run the Hugo dev server while editing the site (override port with SITE_PORT=...)
+make extension-build        # build the Chrome/Chromium extension into apps/browser-extension/dist
+make extension-package      # build deterministic Chrome/Chromium extension zip
 make test-web-browser       # build the record app and run the Playwright smoke
 ```
 
@@ -62,7 +64,7 @@ Migration posture is pgdbm-style but TypeScript-native: `schema_migrations` reco
 
 ## Release and Render deployment
 
-A pushed tag matching `v*` triggers `.github/workflows/release-image.yml`. The workflow builds the production Dockerfile for `linux/amd64` and `linux/arm64`, then pushes GHCR images under `ghcr.io/<owner>/<repo>` with these tags. The Makefile default `PROD_IMAGE` points at `ghcr.io/juanre/possiblymadebyahuman:latest`; forks should override `PROD_IMAGE=ghcr.io/<owner>/<repo>:<tag>` when validating or deploying.
+A pushed tag matching `v*` triggers `.github/workflows/release-image.yml`. The workflow builds the production Dockerfile for `linux/amd64` and `linux/arm64`, pushes GHCR images under `ghcr.io/<owner>/<repo>`, and uploads the deterministic browser-extension zip as a GitHub Actions artifact. The Makefile default `PROD_IMAGE` points at `ghcr.io/juanre/possiblymadebyahuman:latest`; forks should override `PROD_IMAGE=ghcr.io/<owner>/<repo>:<tag>` when validating or deploying.
 
 - full semver, for example `ghcr.io/juanre/possiblymadebyahuman:0.1.0`
 - major/minor, for example `:0.1`
@@ -76,6 +78,7 @@ make release-ready                         # checks + browser smoke + release im
 make ship-tag VERSION=0.1.0                # runs release-ready, tags v0.1.0, pushes the tag
 make release-build-image RELEASE_IMAGE=possiblymadebyahuman-local
 make release-build-image-nocache RELEASE_IMAGE=possiblymadebyahuman-local
+make extension-package                    # writes apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip
 ```
 
 Render setup:

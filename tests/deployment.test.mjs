@@ -38,6 +38,8 @@ test("Makefile is the primary management surface", async () => {
     "dev-api",
     "dev-web",
     "dev-site",
+    "extension-build",
+    "extension-package",
     "docker-build",
     "release-build-image",
     "release-build-image-nocache",
@@ -98,6 +100,10 @@ test("tag-trigger GHCR release workflow follows the release-image pattern", asyn
   assert.match(workflow, /docker\/build-push-action@v6/);
   assert.match(workflow, /platforms: linux\/amd64,linux\/arm64/);
   assert.match(workflow, /file: Dockerfile/);
+  assert.match(workflow, /Build browser extension package/);
+  assert.match(workflow, /make extension-package/);
+  assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(workflow, /apps\/browser-extension\/dist\/possiblymadebyahuman-extension-\*\.zip/);
 });
 
 test("production env files remain ignored and untracked", async () => {
@@ -121,10 +127,30 @@ test("release docs cover Render, GHCR, tags, Neon, and startup migrations", asyn
   }
 });
 
-test("Chrome Web Store prep docs define human checklist without fake install links", async () => {
+test("browser extension release docs define package artifact and store plan", async () => {
   const readme = await read("README.md");
+  assert.match(readme, /docs\/browser-extension-release\.md/);
   assert.match(readme, /docs\/chrome-web-store-prep\.md/);
   assert.match(readme, /do not publish placeholder or "coming soon" install links/);
+  assert.match(readme, /make extension-package/);
+
+  const release = await read("docs/browser-extension-release.md");
+  for (const phrase of [
+    "make extension-package",
+    "possiblymadebyahuman-extension-<version>.zip",
+    "EXT_BASE_URL",
+    "esbuild",
+    "source maps",
+    "Chrome Web Store manual publishing path",
+    "Optional Chrome Web Store API automation",
+    "Edge Add-ons path",
+    "Firefox AMO path",
+    "Safari/App Store distribution is out of scope",
+    "Do not publish install links until Chrome Web Store approval produces a real URL",
+  ]) {
+    assert.match(release, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.doesNotMatch(release, /chromewebstore\.google\.com\/detail\/[a-z0-9_-]+/i);
 
   const prep = await read("docs/chrome-web-store-prep.md");
   for (const phrase of [
