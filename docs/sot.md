@@ -45,6 +45,7 @@ packages/
   conformance/
   analyzers/
   storage/
+  producer-core/
 
 apps/
   ingest-api/
@@ -132,6 +133,27 @@ Rules:
 - Missing required capabilities returns `applicable: false`, not a penalty.
 - Output is descriptive facts and explanations only.
 - No aggregate humanness score.
+
+### 3.3.x `packages/producer-core`
+
+Shared browser-side producer kernel consumed by both `apps/browser-extension` (default-aaaa.7) and the first-party `/write` page (default-aaaa.28).
+
+Owns:
+
+- per-field session identity, certainty (`fresh` / `resumed` / `degraded` / `collision`) and registry
+- wall-clock-anchored event timeline (idle gaps preserved)
+- content-blind manifest construction via `packages/format`
+- session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
+- capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
+- TTL sweep
+- adapter interfaces (`StorageAdapter`, `UploadAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`)
+
+Does not own:
+
+- DOM observation, `chrome.*`, `window.*`, `document.*`
+- Plaintext (callers compute `final_text_hash` locally and hand `{length, hash}` to `sign`)
+- Full replay verification (consumer concern via `packages/format.verifyRecord` with a `getInsertedText` provider)
+- Listing/store copy or browser packaging
 
 ### 3.4 `packages/storage`
 
