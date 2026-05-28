@@ -66,6 +66,7 @@ test("reserved-prefix hashes deterministically get a safe rescued short signatur
     "b3:8b8a680e94bd0e43419b3f6ac755c2169aa29fb67c485a7b6845c9cc81651f0c",
     store,
   );
+  assert.equal(signature, "XAPi5VHjgR");
   assert.equal(signature.startsWith("X"), true);
   assert.equal(isReservedShortSignature(signature), false);
 });

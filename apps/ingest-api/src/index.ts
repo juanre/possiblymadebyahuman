@@ -27,6 +27,8 @@ export const INGEST_API_APP = "@possiblymadebyahuman/ingest-api";
 export const DEFAULT_BASE_URL = "https://possiblymadebyahuman.com";
 export const DEFAULT_IDLE_THRESHOLD_MS = ANALYZER_DEFAULT_IDLE_THRESHOLD_MS;
 export const DEFAULT_SHORT_SIGNATURE_LENGTH = 10;
+// Reserved route collisions use a deterministic leading-X rescue candidate in generateShortSignature.
+// Do not reserve x/X as a route prefix unless the rescue strategy is changed at the same time.
 export const RESERVED_ROUTE_PREFIXES = ["api", "docs", "blog", "assets", "record-assets", "health", "ready", "live"] as const;
 
 export type IngestApiOptions = {
