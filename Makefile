@@ -1,4 +1,4 @@
-.PHONY: help install check test typecheck dev-api dev-web dev-site docker-build release-build-image release-build-image-nocache local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser release-ready ship-tag
+.PHONY: help install check test typecheck dev-api dev-web dev-site docker-build release-build-image release-build-image-nocache local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser build-site release-ready ship-tag
 
 ENV_FILE ?= .env.local-container
 PROD_ENV_FILE ?= .env.localprod
@@ -34,6 +34,7 @@ help:
 	@echo "  make prod-container-migrate Run migrations against external Neon DATABASE_URL"
 	@echo "  make prod-container-down   Stop prod-like stack"
 	@echo "  make test-web-browser      Build web app and run Playwright smoke for the record page"
+	@echo "  make build-site            Build the Hugo landing/docs/blog into apps/site/public"
 	@echo "  make release-ready         Run release readiness checks and build a release image"
 	@echo "  make ship-tag VERSION=X.Y.Z Run release-ready, tag vX.Y.Z, and push tag"
 	@echo "  make clean                 Remove safe local build/test output"
@@ -128,11 +129,16 @@ test-web-browser:
 	npm run build:web
 	npm run test:web-browser
 
+build-site:
+	command -v hugo >/dev/null || (echo "hugo is required for build-site" && exit 1)
+	hugo --source apps/site --destination public --minify
+
 release-ready:
 	git diff --quiet
 	git diff --cached --quiet
 	$(MAKE) check
 	$(MAKE) test-web-browser
+	$(MAKE) build-site
 	$(MAKE) release-build-image RELEASE_IMAGE=possiblymadebyahuman-release-ready
 	@echo "Release-ready checks passed. Next: make ship-tag VERSION=x.y.z after human approval."
 

@@ -22,6 +22,9 @@ make docker-build
 make local-container
 make local-container-test  # full local Docker+Postgres HTTP e2e journey
 make local-container-down
+make build-site             # build the Hugo landing/docs/blog into apps/site/public
+make dev-site               # run the Hugo dev server while editing the site
+make test-web-browser       # build the record app and run the Playwright smoke
 ```
 
 Equivalent npm checks remain available:
@@ -55,7 +58,7 @@ Migration posture is pgdbm-style but TypeScript-native: `schema_migrations` reco
 
 ## Release and Render deployment
 
-A pushed tag matching `v*` triggers `.github/workflows/release-image.yml`. The workflow builds the production Dockerfile for `linux/amd64` and `linux/arm64`, then pushes GHCR images under `ghcr.io/<owner>/<repo>` with these tags:
+A pushed tag matching `v*` triggers `.github/workflows/release-image.yml`. The workflow builds the production Dockerfile for `linux/amd64` and `linux/arm64`, then pushes GHCR images under `ghcr.io/<owner>/<repo>` with these tags. The Makefile default `PROD_IMAGE` points at `ghcr.io/juanre/possiblymadebyahuman:latest`; forks should override `PROD_IMAGE=ghcr.io/<owner>/<repo>:<tag>` when validating or deploying.
 
 - full semver, for example `ghcr.io/juanre/possiblymadebyahuman:0.1.0`
 - major/minor, for example `:0.1`

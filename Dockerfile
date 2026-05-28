@@ -44,4 +44,4 @@ USER pmbah
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -fsS http://localhost:8000/ready >/dev/null || exit 1
-CMD ["npm", "run", "start:production"]
+CMD ["node", "apps/ingest-api/scripts/start-production.mjs"]

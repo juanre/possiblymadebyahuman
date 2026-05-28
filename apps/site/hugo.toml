@@ -2,3 +2,8 @@ baseURL = 'https://possiblymadebyahuman.com/'
 locale = 'en-US'
 title = 'possiblymadebyahuman'
 disableKinds = ['taxonomy', 'term', 'RSS', 'sitemap', 'robotsTXT']
+
+[markup]
+  [markup.goldmark]
+    [markup.goldmark.renderer]
+      unsafe = true

@@ -1,13 +1,14 @@
 {{ define "main" }}
-  <p class="eyebrow">{{ .Section | humanize }}</p>
+  <p class="eyebrow">Blog</p>
   <h1>{{ .Title }}</h1>
   {{ .Content }}
-  {{ $pages := .Pages }}
-  {{ if $pages }}
+  {{ $posts := .Pages.ByDate.Reverse }}
+  {{ if $posts }}
     <ul class="page-list">
-      {{ range $pages.ByTitle }}
+      {{ range $posts }}
         <li>
           <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+          {{ with .Date }}<div class="summary"><time datetime="{{ .Format "2006-01-02" }}">{{ .Format "January 2, 2006" }}</time></div>{{ end }}
           {{ with .Params.summary }}<div class="summary">{{ . }}</div>{{ end }}
         </li>
       {{ end }}

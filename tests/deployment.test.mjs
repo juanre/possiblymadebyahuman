@@ -14,7 +14,7 @@ test("deployment files define single-container and local Postgres paths", async 
   assert.match(dockerfile, /COPY --from=web-builder/);
   assert.match(dockerfile, /COPY --from=site-builder/);
   assert.match(dockerfile, /HEALTHCHECK/);
-  assert.match(dockerfile, /CMD \["npm", "run", "start:production"\]/);
+  assert.match(dockerfile, /CMD \["node", "apps\/ingest-api\/scripts\/start-production\.mjs"\]/);
 
   const localCompose = await read("docker-compose.local-container.yml");
   assert.match(localCompose, /postgres:16-alpine/);
@@ -50,6 +50,7 @@ test("Makefile is the primary management surface", async () => {
     "prod-container-pull",
     "prod-container-migrate",
     "prod-container-down",
+    "build-site",
     "release-ready",
     "ship-tag",
     "clean",

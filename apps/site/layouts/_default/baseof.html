@@ -3,19 +3,44 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ .Title }} · possiblymadebyahuman</title>
+    <title>{{ if .IsHome }}possiblymadebyahuman{{ else }}{{ .Title }} · possiblymadebyahuman{{ end }}</title>
+    <meta name="description" content="A content-blind writing-record service. Not a detector. Not a certificate of humanity.">
     <style>
-      body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #202124; background: #fbf8f2; }
-      main { max-width: 760px; margin: 0 auto; padding: 12vh 24px; }
+      :root { color-scheme: light; }
+      body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #202124; background: #fbf8f2; line-height: 1.55; }
+      main { max-width: 760px; margin: 0 auto; padding: 8vh 24px 12vh; }
       a { color: #8b5e34; }
-      nav { margin-bottom: 2rem; }
-      nav a { margin-right: 1rem; }
+      h1 { font-size: 2.4rem; margin-bottom: 0.25rem; }
+      h2 { margin-top: 2.4rem; }
+      h3 { margin-top: 1.6rem; }
+      p, li { font-size: 1.02rem; }
+      code { background: #f1ebdb; padding: 0.1em 0.35em; border-radius: 4px; }
+      pre code { display: block; padding: 0.75rem 1rem; overflow-x: auto; }
+      blockquote { border-left: 4px solid #d8c8a6; margin: 1.4rem 0; padding: 0.6rem 1rem; background: #f5efde; color: #4a3a23; }
+      nav.site-nav { display: flex; gap: 1.2rem; margin-bottom: 2.4rem; font-size: 0.95rem; }
+      nav.site-nav a { color: #5a432a; text-decoration: none; border-bottom: 1px solid transparent; }
+      nav.site-nav a:hover, nav.site-nav a:focus { border-bottom-color: #8b5e34; }
+      .eyebrow { letter-spacing: 0.16em; text-transform: uppercase; font-size: 0.78rem; color: #7a6442; margin-bottom: 0.4rem; }
+      .standing-claim { background: #f5efde; border-left: 4px solid #8b5e34; padding: 1rem 1.2rem; margin: 2rem 0; border-radius: 4px; }
+      .page-list { list-style: none; padding: 0; margin: 1.6rem 0; }
+      .page-list li { margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #ead9b8; }
+      .page-list li:last-child { border-bottom: none; }
+      .page-list a { font-size: 1.08rem; font-weight: 600; }
+      .page-list .summary { color: #4a3a23; margin-top: 0.25rem; }
+      footer { margin-top: 6rem; padding-top: 1.4rem; border-top: 1px solid #ead9b8; color: #7a6442; font-size: 0.88rem; }
     </style>
   </head>
   <body>
     <main>
-      <nav><a href="/">Home</a><a href="/docs/">Docs</a><a href="/blog/">Blog</a></nav>
+      <nav class="site-nav" aria-label="Site sections">
+        <a href="/">Home</a>
+        <a href="/docs/">Docs</a>
+        <a href="/blog/">Blog</a>
+      </nav>
       {{ block "main" . }}{{ end }}
+      <footer>
+        <p>possiblymadebyahuman is a content-blind writing-record service. It is not a detector, score, badge, or certificate of humanity.</p>
+      </footer>
     </main>
   </body>
 </html>
