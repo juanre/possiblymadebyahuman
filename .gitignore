@@ -1,9 +1,25 @@
 node_modules/
+**/node_modules/
 dist/
 coverage/
 .DS_Store
+npm-debug.log*
+
+# Local aweb/runtime state
+.aw/
+
+# Real env/local-dev files; examples below are allowed except .env.dev examples.
 .env
 .env.*
+!.env.local-container.example
+!.env.localprod.example
+!.env.production.example
+.env.dev
+.env.dev*
+.dev
+*.dev
 
-AGENTS.md
-CLAUDE.md
+# Build outputs/caches
+apps/web/dist/
+apps/site/public/
+apps/site/.hugo_build.lock

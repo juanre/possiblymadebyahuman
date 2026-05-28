@@ -21,6 +21,7 @@ export const INGEST_API_APP = "@possiblymadebyahuman/ingest-api";
 export const DEFAULT_BASE_URL = "https://possiblymadebyahuman.com";
 export const DEFAULT_IDLE_THRESHOLD_MS = 30_000;
 export const DEFAULT_SHORT_SIGNATURE_LENGTH = 10;
+export const RESERVED_ROUTE_PREFIXES = ["api", "docs", "blog", "assets", "record-assets", "health", "ready", "live"] as const;
 
 export type IngestApiOptions = {
   store: RecordStore;
@@ -189,12 +190,21 @@ export async function generateShortSignature(
   initialLength = DEFAULT_SHORT_SIGNATURE_LENGTH,
 ): Promise<string> {
   const encoded = base58Encode(b3HashToBytes(recordHash));
-  for (let length = initialLength; length <= encoded.length; length += 1) {
-    const candidate = encoded.slice(0, length);
-    const existing = await store.findByShortSignature(candidate);
-    if (!existing || existing.manifest.record_hash === recordHash) return candidate;
+  const candidates = [encoded, `X${encoded}`];
+  for (const candidateSource of candidates) {
+    for (let length = initialLength; length <= candidateSource.length; length += 1) {
+      const candidate = candidateSource.slice(0, length);
+      if (isReservedShortSignature(candidate)) continue;
+      const existing = await store.findByShortSignature(candidate);
+      if (!existing || existing.manifest.record_hash === recordHash) return candidate;
+    }
   }
   throw new Error("could not generate unique short signature");
+}
+
+export function isReservedShortSignature(candidate: string): boolean {
+  const lower = candidate.toLowerCase();
+  return RESERVED_ROUTE_PREFIXES.some((reserved) => lower.startsWith(reserved));
 }
 
 export function toGetRecordResponse(stored: StoredRecord): GetRecordResponse {

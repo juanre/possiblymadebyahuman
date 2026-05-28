@@ -1,0 +1,4 @@
+baseURL = 'https://possiblymadebyahuman.com/'
+locale = 'en-US'
+title = 'possiblymadebyahuman'
+disableKinds = ['taxonomy', 'term', 'RSS', 'sitemap', 'robotsTXT']

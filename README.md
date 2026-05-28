@@ -12,6 +12,20 @@ M2: ingestion API, immutable storage abstractions, Postgres schema, record stats
 
 ## Commands
 
+The Makefile is the main management surface:
+
+```bash
+make help
+make install
+make check
+make docker-build
+make local-container
+make local-container-test  # full local Docker+Postgres HTTP e2e journey
+make local-container-down
+```
+
+Equivalent npm checks remain available:
+
 ```bash
 npm install
 npm run typecheck

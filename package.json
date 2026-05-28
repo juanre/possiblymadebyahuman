@@ -1,7 +1,7 @@
 {
   "name": "possiblymadebyahuman",
   "version": "0.1.0",
-  "description": "Content-blind writing-record format, conformance suite, and ingest foundation.",
+  "description": "Content-blind writing-record format, conformance suite, ingest foundation, and container stack.",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -11,12 +11,25 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.mjs",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "build:web": "npm --workspace @possiblymadebyahuman/web run build",
+    "migrate": "node apps/ingest-api/scripts/migrate.mjs",
+    "serve": "node apps/ingest-api/src/server.ts",
+    "smoke:local-container": "node scripts/smoke-local-container.mjs"
   },
   "devDependencies": {
+    "@types/pg": "^8.20.0",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@noble/hashes": "^2.2.0"
-  }
+    "@noble/hashes": "^2.2.0",
+    "@vitejs/plugin-react": "^6.0.2",
+    "pg": "^8.21.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "vite": "^8.0.14"
+  },
+  "license": "MIT"
 }

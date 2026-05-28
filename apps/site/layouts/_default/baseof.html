@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ .Title }} · possiblymadebyahuman</title>
+    <style>
+      body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #202124; background: #fbf8f2; }
+      main { max-width: 760px; margin: 0 auto; padding: 12vh 24px; }
+      a { color: #8b5e34; }
+      nav { margin-bottom: 2rem; }
+      nav a { margin-right: 1rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav><a href="/">Home</a><a href="/docs/">Docs</a><a href="/blog/">Blog</a></nav>
+      {{ block "main" . }}{{ end }}
+    </main>
+  </body>
+</html>

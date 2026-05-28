@@ -11,5 +11,6 @@
   "dependencies": {
     "@possiblymadebyahuman/format": "0.1.0",
     "@possiblymadebyahuman/storage": "0.1.0"
-  }
+  },
+  "license": "MIT"
 }

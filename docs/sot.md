@@ -403,12 +403,15 @@ Delay distribution guidance:
 
 Use **Postgres** for v0 hosted backend.
 
+Production Postgres will be **Neon.tech**. Local container testing must use a real Postgres container, not only in-memory storage, before any deploy/release decision.
+
 Reasons:
 
 - JSONB support for manifests/events/signals.
 - Simple immutable record indexing.
 - Good enough for v0 and production growth.
 - Avoids premature object-storage split.
+- Neon gives managed Postgres while preserving a standard Postgres development/test surface.
 
 If event logs become too large later, raw events can move to object storage while Postgres remains the index.
 
@@ -486,7 +489,7 @@ created_at                          timestamptz not null default now()
 
 ```text
 id                       uuid primary key
-record_hash              text references records(record_hash) on delete cascade
+record_hash              text not null references records(record_hash) on delete cascade
 
 analyzer_id              text not null
 analyzer_version         text not null
@@ -527,8 +530,12 @@ Strategy:
 Routing priority:
 
 1. `/api/*` -> backend
-2. `/`, `/docs/*`, `/blog/*` -> Hugo static site
-3. `/<short_signature>` -> Vite React record app
+2. Runtime/health routes such as `/health` or `/ready`, if present -> backend
+3. `/`, `/docs/*`, `/blog/*` -> Hugo static site
+4. Static assets for the Hugo site and Vite app -> static file serving
+5. `/<short_signature>` -> Vite React record app
+
+Reserved route prefixes/paths must not be emitted as short signatures: `api`, `docs`, `blog`, `assets`, `record-assets`, `health`, `ready`, `live`, and any future static/runtime prefix.
 
 ---
 
@@ -619,7 +626,9 @@ Still content-blind.
 
 ### 10.3 `GET /api/health`
 
-Basic deployment health.
+Basic deployment health for the API.
+
+The production container may additionally expose root-level `/health` and `/ready` endpoints for load balancers. They should check at least process liveness and database connectivity; readiness should fail when migrations are missing or the database is unavailable.
 
 ---
 
@@ -679,6 +688,12 @@ The public service should not render text. Instead, replay visualizes structure:
 
 Future private/content-bearing deployments may render text, but that is out of scope for public v0.
 
+Build/deploy note:
+
+- The Vite app is bundled into the same production Docker image as the API and Hugo site.
+- The record app is served for `/<short_signature>` routes.
+- Configure Vite's asset base so its JS/CSS assets do not collide with Hugo assets; preferred reserved prefix: `/record-assets/`.
+
 ---
 
 ## 12. Frontend: Hugo site
@@ -707,6 +722,12 @@ Docs should include:
 - privacy model
 - producer conformance
 - threat model
+
+Build/deploy note:
+
+- Unlike the sister `aweb-cloud` project, the Hugo landing/docs/blog site is not deployed as a separate static surface for v0.
+- Hugo output must be included in the same production Docker image as the API and Vite record app.
+- The container serves Hugo for `/`, `/docs/*`, and `/blog/*`, while preserving `/<short_signature>` for record pages.
 
 ---
 
@@ -763,7 +784,115 @@ UX:
 
 ---
 
-## 14. Milestones
+## 14. Deployment architecture
+
+Deploy the public service as a **single Docker container** containing:
+
+1. the Node/TypeScript ingestion API/runtime;
+2. the built Vite React record app;
+3. the built Hugo landing/docs/blog site.
+
+This follows the sister-project pattern in `~/prj/awebai/aweb-cloud`:
+
+- multi-stage Dockerfile for deterministic builds;
+- Makefile targets for local container, prod-like container, migrations, and shutdown;
+- `.env.*.example` files with explicit required values;
+- local Docker Compose stack for app + real Postgres;
+- production/prod-like Compose path that uses an external managed database.
+
+Important difference from `aweb-cloud`:
+
+- `possiblymadebyahuman` has no Redis/worker/auth stack in v0.
+- The Hugo landing page is included in the same container rather than being deployed separately.
+
+### 14.1 Container responsibilities
+
+The runtime container should:
+
+- listen on `0.0.0.0:${PORT:-8000}`;
+- expose `/api/*` API routes;
+- expose health/readiness routes for container/load-balancer checks;
+- serve Hugo static output for `/`, `/docs/*`, and `/blog/*`;
+- serve Vite record-app assets from a reserved prefix such as `/record-assets/*`;
+- serve the Vite record app shell for `/<short_signature>`;
+- never serve source files, local env files, tests, `.aw/`, or unbuilt workspace internals.
+
+Recommended runtime environment variables:
+
+```text
+PORT=8000
+DATABASE_URL=postgresql://...
+PUBLIC_BASE_URL=https://possiblymadebyahuman.com
+NODE_ENV=production
+LOG_LEVEL=info
+```
+
+### 14.2 Docker/build files
+
+Add deployment files before release readiness:
+
+```text
+Dockerfile
+.dockerignore
+docker-compose.local-container.yml
+docker-compose.prod.yml
+.env.local-container.example
+.env.localprod.example
+.env.production.example
+Makefile
+```
+
+Expected Makefile targets should cover most day-to-day management work, similar to `aweb-cloud`:
+
+```text
+make help                  # list targets and ports
+make install               # install workspace dependencies
+make check                 # typecheck + tests + conformance
+make test                  # tests only
+make typecheck             # TypeScript typecheck only
+make dev-api               # run API locally against DATABASE_URL
+make dev-web               # run Vite record app dev server if needed
+make dev-site              # run Hugo dev server if needed
+make docker-build          # build the single production image
+make local-container       # build image, start app + local Postgres, run migrations, wait for health
+make local-container-down  # stop local stack
+make local-container-logs  # tail local container logs
+make local-container-test  # run HTTP ingest/readback smoke test against local container
+make migrate               # run migrations against DATABASE_URL
+make prod-container        # run built/published image locally against external Neon DATABASE_URL
+make prod-container-migrate
+make prod-container-down
+make clean                 # remove local build/test output where safe
+```
+
+The Makefile should be the primary operator interface for local development, container smoke tests, migration runs, and prod-like Neon checks.
+
+### 14.3 Local real-Postgres test
+
+A local Docker Compose path with `postgres:16-alpine` is required. It should:
+
+- start Postgres with a persistent named volume;
+- run migrations against that Postgres;
+- start the application container;
+- verify `/api/health` and/or `/ready`;
+- run at least one ingest/readback smoke test through the real HTTP API and Postgres path.
+
+This is the preferred way to close the current live-Postgres test gap. In-memory storage is still useful for fast unit tests, but it is not sufficient for deployment readiness.
+
+### 14.4 Production database
+
+Production uses Neon.tech Postgres via `DATABASE_URL`.
+
+Rules:
+
+- Do not bake database credentials into the image.
+- Keep `.env.production` out of git; only commit `.env.production.example`.
+- Migration execution should be explicit (`make prod-container-migrate` or equivalent) rather than hidden behind record-page traffic.
+- The app should fail readiness if it cannot connect to Neon or if required migrations are absent.
+
+---
+
+## 15. Milestones
 
 ### M0 — architecture/scaffold
 
@@ -791,6 +920,14 @@ UX:
 - Implement `POST /api/records`.
 - Implement `GET /api/records/:id`.
 - Implement stats computation.
+
+### M2.x — Docker/local real-Postgres deployment foundation
+
+- Add Dockerfile, .dockerignore, Docker Compose, env examples, and Makefile targets modeled after `aweb-cloud` but simplified for this app.
+- Build one runtime image containing API + Vite record app + Hugo landing/docs/blog output.
+- Add local container stack with real Postgres and migration execution.
+- Add smoke/integration test proving ingest/readback through the container against real Postgres.
+- Add prod-like path for running the same image against external Neon `DATABASE_URL`.
 
 ### M3 — analyzers
 
@@ -830,7 +967,7 @@ UX:
 
 ---
 
-## 15. Implementation guardrails
+## 16. Implementation guardrails
 
 - Do not add user management in v0.
 - Do not add deletion API in v0.
@@ -844,7 +981,7 @@ UX:
 
 ---
 
-## 16. When a bigger team helps
+## 17. When a bigger team helps
 
 Current coordinator/developer/reviewer is enough for M0–M2.
 

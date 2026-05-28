@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { createIngestApi } from "../apps/ingest-api/src/index.ts";
+import { createIngestApi, generateShortSignature, isReservedShortSignature } from "../apps/ingest-api/src/index.ts";
 import { InMemoryRecordStore, PostgresRecordStore } from "../packages/storage/src/index.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
@@ -45,6 +45,23 @@ test("POST /api/records ingests a valid content-blind record", async () => {
   assert.match(response.body.short_signature, /^[1-9A-HJ-NP-Za-km-z]{10,}$/);
   assert.equal(response.body.url, `https://possiblymadebyahuman.test/${response.body.short_signature}`);
   assert.equal(response.body.created, true);
+});
+
+test("short signatures reserve runtime/static route prefixes", () => {
+  assert.equal(isReservedShortSignature("apiABC1234"), true);
+  assert.equal(isReservedShortSignature("docs123456"), true);
+  assert.equal(isReservedShortSignature("record-assetsXYZ"), true);
+  assert.equal(isReservedShortSignature("K7Qp9dLx2m"), false);
+});
+
+test("reserved-prefix hashes deterministically get a safe rescued short signature", async () => {
+  const store = new InMemoryRecordStore();
+  const signature = await generateShortSignature(
+    "b3:8b8a680e94bd0e43419b3f6ac755c2169aa29fb67c485a7b6845c9cc81651f0c",
+    store,
+  );
+  assert.equal(signature.startsWith("X"), true);
+  assert.equal(isReservedShortSignature(signature), false);
 });
 
 test("GET /api/records/:id supports short signature and full hash lookup", async () => {
