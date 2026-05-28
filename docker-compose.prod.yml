@@ -12,6 +12,11 @@ services:
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8000}
       NODE_ENV: ${NODE_ENV:-production}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      PG_POOL_MAX: ${PG_POOL_MAX:-5}
+      PG_POOL_IDLE_TIMEOUT_MS: ${PG_POOL_IDLE_TIMEOUT_MS:-30000}
+      PG_POOL_CONNECTION_TIMEOUT_MS: ${PG_POOL_CONNECTION_TIMEOUT_MS:-5000}
+      PG_STATEMENT_TIMEOUT_MS: ${PG_STATEMENT_TIMEOUT_MS:-15000}
+      RECORD_BODY_LIMIT_BYTES: ${RECORD_BODY_LIMIT_BYTES:-10000000}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/ready"]
       interval: 30s

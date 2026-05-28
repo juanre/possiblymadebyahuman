@@ -1,13 +1,16 @@
-.PHONY: help install check test typecheck dev-api dev-web dev-site docker-build local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-migrate prod-container-down clean test-web-browser
+.PHONY: help install check test typecheck dev-api dev-web dev-site docker-build release-build-image release-build-image-nocache local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser release-ready ship-tag
 
 ENV_FILE ?= .env.local-container
 PROD_ENV_FILE ?= .env.localprod
 LOCAL_IMAGE ?= possiblymadebyahuman-local:latest
+RELEASE_IMAGE ?= possiblymadebyahuman
+PROD_IMAGE ?= ghcr.io/juanre/possiblymadebyahuman:latest
 IMAGE ?= possiblymadebyahuman:latest
 PMBAH_PORT ?= 8000
 DOCKER_PLATFORM ?= linux/amd64
+RELEASE_PLATFORM ?= linux/amd64
 LOCAL_COMPOSE = ENV_FILE=$(ENV_FILE) LOCAL_IMAGE=$(LOCAL_IMAGE) docker compose --env-file $(ENV_FILE) -f docker-compose.local-container.yml -p pmbah-local
-PROD_COMPOSE = IMAGE=$(IMAGE) ENV_FILE=$(PROD_ENV_FILE) docker compose --env-file $(PROD_ENV_FILE) -f docker-compose.prod.yml -p pmbah-prod
+PROD_COMPOSE = IMAGE=$(PROD_IMAGE) ENV_FILE=$(PROD_ENV_FILE) docker compose --env-file $(PROD_ENV_FILE) -f docker-compose.prod.yml -p pmbah-prod
 
 help:
 	@echo "possiblymadebyahuman targets:"
@@ -19,15 +22,20 @@ help:
 	@echo "  make dev-web               Run Vite record app dev server"
 	@echo "  make dev-site              Run Hugo site dev server"
 	@echo "  make docker-build          Build single production image ($(IMAGE))"
+	@echo "  make release-build-image   Build production release image ($(RELEASE_IMAGE):latest)"
+	@echo "  make release-build-image-nocache Build production release image without Docker cache"
 	@echo "  make local-container       Build/start app + local Postgres, migrate, wait for /ready"
 	@echo "  make local-container-test  Run full local Docker+Postgres HTTP e2e journey"
 	@echo "  make local-container-logs  Tail local container logs"
 	@echo "  make local-container-down  Stop local stack"
 	@echo "  make migrate               Run checked, ordered migrations against DATABASE_URL"
 	@echo "  make prod-container        Run prod-like container against external Neon DATABASE_URL"
+	@echo "  make prod-container-pull   Pull configured PROD_IMAGE when it is remote"
 	@echo "  make prod-container-migrate Run migrations against external Neon DATABASE_URL"
 	@echo "  make prod-container-down   Stop prod-like stack"
 	@echo "  make test-web-browser      Build web app and run Playwright smoke for the record page"
+	@echo "  make release-ready         Run release readiness checks and build a release image"
+	@echo "  make ship-tag VERSION=X.Y.Z Run release-ready, tag vX.Y.Z, and push tag"
 	@echo "  make clean                 Remove safe local build/test output"
 	@echo ""
 	@echo "Ports: app=$${PMBAH_PORT:-$(PMBAH_PORT)} postgres=$${POSTGRES_PORT:-5432}"
@@ -57,6 +65,14 @@ dev-site:
 
 docker-build:
 	docker build --platform $(DOCKER_PLATFORM) -t $(IMAGE) .
+
+release-build-image:
+	@echo "Building production release image $(RELEASE_IMAGE):latest for $(RELEASE_PLATFORM)..."
+	docker build --platform $(RELEASE_PLATFORM) -t $(RELEASE_IMAGE):latest .
+
+release-build-image-nocache:
+	@echo "Building production release image without cache $(RELEASE_IMAGE):latest for $(RELEASE_PLATFORM)..."
+	docker build --platform $(RELEASE_PLATFORM) --no-cache -t $(RELEASE_IMAGE):latest .
 
 local-container: docker-build
 	@test -f "$(ENV_FILE)" || (echo "Missing $(ENV_FILE). Copy .env.local-container.example first." && exit 1)
@@ -92,7 +108,11 @@ migrate:
 	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is required" && exit 1)
 	npm run migrate
 
-prod-container:
+prod-container-pull:
+	@test -f "$(PROD_ENV_FILE)" || (echo "Missing $(PROD_ENV_FILE). Copy .env.localprod.example or .env.production.example first." && exit 1)
+	@case "$(PROD_IMAGE)" in */*) echo "Pulling $(PROD_IMAGE)..."; $(PROD_COMPOSE) pull ;; *) echo "Using local image $(PROD_IMAGE) (skipping pull)" ;; esac
+
+prod-container: prod-container-pull
 	@test -f "$(PROD_ENV_FILE)" || (echo "Missing $(PROD_ENV_FILE). Copy .env.localprod.example or .env.production.example first." && exit 1)
 	$(PROD_COMPOSE) up -d
 
@@ -102,11 +122,28 @@ prod-container-migrate:
 
 prod-container-down:
 	@env_file="$(PROD_ENV_FILE)"; if [ ! -f "$$env_file" ]; then env_file=.env.localprod.example; fi; \
-	IMAGE=$(IMAGE) ENV_FILE="$$env_file" docker compose --env-file "$$env_file" -f docker-compose.prod.yml -p pmbah-prod down
+	IMAGE=$(PROD_IMAGE) ENV_FILE="$$env_file" docker compose --env-file "$$env_file" -f docker-compose.prod.yml -p pmbah-prod down
 
 test-web-browser:
 	npm run build:web
 	npm run test:web-browser
+
+release-ready:
+	git diff --quiet
+	git diff --cached --quiet
+	$(MAKE) check
+	$(MAKE) test-web-browser
+	$(MAKE) release-build-image RELEASE_IMAGE=possiblymadebyahuman-release-ready
+	@echo "Release-ready checks passed. Next: make ship-tag VERSION=x.y.z after human approval."
+
+ship-tag: release-ready
+	@test -n "$(VERSION)" || (echo "VERSION is required (example: make ship-tag VERSION=0.1.0)" && exit 1)
+	@set -eu; \
+		tag="v$(VERSION)"; \
+		git tag -l "$$tag" | grep -q . && echo "Tag $$tag already exists" && exit 1 || true; \
+		git tag -a "$$tag" -m "$$tag"; \
+		echo "Pushing $$tag to origin; GitHub Actions will publish GHCR image tags."; \
+		git push origin "$$tag"
 
 clean:
 	rm -rf apps/web/dist apps/site/public coverage

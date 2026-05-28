@@ -27,8 +27,10 @@ test("Postgres migration defines records, stats, and analysis-results tables", a
   await access("packages/storage/migrations/001_init.sql");
   const migration = await readFile("packages/storage/migrations/001_init.sql", "utf8");
   const migrateScript = await readFile("apps/ingest-api/scripts/migrate.mjs", "utf8");
-  assert.match(migrateScript, /applyMigrations/);
-  assert.match(migrateScript, /schema_migrations|Migrations applied/);
+  const migrateRuntime = await readFile("apps/ingest-api/src/migrate.ts", "utf8");
+  assert.match(migrateScript, /runMigrations/);
+  assert.match(migrateRuntime, /applyMigrations/);
+  assert.match(migrateRuntime, /loadSqlMigrations/);
   assert.match(migration, /create table if not exists records/i);
   assert.match(migration, /create table if not exists record_stats/i);
   assert.match(migration, /create table if not exists analysis_results/i);
