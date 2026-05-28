@@ -10,9 +10,10 @@ test.describe("public record page", () => {
     await page.getByRole("heading", { name: "Writing record" }).waitFor();
   });
 
-  test("renders the standing disclaimer as a non-verdict statement", async ({ page }) => {
+  test("renders the standing disclaimer as a signed-record statement", async ({ page }) => {
     const banner = page.getByRole("region", { name: "What this record means" });
-    await expect(banner).toContainText("This is a writing record, not a verdict.");
+    await expect(banner).toContainText("This is a signed writing record.");
+    await expect(banner).not.toContainText("This is a writing record, not a verdict.");
     await expect(banner).toContainText("not a human/AI score");
   });
 

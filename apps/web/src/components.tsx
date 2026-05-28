@@ -7,7 +7,7 @@ import type { RecordApiResponse } from "./types.ts";
 export function DisclaimerBanner() {
   return (
     <section className="banner" aria-label="What this record means">
-      <strong>This is a writing record, not a verdict.</strong>
+      <strong>This is a signed writing record.</strong>
       <span> It shows the shape of an editing process. It does not prove who originated the ideas, and it is not a human/AI score.</span>
     </section>
   );

@@ -64,6 +64,12 @@ export function operationFor(args: { ins_len: number; del_len: number }): Operat
   return "insert";
 }
 
+export function insertedCodepointsForInput(inputType: string | null, insertedText: string): number {
+  const count = codepointCount(insertedText);
+  if (inputType === "insertLineBreak" || inputType === "insertParagraph") return Math.max(1, count);
+  return count;
+}
+
 /**
  * Synchronously builds a PendingMutation from a textarea/input `beforeinput`
  * cycle. The caller reads the field's pre-change text transiently from
@@ -84,7 +90,7 @@ export function buildTextFieldMutation(args: {
   insertedText: string;
   inputType: string | null;
 }): PendingMutation {
-  const ins_len = codepointCount(args.insertedText);
+  const ins_len = insertedCodepointsForInput(args.inputType, args.insertedText);
   const del_start = Math.min(args.selectionStartUtf16, args.selectionEndUtf16);
   const del_end = Math.max(args.selectionStartUtf16, args.selectionEndUtf16);
   const deletedSlice = args.text.slice(del_start, del_end);

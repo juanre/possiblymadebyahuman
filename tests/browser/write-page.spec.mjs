@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { verifyRecord } from "../../packages/format/src/index.ts";
 
-const canaries = ["A🙂B", "A", "🙂"];
+const canaries = ["A🙂B", "LineOne", "LineTwo", "NEWLINE-CANARY", "🙂"];
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => window.localStorage.clear());
@@ -73,6 +73,67 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
   expect(uploadedPayload.events.some((event) => event.ins_len === 1)).toBe(true);
   expect(checkpointRequests.length).toBeGreaterThanOrEqual(1);
   expect(checkpointRequests[0]).not.toHaveProperty("token");
+});
+
+test("/write captures Enter as a one-codepoint line break event", async ({ page }) => {
+  let uploadedPayload;
+
+  await page.route("**/api/observed-sessions/*/checkpoints", async (route) => {
+    const request = route.request();
+    const body = request.postDataJSON();
+    const observedSessionId = new URL(request.url()).pathname.split("/").at(-2);
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        observed_session_id: observedSessionId,
+        token: "n".repeat(32),
+        checkpoint_id: `newline-cp-${body.event_count}`,
+        event_count: body.event_count,
+        chain_tip: body.chain_tip,
+        server_t: "2026-05-28T00:00:00.000Z",
+        created: true,
+      }),
+    });
+  });
+
+  await page.route("**/api/records", async (route) => {
+    uploadedPayload = route.request().postDataJSON();
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        record_hash: uploadedPayload.manifest.record_hash,
+        short_signature: "newline1",
+        url: "http://127.0.0.1:4173/newline1",
+        created: true,
+      }),
+    });
+  });
+
+  await page.goto("/write");
+  const canvas = page.getByRole("textbox", { name: "Writing canvas" });
+  await canvas.click();
+  await page.keyboard.type("LineOne");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("LineTwo");
+  await page.getByRole("button", { name: "Sign and upload" }).click();
+  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/newline1" })).toBeVisible();
+
+  expect(uploadedPayload, "record upload payload captured").toBeTruthy();
+  expect(verifyRecord({ manifest: uploadedPayload.manifest, events: uploadedPayload.events }).valid).toBe(true);
+  const newlineEvent = uploadedPayload.events.find((event) => event.op === "insert" && event.pos === 7 && event.del_len === 0 && event.ins_len === 1);
+  expect(newlineEvent, "line break event should be recorded as +1 at codepoint 7").toBeTruthy();
+  expect(newlineEvent.source).toBe("typing");
+  expect(uploadedPayload.events.length).toBe(15);
+
+  const serialized = JSON.stringify(uploadedPayload);
+  for (const canary of ["LineOne", "LineTwo", "NEWLINE-CANARY"]) {
+    expect(serialized.includes(canary), `uploaded payload leaked plaintext ${canary}`).toBe(false);
+  }
+  for (const forbidden of ["final_text_hash", "final_text_length", "ins_hash", "ins_text", "final_text"]) {
+    expect(serialized.includes(forbidden), `uploaded payload included ${forbidden}`).toBe(false);
+  }
 });
 
 test("/write keeps a failed upload available for retry", async ({ page }) => {

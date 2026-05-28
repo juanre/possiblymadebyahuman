@@ -90,6 +90,41 @@ test("Emacs producer captures Unicode codepoint mutations and builds a conforman
   }
 });
 
+test("Emacs producer records newline insertion as one codepoint", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-newline-"));
+  const outputPath = join(temp, "newline.json");
+  const scriptPath = join(temp, "newline.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+
+  await writeFile(scriptPath, `;;; newline.el --- PMBAH newline test -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(with-temp-buffer
+  (text-mode)
+  (pmbah-mode 1)
+  (insert "one")
+  (newline)
+  (insert "two")
+  (let ((output (list :events (vconcat (pmbah--session-events)))))
+    (with-temp-file ${JSON.stringify(outputPath)}
+      (insert (pmbah--json-encode output)))))
+`);
+
+  try {
+    const result = runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.deepEqual(output.events.map(({ op, pos, del_len, ins_len }) => ({ op, pos, del_len, ins_len })), [
+      { op: "insert", pos: 0, del_len: 0, ins_len: 3 },
+      { op: "insert", pos: 3, del_len: 0, ins_len: 1 },
+      { op: "insert", pos: 4, del_len: 0, ins_len: 3 },
+    ]);
+    assert.equal(JSON.stringify(output).includes("one"), false);
+    assert.equal(JSON.stringify(output).includes("two"), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Emacs producer refuses non-empty buffers by default", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-nonempty-"));
   const outputPath = join(temp, "nonempty.json");
