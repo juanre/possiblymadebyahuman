@@ -40,8 +40,26 @@ Producers (the browser extension and the Emacs minor mode) show every record to 
 - Absolute local file paths are not uploaded by default.
 - On the public record page, capture context is presented as *provenance context*, not as proof of authorship.
 
+## Producer-side local storage
+
+Each producer keeps a small amount of state on your machine while a session is open. None of that state contains your text.
+
+- **Browser extension.** Unsigned per-field session event logs are kept in `chrome.storage.local` under the key `pmbah:sessions:v1`, swept by a `chrome.alarms` job 3 days after the session's last edit. Each session record holds numeric process metadata (the event log, the BLAKE3 chain tip, the producer identity), the `observed_session_id`, and a bearer `token` used to authenticate server-observed checkpoints. The bearer token never leaves `SessionRecord.observation.last_observed_token` — it is not logged, not sent to content scripts, not exposed to page JavaScript, and not included in any public record. A static source audit (`tests/browser-extension-canary.test.mjs`) asserts this on every build.
+- **`/write` first-party page.** The drafting canvas keeps session events in `window.localStorage` while you write. The state shape is the same numeric event log as the extension, with no text. The page records edits only from the empty drafting canvas; it does not read other tabs, other pages, or any text you wrote before opening the page.
+- **Emacs `pmbah-mode`.** Session state lives in buffer-local Emacs variables and a small temporary file produced by the Node helper at sign time. The helper is passed numeric process metadata only; it never receives buffer text, computes text hashes, or persists text. The session is cleared after a successful upload; on failed upload it stays available locally for retry.
+
+## Server-observed checkpoints
+
+When the producer can reach the ingest service while you write, it commits chain tips at activity-driven cadence (first mutation immediate, then every 50 events or every 60 seconds with at least one new event since the last attempt; never on idle). Each checkpoint sends only `(observed_session_id, event_count, chain_tip, token?)` — a BLAKE3 prefix hash over the event sequence, no text. The server stores `token_hash`, never the bearer token itself. See [Server-observed commitments](/docs/server-observed-commitments/) for the public record's view of this surface.
+
+If the producer can't reach the ingest service, no checkpoints are sent and the local event log is retained until you sign (or discard) the session.
+
 ## What we cannot offer
 
-- Deletion of uploaded records. There is no public deletion API in v0. Permanence is the price of not asking for an account.
-- Confidentiality against an attacker who already has the plaintext: the system is about *not* uploading, hashing, or storing text, not about protecting text the signer chose to publish elsewhere.
+- Deletion of uploaded records. There is no public deletion API in v0. Permanence is the price of not asking for an account. If a record contains material that is clearly abusive (spam, illegal content) and is reported to the maintainers, the service operator may remove it on a case-by-case basis. See [Terms / Service Notes](/docs/terms/).
+- Confidentiality against an attacker who already has the text: the system is about *not* uploading, hashing, or storing text, not about protecting text the signer chose to publish elsewhere.
 - A guarantee that a third party did not separately keep a copy of the writing. We can only describe what *this* service stores.
+
+## Contact
+
+Privacy questions, ambiguities in this document, or concerns about a specific record are tracked at the project's [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues). v0 has no separate privacy contact endpoint; the issue tracker is the canonical channel.

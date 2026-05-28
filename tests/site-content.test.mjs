@@ -12,6 +12,7 @@ const requiredDocPages = [
   "product-promise.md",
   "claims.md",
   "privacy.md",
+  "terms.md",
   "records.md",
   "verification.md",
   "threat-model.md",
@@ -25,7 +26,8 @@ const sectionsCoveringProductPromise = [
   { file: "emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open an **empty** writing buffer", "refuses to start in a non-empty buffer"] },
   { file: "docs/product-promise.md", needs: ["No verdicts", "Process, not content", "Hash-addressed records"] },
   { file: "docs/claims.md", needs: ["We claim", "We do not claim"] },
-  { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system"] },
+  { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system", "chrome.storage.local", "bearer", "Server-observed checkpoints", "GitHub issues"] },
+  { file: "docs/terms.md", needs: ["MIT licensed", "provided as-is", "no public deletion API", "not a detector", "Identity and authorship assertions", "Moderation and removal", "project issue tracker"] },
   { file: "docs/records.md", needs: ["buffer mutation", "short_signature", "Hash chain", "Reserved route prefixes"] },
   { file: "docs/verification.md", needs: ["Re-verify chain", "hash chain", "What verification does and does not mean"] },
   { file: "docs/threat-model.md", needs: ["adversary", "Retype an AI draft", "hash chain detects any change"] },
@@ -109,6 +111,8 @@ test("layout base sets the candid description, provides site nav with producer C
   assert.match(base, /href="https:\/\/github\.com\/juanre\/possiblymadebyahuman"/);
   assert.match(base, /class="site-nav-repo"/);
   // Footer.
+  assert.match(base, /href="\/docs\/privacy\/">Privacy</);
+  assert.match(base, /href="\/docs\/terms\/">Terms</);
   assert.match(base, /Open source/);
   assert.match(base, /MIT licensed/);
   assert.match(base, /Brought to you by/);

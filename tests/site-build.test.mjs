@@ -30,6 +30,7 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
       "docs/routing/index.html",
       "docs/server-observed-commitments/index.html",
       "docs/write/index.html",
+      "docs/terms/index.html",
       "emacs/index.html",
     ];
 
@@ -62,8 +63,20 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
     assert.ok(home.includes("href=/docs/"), "header nav missing /docs/ link");
     assert.ok(home.includes("github.com/juanre/possiblymadebyahuman"), "home missing repo link");
     assert.ok(home.includes("MIT licensed"), "home missing OSS/MIT footer line");
+    assert.ok(home.includes("href=/docs/privacy/"), "home footer missing Privacy link");
+    assert.ok(home.includes("href=/docs/terms/"), "home footer missing Terms link");
     assert.ok(home.includes("Brought to you by"), "home missing aweb.ai credit");
     assert.ok(home.includes("href=https://aweb.ai"), "home missing aweb.ai link");
+
+    const terms = readFileSync(join(out, "docs/terms/index.html"), "utf8");
+    assert.ok(terms.includes("provided as-is"), "terms page missing as-is statement");
+    assert.ok(terms.includes("not a detector"), "terms page missing not-a-detector framing");
+    assert.ok(terms.includes("no public deletion API"), "terms page missing no-deletion caveat");
+    assert.ok(!/chromewebstore\.google\.com|chrome\.google\.com\/webstore/i.test(terms), "terms must not publish a Chrome Web Store URL");
+
+    const privacy = readFileSync(join(out, "docs/privacy/index.html"), "utf8");
+    assert.ok(privacy.includes("chrome.storage.local"), "privacy missing extension storage disclosure");
+    assert.ok(privacy.includes("Server-observed checkpoints"), "privacy missing checkpoint section");
     assert.ok(!home.includes("href=/blog/"), "home must not link to /blog/");
     assert.ok(!home.includes("class=standing-claim"), "per-record standing claim must not appear on the home page");
     assert.ok(!/chromewebstore\.google\.com|chrome\.google\.com\/webstore/i.test(home), "home must not publish a Chrome Web Store URL before approval");

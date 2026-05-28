@@ -369,13 +369,22 @@ each unlocks the next.
      > Support URL: **TBD by Juan** (recommended: GitHub issues on the
      > `juanre/possiblymadebyahuman` repo).
 
-6. **Privacy policy URL (Juan).**
-   - Chrome Web Store requires a hosted privacy policy URL. The docs site
-     already explains the content-blind guarantees at `/docs/privacy/`. The
-     simplest v0 answer is to use that URL once the site domain is live.
-   - Record the privacy policy URL here once approved:
+6. **Privacy policy URL + Terms URL (Juan).**
+   - Chrome Web Store requires a hosted privacy policy URL. The reconciled
+     v0 privacy page at `/docs/privacy/` covers the producer-side local
+     storage (extension `chrome.storage.local` + bearer-token discipline,
+     `/write` `localStorage`, Emacs helper), server-observed checkpoints,
+     transient text inspection rule, capture-context redaction flow, and
+     the no-deletion / no-account caveat. The Terms / Service Notes page
+     at `/docs/terms/` covers the as-is service model, identity-assertion
+     scope, and moderation/removal path. Both pages are linked from the
+     site footer.
+   - Record the privacy policy URL and the terms URL here once the site
+     domain is live:
      > Privacy policy URL: **TBD by Juan** (recommended:
      > `https://possiblymadebyahuman.com/docs/privacy/`).
+     > Terms / Service Notes URL: **TBD by Juan** (recommended:
+     > `https://possiblymadebyahuman.com/docs/terms/`).
 
 7. **Listing copy approval (Juan).**
    - The "Draft short description", "Draft detailed description", and the
