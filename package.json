@@ -1,0 +1,19 @@
+{
+  "name": "possiblymadebyahuman",
+  "version": "0.1.0",
+  "description": "Content-blind writing-record format and v0 architecture scaffold.",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
