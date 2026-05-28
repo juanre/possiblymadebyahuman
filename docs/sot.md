@@ -267,6 +267,17 @@ Owns:
 - conformant event logs
 - capture-context preview/redaction before upload
 
+### 3.10 Producer scope invariant
+
+All v0 producers record the writing process captured after a user starts a session. They do not silently wrap pre-existing document content into a new record scope.
+
+- **Emacs** refuses to enable `pmbah-mode` in a non-empty buffer by default. Its helper receives only process metadata (`events`, producer info, capture context, duration), not buffer text, inserted text, final text, text hashes, or text replay fixtures.
+- **Browser extension** treats a fresh non-empty field as ineligible unless it can resume an existing PMBAH session for the same field. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths, but it must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
+- **`/write` first-party page** starts from an empty textarea and clears/discards the visible canvas independently of the persisted content-opaque session record.
+- **`packages/producer-core`** accepts only public mutation shapes and session metadata. It must not require plaintext, final text, inserted text, text hashes, or text replay to sign/verify a record.
+
+Tests and audits for each producer must cover this invariant before release.
+
 ---
 
 ## 4. Event log and manifest contract

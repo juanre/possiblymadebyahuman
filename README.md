@@ -12,9 +12,13 @@ The public service is content-opaque by default: uploaded records store mutation
 
 Release-readiness work is in progress. Implemented pieces include the content-opaque record format, ingest API, immutable Postgres storage, analyzer facts, Docker/local Postgres stack, and Vite public record page. Remaining release work is tracked in aweb tasks; do not treat a local feature demo as release-ready until the release-readiness task is reviewed.
 
-## Browser extension distribution prep
+## Producer installation docs
 
-Public v0 requires a real Chrome Web Store install path for the browser extension; do not publish placeholder or "coming soon" install links. Packaging/release details live in [`docs/browser-extension-release.md`](docs/browser-extension-release.md). Draft listing, privacy-disclosure, permission-justification, and human publisher checklists live in [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md). Those documents are preparatory only until the extension implementation, package artifact, human approval, and real Chrome Web Store URL exist.
+- First-party browser drafting page: `/write` in a running service.
+- Browser extension packaging/release details: [`docs/browser-extension-release.md`](docs/browser-extension-release.md) and [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md).
+- Emacs producer installation and troubleshooting: [`producers/emacs/README.md`](producers/emacs/README.md).
+
+Public v0 requires a real Chrome Web Store install path for the browser extension; do not publish placeholder or "coming soon" install links. Browser-extension documents are preparatory only until the extension implementation, package artifact, human approval, and real Chrome Web Store URL exist.
 
 ## Commands
 

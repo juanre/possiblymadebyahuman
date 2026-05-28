@@ -9,12 +9,14 @@ to the kill ring.
 
 ## Privacy and scope
 
-- Captures **buffer mutations**, not physical keystrokes or OS-level input.
+- Captures **buffer mutations after `pmbah-mode` starts**, not physical
+  keystrokes, OS-level input, or pre-existing buffer contents.
 - Public uploads contain mutation shape, timing, source labels, manifest metadata,
-  and hashes. They do **not** include plaintext insertion text.
-- The public record and local helper payload contain process metadata only. The
-  mode does not pass buffer text to the helper, compute text hashes, or require
-  text reconstruction.
+  and public process hashes. They do **not** include plaintext insertion text.
+- The local helper payload contains process metadata only. The mode does not pass
+  buffer text to the helper, compute text hashes, or require text reconstruction.
+- By default, `pmbah-mode` refuses to start in a non-empty buffer. Start in an
+  empty draft or discard/finish existing text outside PMBAH before enabling it.
 - Absolute local file paths are shown in the preview as omitted and are not
   uploaded by default.
 - Emacs buffer names and major modes can identify a document or workflow; the
@@ -26,56 +28,120 @@ to the kill ring.
 
 - `pmbah-mode.el` — Emacs minor mode and upload flow.
 - `scripts/build-record.mjs` — local helper that uses the shared TypeScript
-  format package to compute BLAKE3 hashes, record hash chains, and verification.
+  format package to compute BLAKE3 record hash chains and verification over the
+  public process record.
 
 ## Requirements
 
 - GNU Emacs 29.1 or newer.
-- Node.js that can run this repository's TypeScript sources directly, matching
-  the repo's normal development runtime.
-- Repository dependencies installed with `npm install` from the repository root.
+- Node.js available to Emacs. GUI Emacs on macOS/Linux often does not inherit
+  your shell `PATH`; configure `pmbah-node-command` or `PMBAH_NODE` if `node`
+  is not found.
+- A checkout or release directory containing both `pmbah-mode.el` and
+  `scripts/build-record.mjs`.
+- Repository dependencies installed from the repository root with `npm ci` (or
+  `make install`, which runs the normal npm install path for this repo).
 - A running PMBAH ingest API.
 
-## Installation
+The Emacs package is not on MELPA/ELPA for v0. Install from a checkout or release
+archive.
 
-From this repository, add the producer directory to your Emacs load path:
+## Installation from a checkout
+
+From the repository root:
+
+```sh
+git clone https://github.com/juanre/possiblymadebyahuman.git
+cd possiblymadebyahuman
+npm ci
+# or: make install
+```
+
+Then add the producer directory to your Emacs configuration:
 
 ```elisp
 (add-to-list 'load-path "/path/to/possiblymadebyahuman/producers/emacs")
 (require 'pmbah-mode)
 ```
 
-If you install/copy the file elsewhere, set `pmbah-helper-script` to the helper in
-this repository:
+If you copy `pmbah-mode.el` somewhere else, keep the helper in the dependency
+installed checkout and point Emacs at it:
 
 ```elisp
 (setq pmbah-helper-script
       "/path/to/possiblymadebyahuman/producers/emacs/scripts/build-record.mjs")
 ```
 
+`use-package` users can do the same manual load-path setup:
+
+```elisp
+(use-package pmbah-mode
+  :load-path "/path/to/possiblymadebyahuman/producers/emacs"
+  :commands (pmbah-mode pmbah-sign-buffer pmbah-show-session-status)
+  :custom
+  (pmbah-helper-script
+   "/path/to/possiblymadebyahuman/producers/emacs/scripts/build-record.mjs"))
+```
+
+Emacs 29 `package-vc-install` can fetch Lisp code, but it does not install npm
+dependencies for the Node helper. For v0, prefer a manual checkout/release
+directory and run `npm ci` there.
+
 ## Configuration
 
-Set the ingest API base URL with either the environment variable:
+### API base URL
+
+`pmbah-api-base-url` defaults to `http://localhost:8000`, matching
+`make local-container`.
+
+Environment variable:
 
 ```sh
-export PMBAH_API_BASE_URL=http://localhost:8787
+export PMBAH_API_BASE_URL=http://localhost:8000
 ```
 
-or Emacs Lisp:
+Emacs Lisp:
 
 ```elisp
-(setq pmbah-api-base-url "http://localhost:8787")
+(setq pmbah-api-base-url "http://localhost:8000")
 ```
 
-Optional Node override:
+If you run the local container on a custom port, match that port:
+
+```sh
+PMBAH_PORT=18800 make local-container
+export PMBAH_API_BASE_URL=http://localhost:18800
+```
+
+For production, set the value to the deployed HTTPS origin, for example:
 
 ```elisp
-(setq pmbah-node-command "/path/to/node")
+(setq pmbah-api-base-url "https://possiblymadebyahuman.com")
 ```
+
+Do not publish docs or configs with fake production hosts as if they were live.
+Use an explicit placeholder such as `https://<your-pmbah-host>` until the actual
+service URL is approved.
+
+### Node path for GUI Emacs
+
+If GUI Emacs cannot find Node, set either:
+
+```sh
+export PMBAH_NODE=/opt/homebrew/bin/node
+```
+
+or:
+
+```elisp
+(setq pmbah-node-command "/opt/homebrew/bin/node")
+```
+
+Use the path printed by `command -v node` in the shell where the repo tests pass.
 
 ## Usage
 
-1. Open or create a writing buffer.
+1. Open an **empty** writing buffer.
 2. Enable capture:
 
    ```elisp
@@ -105,6 +171,21 @@ Optional Node override:
 After a successful upload, the local event log is cleared and a fresh session is
 started for the current buffer. If upload fails, the local event log remains so
 you can retry.
+
+## Verify the installation
+
+A quick local check:
+
+1. Start the API: `make local-container`.
+2. In Emacs, open a new empty buffer and run `M-x pmbah-mode`.
+3. Type a short draft.
+4. Run `M-x pmbah-show-session-status`; confirm the event count is non-zero and
+   the API URL is the one you expect.
+5. Run `M-x pmbah-sign-buffer`; review capture context, upload, and confirm a
+   short URL is copied to the kill ring.
+
+For a custom local port, start with `PMBAH_PORT=18800 make local-container` and
+set `PMBAH_API_BASE_URL` / `pmbah-api-base-url` to `http://localhost:18800`.
 
 ## Capture context review
 
@@ -142,16 +223,19 @@ It then asks separately whether to include `emacs.buffer_name` and
 
 ## Local conformance/testing
 
-The repository test suite includes an Emacs batch test that:
+The repository test suite includes Emacs batch tests that:
 
-- enables `pmbah-mode` in a real Emacs buffer;
-- performs Unicode, delete, insert, and replace mutations;
-- verifies codepoint offsets/lengths;
-- verifies the generated record with `packages/format` structure/hash-chain logic;
-- confirms public events do not contain plaintext fields;
-- confirms default capture context avoids absolute file paths.
+- enable `pmbah-mode` in a real empty Emacs buffer;
+- perform Unicode, delete, insert, and replace mutations;
+- verify codepoint offsets/lengths;
+- verify the generated record with `packages/format` structure/hash-chain logic;
+- confirm public events do not contain plaintext fields;
+- confirm the helper payload does not contain buffer text, inserted text, final
+  text, text hashes, or text replay fixtures;
+- confirm non-empty buffers are refused by default;
+- confirm default capture context avoids absolute file paths.
 
-Run it with:
+Run them with:
 
 ```sh
 node --test tests/emacs-producer.test.mjs
@@ -166,10 +250,20 @@ make check
 ## Troubleshooting
 
 - `PMBAH helper script is not readable`: set `pmbah-helper-script` to the helper
-  path in this repository.
+  path in the checkout where you ran `npm ci` / `make install`.
+- `Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@noble/hashes'`: install
+  repository dependencies from the repo root (`npm ci` or `make install`) and
+  ensure `pmbah-helper-script` points to `producers/emacs/scripts/build-record.mjs`
+  inside that same checkout.
+- `Searching for program: No such file or directory, node`: GUI Emacs cannot find
+  Node. Set `PMBAH_NODE` or `pmbah-node-command` to an absolute Node path.
 - `generated record failed verification`: keep the local session and report the
-  sequence; the helper rejected an internally inconsistent record before upload.
+  sequence; the helper rejected an internally inconsistent public process record
+  before upload.
 - Upload HTTP errors: ensure `pmbah-api-base-url` points to an ingest API with
-  `POST /api/records` and that the backend is healthy.
+  `POST /api/records`, usually `http://localhost:8000` for `make local-container`,
+  and that `/ready` is healthy.
+- `PMBAH refuses to start in a non-empty buffer`: this is intentional. Start in
+  an empty draft so pre-existing text is not included in the record scope.
 - No URL copied: upload did not complete; the local session is retained for
   retry.

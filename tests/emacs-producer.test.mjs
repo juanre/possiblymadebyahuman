@@ -89,3 +89,124 @@ test("Emacs producer captures Unicode codepoint mutations and builds a conforman
     await rm(temp, { recursive: true, force: true });
   }
 });
+
+test("Emacs producer refuses non-empty buffers by default", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-nonempty-"));
+  const outputPath = join(temp, "nonempty.json");
+  const scriptPath = join(temp, "nonempty.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+
+  await writeFile(scriptPath, `;;; nonempty.el --- PMBAH non-empty refusal test -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(with-temp-buffer
+  (insert "PREEXISTING-CANARY")
+  (let ((message nil))
+    (condition-case err
+        (pmbah-mode 1)
+      (error (setq message (error-message-string err))))
+    (let ((output (list :message message
+                        :enabled (if pmbah-mode t :json-false)
+                        :session pmbah--session-id
+                        :events pmbah--events
+                        :event_count pmbah--next-seq)))
+      (with-temp-file ${JSON.stringify(outputPath)}
+        (insert (pmbah--json-encode output))))))
+`);
+
+  try {
+    const result = runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.match(output.message, /refuses to start in a non-empty buffer/);
+    assert.equal(output.enabled, false);
+    assert.equal(output.session, null);
+    assert.equal(output.events, null);
+    assert.equal(output.event_count, 0);
+    assert.equal(JSON.stringify(output).includes("PREEXISTING-CANARY"), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs helper payload contains only process metadata", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-payload-"));
+  const outputPath = join(temp, "payload.json");
+  const scriptPath = join(temp, "payload.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+
+  await writeFile(scriptPath, `;;; payload.el --- PMBAH helper payload test -*- lexical-binding: t; -*-
+(require 'cl-lib)
+(load ${JSON.stringify(modePath)})
+(with-temp-buffer
+  (text-mode)
+  (pmbah-mode 1)
+  (insert "Alpha🙂Beta")
+  (goto-char 6)
+  (delete-char 1)
+  (insert "Ω")
+  (let ((captured nil))
+    (cl-letf (((symbol-function 'pmbah--run-helper)
+               (lambda (payload)
+                 (setq captured payload)
+                 (list :record (list :manifest nil :events [])))))
+      (pmbah-build-record-for-current-buffer (list :surface "emacs")))
+    (with-temp-file ${JSON.stringify(outputPath)}
+      (insert (pmbah--json-encode captured)))))
+`);
+
+  try {
+    const result = runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const payload = JSON.parse(await readFile(outputPath, "utf8"));
+    const serialized = JSON.stringify(payload);
+    for (const forbidden of [
+      "Alpha🙂Beta",
+      "Alpha",
+      "Beta",
+      "Ω",
+      "final_text",
+      "final_text_hash",
+      "final_text_length",
+      "ins_text",
+      "ins_hash",
+      "replay_insertions_by_seq",
+    ]) {
+      assert.equal(serialized.includes(forbidden), false, `helper payload leaked ${forbidden}`);
+    }
+    assert.equal(Array.isArray(payload.events), true);
+    assert.equal(payload.events.length, 3);
+    assert.deepEqual(payload.events.map(({ op, pos, del_len, ins_len }) => ({ op, pos, del_len, ins_len })), [
+      { op: "insert", pos: 0, del_len: 0, ins_len: 10 },
+      { op: "delete", pos: 5, del_len: 1, ins_len: 0 },
+      { op: "insert", pos: 5, del_len: 0, ins_len: 1 },
+    ]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs helper handles large content-opaque event shapes without text replay", () => {
+  const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
+  const payload = {
+    format_version: "0.1",
+    session_id: "00000000-0000-4000-8000-000000000032",
+    producer: { id: "emacs", version: "0.1.0", capabilities: ["timing", "pause_fidelity"] },
+    capture_context: { surface: "emacs" },
+    events: [{ seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 200_000, source: "programmatic" }],
+    duration_ms: 0,
+    created_client_t: "2026-05-28T00:00:00.000Z",
+  };
+  const result = spawnSync(process.execPath, [helperPath], {
+    cwd: resolve("."),
+    encoding: "utf8",
+    input: JSON.stringify(payload),
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const output = JSON.parse(result.stdout);
+  assert.equal(verifyRecord(output.record).valid, true);
+  const serialized = JSON.stringify(output);
+  assert.equal(serialized.includes("replay_insertions_by_seq"), false);
+  assert.equal(serialized.includes("final_text"), false);
+  assert.equal(serialized.includes("a".repeat(100)), false);
+});

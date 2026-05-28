@@ -27,9 +27,10 @@
   :prefix "pmbah-")
 
 (defcustom pmbah-api-base-url
-  (or (getenv "PMBAH_API_BASE_URL") "http://localhost:8787")
+  (or (getenv "PMBAH_API_BASE_URL") "http://localhost:8000")
   "Base URL for the PMBAH ingest API.
-The producer posts records to `/api/records` below this URL."
+The producer posts records to `/api/records` below this URL.  The default
+matches `make local-container`."
   :type 'string
   :group 'pmbah)
 
