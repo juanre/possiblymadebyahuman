@@ -25,7 +25,7 @@ But some know-it-all tired of wading through AI-generated slop decided that it w
 
 It's annoying but it's a fact of life. And another fact is that you cannot really prove that you wrote it, because you cannot come up with an actual verifiable proof that a sufficiently motivated AI will not be able to spoof.
 
-Oh well. It cannot be done but we are doing it anyway. You can at least assert that it was you who did it, and sign it.
+Oh well. It cannot be done but we are doing it anyway. You can at least assert that it was you who did it, and sign the writing process in a way that would be very annoying to spoof (and take as long as it took you to write).
 
 </div>
 
