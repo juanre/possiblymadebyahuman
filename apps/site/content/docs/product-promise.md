@@ -3,7 +3,7 @@ title: "Product promise"
 summary: "What this record is, and what it deliberately is not."
 ---
 
-`possiblymadebyahuman` records the shape of a writing process and gives someone a replayable, hash-addressed record they can inspect.
+`possiblymadebyahuman` records the shape of a writing process and gives someone an inspectable, hash-addressed process record. The record never contains, stores, or reconstructs the text that was written.
 
 The product is **not** a detector and must not become one.
 
@@ -24,7 +24,7 @@ That sentence is the standing disclaimer rendered on every record page. It is th
 
 - Letting an author share a *gesture* — "here is the shape of how I wrote this" — without handing over the text or asking a service to vouch for them.
 - Making certain mechanical patterns visible: a single 4,000-codepoint paste, an unbroken burst of insertions at a constant interval, or a completely empty editing process.
-- Giving a reader something concrete to look at instead of asking them to take it on faith — while being honest that the gesture is not proof.
+- Giving a reader something concrete to look at instead of asking them to take it on faith — while being clear that the gesture is not proof.
 
 ## What this is not for
 

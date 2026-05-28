@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
-import { buildReplayPoints, formatDuration, sourceClass, verifyRecordChain } from "./record-utils.ts";
+import { buildTimelinePoints, formatDuration, sourceClass, verifyRecordChain } from "./record-utils.ts";
 import type { RecordApiResponse } from "./types.ts";
 
 export function DisclaimerBanner() {
@@ -39,7 +39,6 @@ export function QuickStatsPanel({ record }: { record: RecordApiResponse }) {
       <div className="stats-grid">
         <Stat label="Events" value={stats.event_count} />
         <Stat label="Duration" value={formatDuration(stats.duration_ms)} />
-        <Stat label="Final length" value={`${stats.final_text_length} codepoints`} />
         <Stat label="Typing events" value={stats.typed_event_count} />
         <Stat label="Insert / delete / replace" value={`${stats.insert_op_count} / ${stats.delete_op_count} / ${stats.replace_op_count}`} />
         <Stat label="Paste / unknown" value={`${stats.paste_event_count} / ${stats.unknown_source_count}`} />
@@ -55,14 +54,14 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
 }
 
-export function ReplayScrubber({ record }: { record: RecordApiResponse }) {
-  const points = useMemo(() => buildReplayPoints(record.events), [record.events]);
-  const maxLength = Math.max(1, ...points.map((point) => point.documentLength), record.manifest.final_text_length);
+export function EditTimeline({ record }: { record: RecordApiResponse }) {
+  const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
+  const maxLength = Math.max(1, ...points.map((point) => point.documentLength));
   return (
     <section className="card">
-      <h2>Content-blind replay</h2>
-      <p className="muted">Structure only: document length, edit position, operation size, source, large inserts, and long pauses. No text is rendered.</p>
-      <div className="timeline" role="img" aria-label="Content-blind mutation timeline">
+      <h2>Edit timeline</h2>
+      <p className="muted">Operation shape only: edit position, operation size, source, large inserts, and long pauses. No text is stored, hashed, or reconstructed.</p>
+      <div className="timeline" role="img" aria-label="Content-opaque edit timeline">
         {points.map((point) => {
           const left = `${Math.min(100, (point.pos / maxLength) * 100)}%`;
           const width = `${Math.max(1.5, Math.min(18, ((point.ins_len + point.del_len) / maxLength) * 100))}%`;
@@ -139,7 +138,7 @@ export function RecordPage({ record }: { record: RecordApiResponse }) {
       <DisclaimerBanner />
       <CaptureContextSummary record={record} />
       <QuickStatsPanel record={record} />
-      <ReplayScrubber record={record} />
+      <EditTimeline record={record} />
       <SignalList signals={record.signals} />
       <VerificationPanel record={record} />
     </main>

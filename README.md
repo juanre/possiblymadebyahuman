@@ -1,14 +1,14 @@
 # possiblymadebyahuman
 
-`possiblymadebyahuman` records the shape of a writing process and presents it as a replayable, hash-addressed writing record.
+`possiblymadebyahuman` records the *shape* of a writing process — operation positions, lengths, timing, and source classification — and presents it as a content-opaque, hash-addressed process record. The record never contains, stores, or reconstructs the text that was written.
 
-It is **not** a human/AI detector. It must not emit humanness verdicts, confidence percentages, or certification-style badges. The allowed claim is narrower and more honest: this record shows the shape of an editing process; it does not prove who originated the ideas.
+It is **not** a human/AI detector. It must not emit single-score verdicts, confidence percentages, or certification-style badges. The allowed claim is narrower: this record shows the shape of an editing process; it does not prove who originated the ideas.
 
-The public service is content-blind by default: uploaded records store mutation structure, metadata, statistics, and analyzer facts, not plaintext writing. Plaintext belongs only in local replay flows or test fixtures.
+The public service is content-opaque by default. Records store the shape of mutations (op, position, length, timing, source class) plus structural statistics and analyzer measures derived from those. Records do not store, upload, hash, or replay the text itself; producers may transiently inspect text in-memory only when necessary to derive a numeric process field, and they discard the string immediately without retaining it.
 
 ## Current milestone
 
-Release-readiness work is in progress. Implemented pieces include the content-blind record format, ingest API, immutable Postgres storage, analyzer facts, Docker/local Postgres stack, and Vite public record page. Remaining release work is tracked in aweb tasks; do not treat a local feature demo as release-ready until the release-readiness task is reviewed.
+Release-readiness work is in progress. Implemented pieces include the content-opaque record format, ingest API, immutable Postgres storage, analyzer facts, Docker/local Postgres stack, and Vite public record page. Remaining release work is tracked in aweb tasks; do not treat a local feature demo as release-ready until the release-readiness task is reviewed.
 
 ## Browser extension distribution prep
 

@@ -5,7 +5,7 @@ Hugo static site for the public-facing landing page and docs.
 ## Responsibility
 
 - Public `/` and `/docs/*` routes.
-- Product explanation, content-blind privacy model, how records and verification work, threat model, and producer conformance.
+- Product explanation, content-opaque privacy model, how records and verification work, threat model, and producer conformance.
 - Candid lightweight tone: "we cannot prove it, but here is us caring enough to show the work."
 
 ## Non-responsibility
@@ -14,7 +14,7 @@ Hugo static site for the public-facing landing page and docs.
 - The per-record standing disclaimer (rendered by the Vite record app's `DisclaimerBanner`, not by the Hugo home page).
 - Backend ingestion APIs.
 - Producer capture.
-- Detector/certificate language or humanness scoring.
+- Detector/certificate language or aggregate human/AI scoring.
 
 ## Content layout
 

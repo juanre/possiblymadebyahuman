@@ -27,11 +27,11 @@ Verification confirms:
 
 - The events were not altered after the signer uploaded them.
 - The manifest is internally consistent (event count, declared duration vs. last event time, etc.).
-- The `record_hash` in the manifest matches what the events actually produce.
+- The `record_hash` in the manifest matches what the events actually produce when re-hashed in canonical form.
 
 Verification does **not** confirm:
 
-- That the signer authored the words.
+- That the signer authored the words. The system does not store, hash, or reconstruct the text; it has no way to check what was written.
 - That a human typed the events instead of a script driving the producer.
 - That the `capture_context` is true — that field is metadata the signer chose to include, not a sworn attribution.
 

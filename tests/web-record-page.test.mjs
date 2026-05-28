@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { buildReplayPoints, verifyRecordChain } from "../apps/web/src/record-utils.ts";
+import { buildTimelinePoints, verifyRecordChain } from "../apps/web/src/record-utils.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -53,18 +53,19 @@ test("RecordPage source defines required public record sections without verdict 
     "DisclaimerBanner",
     "CaptureContextSummary",
     "QuickStatsPanel",
-    "ReplayScrubber",
+    "EditTimeline",
     "SignalList",
     "SignalCard",
     "VerificationPanel",
     "ChainVerificationButton",
     "ManifestDetails",
-    "Content-blind replay",
+    "Edit timeline",
     "Analyzer signals as facts",
   ]) {
     assert.match(source, new RegExp(snippet));
   }
-  assert.doesNotMatch(source, /percentage-human|humanness score|certificate of humanity/i);
+  assert.doesNotMatch(source, /percentage-human|certificate of humanity|humanness/i);
+  assert.doesNotMatch(source, /\bhonest(ly|y)?\b/i);
 });
 
 test("CaptureContextSummary renders browser.title and emacs.major_mode when present", async () => {
@@ -90,9 +91,9 @@ test("browser-side verification helper reports tampering", async () => {
   assert.ok(verification.messages.some((message) => message.includes("record_hash mismatch") || message.includes("insert op")));
 });
 
-test("content-blind replay points track document length and markers", async () => {
+test("edit timeline points track document length and markers", async () => {
   const record = await recordFixture();
-  const points = buildReplayPoints(record.events);
+  const points = buildTimelinePoints(record.events);
   assert.deepEqual(points.map((point) => point.documentLength), [2, 8, 7, 8]);
   assert.equal(points[1].source, "paste");
   assert.equal(points[1].ins_len, 6);

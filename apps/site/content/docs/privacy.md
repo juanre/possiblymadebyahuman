@@ -3,19 +3,20 @@ title: "Content-blind privacy model"
 summary: "What public records store, what they deliberately do not, and what the signer controls before upload."
 ---
 
-The default mode of `possiblymadebyahuman` is **content-blind**. Public records describe the shape of an editing process without containing the document's plaintext.
+The default mode of `possiblymadebyahuman` is **content-opaque**. Public records describe the shape of an editing process. They do not contain, store, or reconstruct the document's text.
 
 ## What public records contain
 
-- A canonical event log of buffer mutations: `seq`, `t`, `op`, `pos`, `del_len`, `ins_len`, and `source`.
-- A manifest with the BLAKE3 record hash, producer identity and version, declared capabilities, capture context (when provided), event count, duration, and final text length.
+- A canonical event log of buffer mutations: `seq`, `t`, `op`, `pos`, `del_len`, `ins_len`, and `source`. Each numeric field carries a content-opaquely derived number; when a producer cannot derive a value without inspecting text it cannot capture, the field is explicit `null` rather than a guess.
+- A manifest with the BLAKE3 chain hash over the canonical events, producer identity and version, declared capabilities, capture context (when provided), event count, and duration.
 - Precomputed statistics: typing/paste/cut/drop/IME/autocomplete/programmatic/unknown counts, codepoints inserted/deleted, largest atomic insert, inter-event delay percentiles, active/idle time, and a delay histogram.
 - Analyzer signals, each with explicit measures and an explanation.
 
 ## What public records do not contain
 
-- The plaintext of the document. Lengths and positions are in Unicode codepoints, not text.
-- Per-event inserted text. Producers may compute optional `ins_hash` values for local verification, but those are omitted from public uploads.
+- The text of the document. Producers may transiently inspect text in-memory to derive a numeric field (e.g. paste length), but the string is discarded in the same statement and never recorded.
+- Any text-content hash. The BLAKE3 chain hash is computed over the canonical *process events*, never over text.
+- Final-text hashes, full-buffer hashes, inserted-text hashes, or any other fingerprint of text content.
 - Any account, email, or directly identifying user field. There is no user system in v0.
 
 ## What the signer controls
