@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { computeEventHashChain } from "../packages/format/src/index.ts";
 import { createIngestApi } from "../apps/ingest-api/src/index.ts";
 import { DEFAULT_RECORD_BODY_LIMIT_BYTES, createPoolConfig, createRuntimeServer, readiness } from "../apps/ingest-api/src/server.ts";
 import { computeRecordStats } from "../apps/ingest-api/src/index.ts";
@@ -115,6 +116,75 @@ test("PostgresRecordStore save uses one checked-out client for transaction and r
   ]);
   assert.equal(poolQueries.some((query) => query.sql.trim().toLowerCase() === "begin"), false);
   assert.equal(poolQueries.some((query) => query.sql.trim().toLowerCase() === "commit"), false);
+});
+
+test("PostgresRecordStore locks and validates observed checkpoints before inserting finalized record", async () => {
+  const record = await fixtureRecord();
+  const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
+  const observedSessionId = "123e4567-e89b-42d3-a456-426614174abc";
+  const checkpoint = {
+    checkpoint_id: "123e4567-e89b-42d3-a456-426614174def",
+    event_count: record.events.length,
+    chain_tip: chain.at(-1),
+    observed_at: "2026-05-28T10:00:00.000Z",
+  };
+  const clientQueries = [];
+  const poolQueries = [];
+  const client = {
+    async query(sql, params) {
+      clientQueries.push({ sql, params });
+      if (/from observed_sessions where observed_session_id = \$1 for update/i.test(sql)) {
+        return { rows: [{
+          observed_session_id: observedSessionId,
+          token_hash: "token-hash",
+          finalized_record_hash: null,
+          observation_state: null,
+          created_at: "2026-05-28T10:00:00.000Z",
+          finalized_at: null,
+        }] };
+      }
+      if (/from observed_checkpoints where observed_session_id = \$1 order by/i.test(sql)) {
+        return { rows: [checkpoint] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const db = {
+    async connect() { return client; },
+    async query(sql, params) {
+      poolQueries.push({ sql, params });
+      if (/where r\.record_hash = \$1/i.test(sql)) return { rows: poolQueries.filter((query) => /where r\.record_hash = \$1/i.test(query.sql)).length === 1 ? [] : [recordRow(record)] };
+      if (/from observed_sessions where finalized_record_hash = \$1/i.test(sql)) return { rows: [] };
+      if (/select record_hash from records where short_signature/i.test(sql)) return { rows: [] };
+      return { rows: [] };
+    },
+  };
+
+  const store = new PostgresRecordStore(db);
+  await store.saveRecord({
+    record,
+    short_signature: "abc123def4",
+    stats: computeRecordStats(record),
+    signals: [],
+    observation: {
+      state: "observed",
+      observed_session_id: observedSessionId,
+      commitments: [checkpoint],
+      checkpoint_count: 1,
+      first_observed_at: checkpoint.observed_at,
+      last_observed_at: checkpoint.observed_at,
+      server_observed_span_ms: 0,
+    },
+  });
+
+  const sqlList = clientQueries.map((query) => query.sql);
+  const lockIndex = sqlList.findIndex((sql) => /for update/i.test(sql));
+  const checkpointReadIndex = sqlList.findIndex((sql) => /from observed_checkpoints/i.test(sql));
+  const recordInsertIndex = sqlList.findIndex((sql) => /insert into records/i.test(sql));
+  assert.ok(lockIndex > -1);
+  assert.ok(checkpointReadIndex > lockIndex);
+  assert.ok(recordInsertIndex > checkpointReadIndex);
 });
 
 test("PostgresRecordStore rolls back and releases checked-out client on transaction failure", async () => {

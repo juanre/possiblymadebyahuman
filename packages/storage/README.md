@@ -15,7 +15,7 @@ Uploaded records are permanent by default in v0. Owner-delete is a future option
 
 `PostgresRecordStore` accepts a `pg.Pool`-like object. Writes that span `records`, `record_stats`, `analysis_results`, and observation-finalization metadata check out one client, run `BEGIN`/`COMMIT`/`ROLLBACK` on that client, and release it in `finally`.
 
-Observed-session storage stores only `token_hash`, public chain-tip commitments, event counts, and server receive timestamps. Bearer tokens are never returned by record lookup and are not public record content. Unfinalized observed sessions are expired opportunistically after seven days from last checkpoint or creation; expired/missing/wrong-token lookups surface through the API as the same `observation_unavailable` shape.
+Observed-session storage stores only `token_hash`, public chain-tip commitments, event counts, and server receive timestamps. Bearer tokens are never returned by record lookup and are not public record content. Finalizing a bound observation locks the observed-session row, re-reads the checkpoint set inside the transaction, and checks those commitments against the final event-chain prefixes before the record is inserted/finalized. Unfinalized observed sessions are expired opportunistically after seven days from last checkpoint or creation; expired/missing/wrong-token lookups surface through the API as the same `observation_unavailable` shape.
 
 ## Non-responsibility
 

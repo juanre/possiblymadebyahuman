@@ -1,4 +1,4 @@
-import type { B3Hash, EventLog, JsonValue, RecordManifest, Signal, WritingRecord } from "../../format/src/index.ts";
+import { computeEventHashChain, type B3Hash, type EventLog, type JsonValue, type RecordManifest, type Signal, type WritingRecord } from "../../format/src/index.ts";
 
 export type RecordStats = {
   record_hash: B3Hash;
@@ -148,7 +148,8 @@ export class ObservedCheckpointConflictError extends Error {
   readonly code:
     | "checkpoint_event_count_not_monotonic"
     | "checkpoint_chain_tip_conflict"
-    | "observed_session_finalized";
+    | "observed_session_finalized"
+    | "observation_mismatch";
 
   constructor(code: ObservedCheckpointConflictError["code"], message: string) {
     super(message);
@@ -177,17 +178,16 @@ export class InMemoryRecordStore implements RecordStore {
       throw new DuplicateRecordConflictError("short_signature already belongs to another record");
     }
 
+    let finalObservation = input.observation;
     if (input.observation?.observed_session_id) {
       const session = this.#observedSessions.get(input.observation.observed_session_id);
       if (!session) throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
       if (session.finalized_record_hash && session.finalized_record_hash !== recordHash) {
         throw new ObservedCheckpointConflictError("observed_session_finalized", "observed session already finalized");
       }
-      if (input.observation.state !== "observed" && input.observation.state !== "partial") {
-        throw new ObservedCheckpointConflictError("observed_session_finalized", "observed session has invalid final observation state");
-      }
+      finalObservation = validateRecordObservation(input.record, session.observed_session_id, session.checkpoints);
       session.finalized_record_hash = recordHash;
-      session.observation_state = input.observation.state;
+      session.observation_state = finalObservation.state;
       session.finalized_at = input.record.manifest.ingested_server_t ?? input.created_at ?? new Date().toISOString();
     }
 
@@ -197,7 +197,7 @@ export class InMemoryRecordStore implements RecordStore {
       short_signature: input.short_signature,
       stats: cloneJson(input.stats),
       signals: cloneJson(input.signals ?? []),
-      observation: cloneJson(input.observation ?? notRequestedObservation()),
+      observation: cloneJson(finalObservation ?? notRequestedObservation()),
       created_at: input.created_at ?? new Date().toISOString(),
     };
     this.#byHash.set(recordHash, stored);
@@ -335,6 +335,25 @@ export class PostgresRecordStore implements RecordStore {
 
     try {
       await this.#withTransaction(async (client) => {
+        let finalObservation = input.observation;
+        if (input.observation?.observed_session_id) {
+          const session = (await client.query<ObservedSessionRow>(
+            `select observed_session_id, token_hash, finalized_record_hash, observation_state, created_at, finalized_at
+             from observed_sessions where observed_session_id = $1 for update`,
+            [input.observation.observed_session_id],
+          )).rows[0];
+          if (!session) throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
+          if (session.finalized_record_hash && session.finalized_record_hash !== manifest.record_hash) {
+            throw new ObservedCheckpointConflictError("observed_session_finalized", "observed session already finalized");
+          }
+          const checkpoints = (await client.query<ObservedCheckpointRow>(
+            `select checkpoint_id, event_count, chain_tip, observed_at
+             from observed_checkpoints where observed_session_id = $1 order by event_count, observed_at`,
+            [input.observation.observed_session_id],
+          )).rows.map(rowToObservationCommitment);
+          finalObservation = validateRecordObservation(input.record, session.observed_session_id, checkpoints);
+        }
+
         await client.query(
           `insert into records (
             record_hash, short_signature, format_version, session_id,
@@ -359,7 +378,7 @@ export class PostgresRecordStore implements RecordStore {
             JSON.stringify(manifest.attestations),
             JSON.stringify(input.record.events),
             createdAt,
-            input.observation?.state === "unobserved" ? "unobserved" : "not_requested",
+            finalObservation?.state === "unobserved" ? "unobserved" : "not_requested",
           ],
         );
 
@@ -423,12 +442,13 @@ export class PostgresRecordStore implements RecordStore {
         }
 
         if (input.observation?.observed_session_id) {
+          if (!finalObservation || !finalObservation.observed_session_id) throw new ObservedCheckpointConflictError("observation_mismatch", "observed session final observation is missing");
           const result = await client.query(
             `update observed_sessions
              set finalized_record_hash = $1, observation_state = $2, finalized_at = $3
              where observed_session_id = $4
                and (finalized_record_hash is null or finalized_record_hash = $1)`,
-            [manifest.record_hash, input.observation.state, manifest.ingested_server_t ?? createdAt, input.observation.observed_session_id],
+            [manifest.record_hash, finalObservation.state, manifest.ingested_server_t ?? createdAt, input.observation.observed_session_id],
           );
           if ("rowCount" in result && (result as { rowCount?: number }).rowCount === 0) {
             throw new ObservedCheckpointConflictError("observed_session_finalized", "observed session already finalized");
@@ -821,6 +841,24 @@ export function observationFromCheckpoints(
     last_observed_at: last,
     server_observed_span_ms: first && last ? Math.max(0, Date.parse(last) - Date.parse(first)) : null,
   };
+}
+
+function validateRecordObservation(record: WritingRecord, observedSessionId: string, checkpoints: ObservationCommitment[]): BoundRecordObservation {
+  const commitments = [...checkpoints].sort((left, right) => left.event_count - right.event_count || left.observed_at.localeCompare(right.observed_at));
+  if (commitments.length === 0) {
+    throw new ObservedCheckpointConflictError("observation_mismatch", "observed session has no commitments");
+  }
+  const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
+  for (const checkpoint of commitments) {
+    if (checkpoint.event_count < 1 || checkpoint.event_count > record.events.length) {
+      throw new ObservedCheckpointConflictError("observation_mismatch", "checkpoint event_count does not match final record");
+    }
+    if (chain[checkpoint.event_count - 1] !== checkpoint.chain_tip) {
+      throw new ObservedCheckpointConflictError("observation_mismatch", "checkpoint does not match final record prefix");
+    }
+  }
+  const lastEventCount = commitments.at(-1)?.event_count ?? 0;
+  return observationFromCheckpoints(observedSessionId, lastEventCount === record.events.length ? "observed" : "partial", commitments);
 }
 
 export function unobservedObservation(): RecordObservation {
