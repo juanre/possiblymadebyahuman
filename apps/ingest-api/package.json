@@ -9,6 +9,7 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "dependencies": {
+    "@possiblymadebyahuman/analyzers": "0.1.0",
     "@possiblymadebyahuman/format": "0.1.0",
     "@possiblymadebyahuman/storage": "0.1.0"
   },

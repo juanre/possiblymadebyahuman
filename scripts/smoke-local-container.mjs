@@ -41,6 +41,7 @@ const fetched = await checkJson(`/api/records/${created.short_signature}`, (body
   assertEqual(body.stats?.final_text_length, record.manifest.final_text_length, 'GET stats final_text_length');
   assertEqual(body.stats?.paste_event_count, 1, 'GET stats paste_event_count');
   assertEqual(Array.isArray(body.signals), true, 'GET signals array');
+  assertEqual(body.signals.length, 2, 'GET signals length');
 });
 assertNoPlaintext('GET API response', JSON.stringify(fetched), true);
 

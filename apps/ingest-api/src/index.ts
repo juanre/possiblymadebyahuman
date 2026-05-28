@@ -1,3 +1,4 @@
+import { runDefaultAnalyzers } from "../../../packages/analyzers/src/index.ts";
 import {
   b3HashToBytes,
   isB3Hash,
@@ -93,13 +94,15 @@ export function createIngestApi(options: IngestApiOptions) {
       initialShortSignatureLength,
     );
     const stats = computeRecordStats(stampedRecord, idleThresholdMs);
+    const signals: AnalysisResult[] = runDefaultAnalyzers({ events: stampedRecord.events, manifest: stampedRecord.manifest })
+      .map((signal) => ({ ...signal, record_hash: stampedRecord.manifest.record_hash }));
 
     try {
       const save = await options.store.saveRecord({
         record: stampedRecord,
         short_signature,
         stats,
-        signals: [],
+        signals,
         created_at: stampedRecord.manifest.ingested_server_t ?? now().toISOString(),
       });
       return {

@@ -75,7 +75,8 @@ test("GET /api/records/:id supports short signature and full hash lookup", async
   assert.equal(byShort.body.manifest.record_hash, record.manifest.record_hash);
   assert.equal(byShort.body.manifest.ingested_server_t, "2026-05-28T10:00:00.000Z");
   assert.deepEqual(byShort.body.events, record.events);
-  assert.deepEqual(byShort.body.signals, []);
+  assert.equal(byShort.body.signals.length, 2);
+  assert.deepEqual(byShort.body.signals.map((signal) => signal.analyzer_id), ["timing-distribution", "edit-topology"]);
 
   const byHash = await api.getRecord(record.manifest.record_hash);
   assert.equal(byHash.status, 200);
@@ -120,6 +121,9 @@ test("stats are computed and persisted with meaningful fields", async () => {
   assert.equal(fetched.body.stats.idle_time_ms, 0);
   assert.equal(fetched.body.stats.long_pause_count, 0);
   assert.ok(Array.isArray(fetched.body.stats.delay_histogram));
+  assert.equal(fetched.body.signals.length, 2);
+  assert.equal(fetched.body.signals[0].analyzer_id, "timing-distribution");
+  assert.equal(fetched.body.signals[1].analyzer_id, "edit-topology");
 });
 
 test("duplicate ingest is immutable and idempotent", async () => {
