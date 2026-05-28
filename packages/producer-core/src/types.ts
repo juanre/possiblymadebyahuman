@@ -53,9 +53,12 @@ export type IngestRecordResponse = {
   created: boolean;
 };
 
+export type ObservationUploadRequest = ObservationEnvelope | { state: "unobserved" };
+
 export type IngestRecordInput = {
   manifest: RecordManifest;
   events: BufferMutation[];
+  observation?: ObservationUploadRequest;
 };
 
 export type ProducerIdentity = {

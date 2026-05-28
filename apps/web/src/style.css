@@ -6,6 +6,7 @@
 
 body { margin: 0; }
 button { font: inherit; }
+button:disabled { cursor: not-allowed; opacity: 0.55; }
 
 .page-shell {
   max-width: 1120px;
@@ -90,13 +91,19 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 .signal-card small { color: #756b60; font-weight: 400; }
 .measure-grid { grid-template-columns: minmax(180px, 1fr) minmax(80px, 1fr); }
 
-.verify-button {
-  background: #202124;
+.verify-button, .secondary-button {
   border: 0;
   border-radius: 999px;
-  color: #fffaf2;
   cursor: pointer;
   padding: 10px 16px;
+}
+.verify-button {
+  background: #202124;
+  color: #fffaf2;
+}
+.secondary-button {
+  background: #efe5d6;
+  color: #202124;
 }
 
 .observation-status {
@@ -128,3 +135,29 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 }
 .commitment-count { color: #675f56; }
 .commitment-chain { color: #514a40; overflow-wrap: anywhere; }
+
+.write-page { max-width: 980px; }
+.write-intro { color: #514a40; max-width: 780px; }
+.write-canvas {
+  background: #fffaf2;
+  border: 1px solid #d9c8ad;
+  border-radius: 18px;
+  box-shadow: 0 10px 30px rgb(60 40 10 / 0.06);
+  box-sizing: border-box;
+  color: #202124;
+  display: block;
+  font: 1.12rem/1.65 ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  min-height: 46vh;
+  outline: none;
+  padding: 22px;
+  resize: vertical;
+  width: 100%;
+}
+.write-canvas:focus {
+  border-color: #8b5e34;
+  box-shadow: 0 0 0 4px rgb(139 94 52 / 0.12), 0 10px 30px rgb(60 40 10 / 0.06);
+}
+.write-status { position: sticky; bottom: 12px; }
+.write-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.write-link { overflow-wrap: anywhere; }
+.write-link a { color: #7c4a19; font-weight: 700; }

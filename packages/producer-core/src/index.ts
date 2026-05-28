@@ -22,6 +22,7 @@ export type {
   ObservationEnvelope,
   ObservationFailure,
   ObservationLocalState,
+  ObservationUploadRequest,
   ObservedCommitment,
   ObservedSessionToken,
   PendingMutation,

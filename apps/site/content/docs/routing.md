@@ -1,13 +1,13 @@
 ---
 title: "Deployment and routing"
-summary: "How `/`, `/docs/*`, `/api/*`, and `/<short_signature>` are served from a single container."
+summary: "How `/`, `/docs/*`, `/write`, `/api/*`, and `/<short_signature>` are served from a single container."
 ---
 
 The public service runs as **one Docker container** that serves three things:
 
 - the ingest API (`/api/*` and `/health` / `/ready`);
 - this Hugo site (`/` and `/docs/*`);
-- the Vite record app (`/<short_signature>` plus assets under `/record-assets/*`).
+- the Vite app (`/write`, `/<short_signature>`, plus assets under `/record-assets/*`).
 
 ## Routing order
 
@@ -17,13 +17,14 @@ The runtime resolves requests in this order:
 2. `/health`, `/ready`, `/live` → backend.
 3. `/` and `/docs/*` → Hugo static output.
 4. `/record-assets/*` → Vite app assets.
-5. `/<short_signature>` → Vite app shell (`index.html`), with the React app reading `window.location.pathname` and hitting `/api/records/<slug>`.
+5. `/write` → Vite app shell (`index.html`) and first-party drafting/signing UI.
+6. `/<short_signature>` → Vite app shell (`index.html`), with the React app reading `window.location.pathname` and hitting `/api/records/<slug>`.
 
 ## Reserved short-signature prefixes
 
 Short signatures are derived from BLAKE3 bytes, but the generator skips any string that would shadow a fixed prefix:
 
-`api`, `docs`, `assets`, `record-assets`, `health`, `ready`, `live`, plus any future runtime/static prefix added to the container.
+`api`, `docs`, `blog`, `write`, `assets`, `record-assets`, `images`, `health`, `ready`, `live`, plus any future runtime/static prefix added to the container.
 
 When a generated signature collides with a reserved prefix, the backend lengthens or re-derives it until it does not.
 
