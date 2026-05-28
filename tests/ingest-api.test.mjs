@@ -57,6 +57,7 @@ test("short signatures reserve runtime/static route prefixes", () => {
   assert.equal(isReservedShortSignature("apiABC1234"), true);
   assert.equal(isReservedShortSignature("docs123456"), true);
   assert.equal(isReservedShortSignature("record-assetsXYZ"), true);
+  assert.equal(isReservedShortSignature("imagesXYZ"), true);
   assert.equal(isReservedShortSignature("K7Qp9dLx2m"), false);
 });
 

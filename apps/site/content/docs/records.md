@@ -51,7 +51,7 @@ https://possiblymadebyahuman.com/<short_signature>
 
 - Short signatures use a URL-safe alphabet and start around 10–12 characters.
 - The backend collision-checks against the `records` table.
-- Reserved route prefixes — `api`, `docs`, `blog`, `assets`, `record-assets`, `health`, `ready`, `live`, and similar — are never emitted as short signatures.
+- Reserved route prefixes — `api`, `docs`, `blog`, `assets`, `record-assets`, `images`, `health`, `ready`, `live`, and similar — are never emitted as short signatures. (`blog` stays reserved even after the public blog route was dropped, so the prefix stays safe to reintroduce.)
 - The full `record_hash` is always shown on the record page and is what browser verification recomputes against.
 
 ## Why a short URL still verifies safely

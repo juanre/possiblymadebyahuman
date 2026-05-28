@@ -176,7 +176,12 @@ async function route(
     return;
   }
 
-  if (requestUrl.pathname === "/" || requestUrl.pathname.startsWith("/docs/") || requestUrl.pathname.startsWith("/blog/")) {
+  if (requestUrl.pathname.startsWith("/images/")) {
+    await serveStatic(res, options.siteDistDir ?? SITE_DIST_DIR, requestUrl.pathname.slice(1));
+    return;
+  }
+
+  if (requestUrl.pathname === "/" || requestUrl.pathname.startsWith("/docs/")) {
     const relative = requestUrl.pathname === "/" ? "index.html" : join(requestUrl.pathname.slice(1), "index.html");
     await serveStatic(res, options.siteDistDir ?? SITE_DIST_DIR, relative);
     return;
@@ -238,6 +243,12 @@ function contentType(path: string): string {
     case ".css": return "text/css; charset=utf-8";
     case ".json": return "application/json; charset=utf-8";
     case ".svg": return "image/svg+xml";
+    case ".webp": return "image/webp";
+    case ".jpg":
+    case ".jpeg": return "image/jpeg";
+    case ".png": return "image/png";
+    case ".gif": return "image/gif";
+    case ".ico": return "image/x-icon";
     default: return "application/octet-stream";
   }
 }

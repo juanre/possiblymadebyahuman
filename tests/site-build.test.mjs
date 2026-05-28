@@ -40,6 +40,15 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
 
     assert.ok(!existsSync(join(out, "blog/index.html")), "blog/ should not be built");
 
+    for (const asset of [
+      "images/pmbah-figure-1200.webp",
+      "images/pmbah-figure-1200.jpg",
+      "images/pmbah-figure-600.webp",
+      "images/pmbah-figure-600.jpg",
+    ]) {
+      assert.ok(existsSync(join(out, asset)), `${asset} missing from build output`);
+    }
+
     const home = readFileSync(join(out, "index.html"), "utf8");
     assert.ok(home.includes("We cannot prove a human wrote it"), "home missing the headline");
     assert.ok(home.includes("home-figure"), "home missing the hand-drawn figure block");

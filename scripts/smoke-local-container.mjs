@@ -19,6 +19,9 @@ await checkJson('/ready', (body) => {
 await checkHtml('/', ['possiblymadebyahuman', 'content-blind']);
 await checkHtml('/docs/', ['Docs']);
 
+await checkBinary('/images/pmbah-figure-600.webp', 'image/webp');
+await checkBinary('/images/pmbah-figure-1200.jpg', 'image/jpeg');
+
 const post = await fetch(`${baseUrl}/api/records`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
@@ -78,6 +81,15 @@ async function checkHtml(path, expectedSnippets) {
   }
   assertNoPlaintext(`${path} HTML`, body);
   return body;
+}
+
+async function checkBinary(path, expectedContentType) {
+  const response = await fetch(`${baseUrl}${path}`);
+  if (response.status !== 200) throw new Error(`${path} failed: ${response.status} ${await response.text()}`);
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes(expectedContentType)) throw new Error(`${path} expected ${expectedContentType}, got ${contentType}`);
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength === 0) throw new Error(`${path} returned empty body`);
 }
 
 function assertNoPlaintext(label, body, includeShortJsonFixture = false) {
