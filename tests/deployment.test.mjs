@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+
+const execFileAsync = promisify(execFile);
 
 const read = (path) => readFile(path, "utf8");
 
@@ -10,6 +14,7 @@ test("deployment files define single-container and local Postgres paths", async 
   assert.match(dockerfile, /COPY --from=web-builder/);
   assert.match(dockerfile, /COPY --from=site-builder/);
   assert.match(dockerfile, /HEALTHCHECK/);
+  assert.match(dockerfile, /CMD \["node", "apps\/ingest-api\/scripts\/start-production\.mjs"\]/);
 
   const localCompose = await read("docker-compose.local-container.yml");
   assert.match(localCompose, /postgres:16-alpine/);
@@ -17,6 +22,8 @@ test("deployment files define single-container and local Postgres paths", async 
 
   const prodCompose = await read("docker-compose.prod.yml");
   assert.match(prodCompose, /DATABASE_URL.*Neon/);
+  assert.match(prodCompose, /PG_POOL_MAX/);
+  assert.match(prodCompose, /RECORD_BODY_LIMIT_BYTES/);
   assert.doesNotMatch(prodCompose, /postgres:16-alpine/);
 });
 
@@ -32,15 +39,20 @@ test("Makefile is the primary management surface", async () => {
     "dev-web",
     "dev-site",
     "docker-build",
+    "release-build-image",
+    "release-build-image-nocache",
     "local-container",
     "local-container-down",
     "local-container-logs",
     "local-container-test",
     "migrate",
     "prod-container",
+    "prod-container-pull",
     "prod-container-migrate",
     "prod-container-down",
     "build-site",
+    "release-ready",
+    "ship-tag",
     "clean",
   ]) {
     assert.match(makefile, new RegExp(`^${target}:`, "m"));
@@ -56,6 +68,56 @@ test("deployment examples do not commit secrets and docker ignores local artifac
     const body = await read(envFile);
     assert.match(body, /DATABASE_URL|POSTGRES_PASSWORD/);
     assert.doesNotMatch(body, /sk_live_|password123|BEGIN PRIVATE KEY/);
+  }
+
+  const productionExample = await read(".env.production.example");
+  for (const variable of [
+    "DATABASE_URL",
+    "PORT",
+    "PUBLIC_BASE_URL",
+    "NODE_ENV",
+    "LOG_LEVEL",
+    "PG_POOL_MAX",
+    "PG_POOL_IDLE_TIMEOUT_MS",
+    "PG_POOL_CONNECTION_TIMEOUT_MS",
+    "PG_STATEMENT_TIMEOUT_MS",
+    "RECORD_BODY_LIMIT_BYTES",
+  ]) {
+    assert.match(productionExample, new RegExp(`^${variable}=`, "m"));
+  }
+});
+
+test("tag-trigger GHCR release workflow follows the release-image pattern", async () => {
+  const workflow = await read(".github/workflows/release-image.yml");
+  assert.match(workflow, /tags: \["v\*"\]/);
+  assert.match(workflow, /REGISTRY: ghcr\.io/);
+  assert.match(workflow, /docker\/metadata-action@v5/);
+  assert.match(workflow, /type=semver,pattern=\{\{version\}\}/);
+  assert.match(workflow, /type=sha,prefix=/);
+  assert.match(workflow, /type=raw,value=latest/);
+  assert.match(workflow, /docker\/build-push-action@v6/);
+  assert.match(workflow, /platforms: linux\/amd64,linux\/arm64/);
+  assert.match(workflow, /file: Dockerfile/);
+});
+
+test("production env files remain ignored and untracked", async () => {
+  const ignored = await execFileAsync("git", ["check-ignore", ".env.production"]);
+  assert.equal(ignored.stdout.trim(), ".env.production");
+  const tracked = await execFileAsync("git", ["ls-files", ".env.production"]);
+  assert.equal(tracked.stdout.trim(), "");
+});
+
+test("release docs cover Render, GHCR, tags, Neon, and startup migrations", async () => {
+  const readme = await read("README.md");
+  for (const phrase of [
+    "Release and Render deployment",
+    "ghcr.io/<owner>/<repo>",
+    "pushed tag matching `v*`",
+    "Neon",
+    "startup runs checked migrations",
+    "make ship-tag VERSION=0.1.0",
+  ]) {
+    assert.match(readme, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 });
 

@@ -19,6 +19,10 @@ export type Analyzer = {
   analyze(input: AnalyzerInput): Signal;
 };
 
+export type DefaultAnalyzerOptions = {
+  idleThresholdMs?: number;
+};
+
 export class AnalyzerRegistry {
   readonly #analyzers = new Map<string, Analyzer>();
 
@@ -32,23 +36,42 @@ export class AnalyzerRegistry {
   }
 
   run(input: AnalyzerInput): Signal[] {
-    return this.list().map((analyzer) => analyzer.analyze(input));
+    return runAnalyzers(input, this.list());
   }
 }
 
-export function createDefaultAnalyzerRegistry(): AnalyzerRegistry {
+export function createDefaultAnalyzerRegistry(options: DefaultAnalyzerOptions = {}): AnalyzerRegistry {
   const registry = new AnalyzerRegistry();
-  registry.register(timingDistributionAnalyzer());
+  registry.register(timingDistributionAnalyzer({ idleThresholdMs: options.idleThresholdMs }));
   registry.register(editTopologyAnalyzer());
   return registry;
 }
 
 export function runAnalyzers(input: AnalyzerInput, analyzers: Analyzer[]): Signal[] {
-  return analyzers.map((analyzer) => analyzer.analyze(input));
+  return analyzers.map((analyzer) => runAnalyzerSafely(input, analyzer));
 }
 
-export function runDefaultAnalyzers(input: AnalyzerInput): Signal[] {
-  return createDefaultAnalyzerRegistry().run(input);
+export function runDefaultAnalyzers(input: AnalyzerInput, options: DefaultAnalyzerOptions = {}): Signal[] {
+  return createDefaultAnalyzerRegistry(options).run(input);
+}
+
+export function runAnalyzerSafely(input: AnalyzerInput, analyzer: Analyzer): Signal {
+  try {
+    return analyzer.analyze(deepFreeze(cloneAnalyzerInput(input)));
+  } catch (error) {
+    return analyzerErrorSignal(analyzer, error);
+  }
+}
+
+export function analyzerErrorSignal(analyzer: Pick<Analyzer, "id" | "version">, error: unknown): Signal {
+  const errorName = error instanceof Error ? error.name : typeof error;
+  return {
+    analyzer_id: analyzer.id,
+    analyzer_version: analyzer.version,
+    applicable: false,
+    measures: [measure("analyzer_error", true), measure("error_type", errorName)],
+    explanation: `Analyzer ${analyzer.id} failed while measuring this record, so this signal is unavailable. Other analyzer facts and the stored writing record are unaffected.`,
+  };
 }
 
 export function timingDistributionAnalyzer(options: { idleThresholdMs?: number } = {}): Analyzer {
@@ -148,10 +171,23 @@ export function editTopologyAnalyzer(
         analyzer_version: ANALYZER_VERSION,
         applicable: true,
         measures,
-        explanation: `Measured edit topology over ${events.length} mutation event(s): ${smallEditCount} small edit(s), ${largeAtomicInserts.length} large atomic insert(s), largest insert ${largestAtomicInsert} codepoint(s), and ${deletionEvents.length} deletion event(s) across ${deletionClusters} deletion cluster(s). Deleted codepoints are reported as a revision/dead-end indicator, not a verdict.${sourceExplanation}`,
+        explanation: `Measured edit topology over ${events.length} mutation event(s): ${smallEditCount} small edit(s), ${largeAtomicInserts.length} large atomic insert(s), largest insert ${largestAtomicInsert} codepoint(s), and ${deletionEvents.length} deletion event(s) across ${deletionClusters} deletion cluster(s). deletion_count counts every mutation that removes codepoints, including replacement events; replacement_count separately counts op=replace events. Deleted codepoints are reported as a revision/dead-end indicator, not a verdict.${sourceExplanation}`,
       };
     },
   };
+}
+
+function cloneAnalyzerInput(input: AnalyzerInput): AnalyzerInput {
+  return JSON.parse(JSON.stringify(input)) as AnalyzerInput;
+}
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== "object" || value === null) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value)) {
+    deepFreeze(child);
+  }
+  return value;
 }
 
 function notApplicable(analyzerId: string, explanation: string): Signal {

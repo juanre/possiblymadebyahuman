@@ -15,6 +15,7 @@
     "build:web": "npm --workspace @possiblymadebyahuman/web run build",
     "migrate": "node apps/ingest-api/scripts/migrate.mjs",
     "serve": "node apps/ingest-api/src/server.ts",
+    "start:production": "node apps/ingest-api/scripts/start-production.mjs",
     "smoke:local-container": "node scripts/smoke-local-container.mjs",
     "test:web-browser": "playwright test --config playwright.config.mjs"
   },

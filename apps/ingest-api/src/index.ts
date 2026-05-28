@@ -1,4 +1,9 @@
-import { runDefaultAnalyzers } from "../../../packages/analyzers/src/index.ts";
+import {
+  DEFAULT_IDLE_THRESHOLD_MS as ANALYZER_DEFAULT_IDLE_THRESHOLD_MS,
+  runAnalyzers,
+  runDefaultAnalyzers,
+  type Analyzer,
+} from "../../../packages/analyzers/src/index.ts";
 import {
   b3HashToBytes,
   isB3Hash,
@@ -20,8 +25,10 @@ import {
 
 export const INGEST_API_APP = "@possiblymadebyahuman/ingest-api";
 export const DEFAULT_BASE_URL = "https://possiblymadebyahuman.com";
-export const DEFAULT_IDLE_THRESHOLD_MS = 30_000;
+export const DEFAULT_IDLE_THRESHOLD_MS = ANALYZER_DEFAULT_IDLE_THRESHOLD_MS;
 export const DEFAULT_SHORT_SIGNATURE_LENGTH = 10;
+// Reserved route collisions use a deterministic leading-X rescue candidate in generateShortSignature.
+// Do not reserve x/X as a route prefix unless the rescue strategy is changed at the same time.
 export const RESERVED_ROUTE_PREFIXES = ["api", "docs", "blog", "assets", "record-assets", "health", "ready", "live"] as const;
 
 export type IngestApiOptions = {
@@ -30,6 +37,7 @@ export type IngestApiOptions = {
   now?: () => Date;
   idleThresholdMs?: number;
   initialShortSignatureLength?: number;
+  analyzers?: Analyzer[];
 };
 
 export type IngestRecordInput = {
@@ -94,7 +102,11 @@ export function createIngestApi(options: IngestApiOptions) {
       initialShortSignatureLength,
     );
     const stats = computeRecordStats(stampedRecord, idleThresholdMs);
-    const signals: AnalysisResult[] = runDefaultAnalyzers({ events: stampedRecord.events, manifest: stampedRecord.manifest })
+    const analyzerInput = { events: stampedRecord.events, manifest: stampedRecord.manifest };
+    const publicSignals = options.analyzers
+      ? runAnalyzers(analyzerInput, options.analyzers)
+      : runDefaultAnalyzers(analyzerInput, { idleThresholdMs });
+    const signals: AnalysisResult[] = publicSignals
       .map((signal) => ({ ...signal, record_hash: stampedRecord.manifest.record_hash }));
 
     try {

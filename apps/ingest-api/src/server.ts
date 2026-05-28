@@ -256,7 +256,7 @@ function parseOptionalPositiveInteger(value: string | undefined): number | undef
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   if (!DATABASE_URL) throw new Error("DATABASE_URL is required");
 
   const { Pool } = pg;
