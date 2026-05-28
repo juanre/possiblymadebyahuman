@@ -21,7 +21,7 @@ Producers do not capture raw keystrokes. They capture *buffer mutations*: a sing
 
 - `seq` is monotonic and gap-free, starting at 0.
 - `t` is integer milliseconds since session start.
-- `pos`, `del_len`, `ins_len` are Unicode codepoint offsets and lengths — never UTF-16 units or bytes. Each is a number, or an explicit `null` when the producer cannot derive a value content-opaquely (e.g. multi-node HTML paste into a rich-text editor). Producers must not guess.
+- `pos`, `del_len`, `ins_len` are Unicode codepoint offsets and lengths — never UTF-16 units or bytes. Each is a number, or an explicit `null` when the producer cannot derive a value content-blindly (e.g. multi-node HTML paste into a rich-text editor). Producers must not guess.
 - `op` is one of `insert`, `delete`, or `replace`.
 - `source` is one of `typing`, `paste`, `cut`, `drop`, `ime`, `autocomplete`, `programmatic`, or `unknown`. Producers must mark uncertain attribution as `unknown` rather than overclaiming `typing`.
 

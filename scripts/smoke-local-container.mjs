@@ -19,7 +19,7 @@ await checkJson('/ready', (body) => {
   assertEqual(body.migrations, true, '/ready migrations');
 });
 
-await checkHtml('/', ['possiblymadebyahuman', 'content-opaque']);
+await checkHtml('/', ['possiblymadebyahuman', 'content-blind']);
 await checkHtml('/docs/', ['Docs']);
 
 await checkBinary('/images/pmbah-figure-600.webp', 'image/webp');

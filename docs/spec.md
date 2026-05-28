@@ -38,7 +38,7 @@ We are not building a detector, a plagiarism checker, or a keylogger. We are bui
 
 ### 1.4 What this lets us NOT build (for v0)
 
-Because we are explicitly *not* making a proof claim, the heavy anti-forgery machinery is out of scope for the first version. A determined forger can fake a caring-gesture — but faking a gesture nobody is being graded on is a strange use of effort, so the threat barely applies. Concretely, **deferred out of v0**: continuous server-streaming event ingestion, entropy/rate plausibility checks, third-party timestamping, client attestation, and anything requiring plaintext. V0 may receive content-opaque checkpoint commitments (§4.3), but those are not continuous monitoring and are checked against the final public event chain only at upload. We still hash-chain the log so it is at least **tamper-evident** (§3.5) — cheap, and it protects the gesture's integrity — but we do not pretend it is tamper-proof. The proof-grade version can come later, for the later audience that actually wants it (§8, §10).
+Because we are explicitly *not* making a proof claim, the heavy anti-forgery machinery is out of scope for the first version. A determined forger can fake a caring-gesture — but faking a gesture nobody is being graded on is a strange use of effort, so the threat barely applies. Concretely, **deferred out of v0**: continuous server-streaming event ingestion, entropy/rate plausibility checks, third-party timestamping, client attestation, and anything requiring plaintext. V0 may receive content-blind checkpoint commitments (§4.3), but those are not continuous monitoring and are checked against the final public event chain only at upload. We still hash-chain the log so it is at least **tamper-evident** (§3.5) — cheap, and it protects the gesture's integrity — but we do not pretend it is tamper-proof. The proof-grade version can come later, for the later audience that actually wants it (§8, §10).
 
 ---
 
@@ -71,7 +71,7 @@ The earlier idea of a website with its own text box is **demoted to an optional 
 
 ### 2.2 Browser-extension producer design
 
-**Capture-all, content-opaque, local.** The extension attaches a capturer to text fields as they appear and records passively from the first edit. Nothing is sent anywhere until the user signs (§2.2.3). Capture stores mutation *shapes* (positions, lengths, timings, sources), never plaintext and never text-derived hashes. Producers may transiently inspect editor text only when necessary to derive numeric process metadata, then discard it; the local store must remain content-opaque.
+**Capture-all, content-blind, local.** The extension attaches a capturer to text fields as they appear and records passively from the first edit. Nothing is sent anywhere until the user signs (§2.2.3). Capture stores mutation *shapes* (positions, lengths, timings, sources), never plaintext and never text-derived hashes. Producers may transiently inspect editor text only when necessary to derive numeric process metadata, then discard it; the local store must remain content-blind.
 
 Capture-all makes signing a **retroactive** decision: write first, decide to sign after. This fits reality — you do not know you will need to prove authorship until someone accuses you, by which point arm-then-write is too late. Capture-all means the evidence already exists.
 
@@ -93,7 +93,7 @@ The entire user-facing loop, no site visit, no leaving the page:
 
 1. Write normally in the field; capture is already running.
 2. Click sign (icon or the field badge) → "finish & get link."
-3. The extension hash-chains that field's public process log, POSTs the **content-opaque** record, receives `/<record_hash>`, copies it to the clipboard. Toast: "record saved, link copied."
+3. The extension hash-chains that field's public process log, POSTs the **content-blind** record, receives `/<record_hash>`, copies it to the clipboard. Toast: "record saved, link copied."
 4. Paste the link wherever — into the comment, or hand it to whoever is accusing you.
 
 **Freeze on sign.** Signing freezes that field's session: further edits start a *new* session. A signed record must correspond to a definite state; "I signed then kept editing" would muddy what the link attests. **Clear on sign.** Once uploaded, drop the local log immediately — it has served its purpose and is now on the server. Manual paste only in v0; auto-appending the link to a site's submit is more magic, more fragile per-site, and presumptuous (it edits the user's text) — defer as a per-site nicety.
@@ -161,7 +161,7 @@ A producer **must not** label something `typing` it cannot prove was typing. `un
 
 ### 3.4 Content opacity boundary
 
-The public service is **content-opaque**: the event log carries only the *shape* of edits (positions, lengths, timings, sources). Public v0 records do not include inserted text, final text, `ins_hash`, `final_text_hash`, or any other hash/fingerprint of document text.
+The public service is **content-blind**: the event log carries only the *shape* of edits (positions, lengths, timings, sources). Public v0 records do not include inserted text, final text, `ins_hash`, `final_text_hash`, or any other hash/fingerprint of document text.
 
 Hash algorithm for public process records: BLAKE3, prefixed `b3:`. Hashes commit to canonical public event bytes, not document content.
 
@@ -368,7 +368,7 @@ A producer is "conformant" iff it passes canonicalization + hash-chain + process
 ## 11. Suggested build order
 
 1. **Spec repo first.** `format_version 0.1`: event schema, `canonicalization.md`, chaining, manifest, capabilities, conformance vectors. This is the artifact everything references.
-2. **Reference producer #1 — emacs minor mode.** Hooks `after-change-functions` (which hands you `(beg end len)` for every change from any source — the mutation stream natively). The cleanest capture surface and the smallest producer; proves the format against a real long-form, non-browser workflow first. Content-opaque, passes conformance. (§2.1)
+2. **Reference producer #1 — emacs minor mode.** Hooks `after-change-functions` (which hands you `(beg end len)` for every change from any source — the mutation stream natively). The cleanest capture surface and the smallest producer; proves the format against a real long-form, non-browser workflow first. Content-blind, passes conformance. (§2.1)
 3. **Reference producer #2 — capture-all browser extension.** Content script attaching a `beforeinput`/`input` capturer to text fields; per-field id with re-mount handling, capability degradation on rich-text fields, focus/blur session handling, sign-to-seal loop (freeze + clear + upload + clipboard link), few-day TTL on unsigned local captures. The distribution play and the fiddlier producer; build it second, against a format already proven by emacs. (§2.2)
 4. **Ingestion + storage.** Chain verification, content-addressing, immutable store, **permanent signed records with owner-delete (§5.1)**. A plain ingestion timestamp is fine; streaming/attested timestamping is deferred (§1.4).
 5. **Analyzers — timing-distribution and edit-topology.** Two capability profiles to exercise the interface.

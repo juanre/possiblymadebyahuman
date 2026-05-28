@@ -20,10 +20,10 @@ const word = (parts) => parts.join("");
 
 const BANNED = [
   { regex: new RegExp(`\\b${word(["hon", "est"])}(ly|y)?\\b`, "gi"), why: "moralizing — use clear / explicit / accurate / precise" },
-  { regex: new RegExp(`\\b${word(["re", "play", "able"])}\\b`, "gi"), why: "implies text storage/reconstruction; use inspectable / content-opaque process record" },
-  { regex: new RegExp(`\\b${word(["determin", "istic"])}\\s+${word(["re", "play"])}\\b`, "gi"), why: "implies text playback; use content-opaque framing" },
+  { regex: new RegExp(`\\b${word(["re", "play", "able"])}\\b`, "gi"), why: "implies text storage/reconstruction; use inspectable / content-blind process record" },
+  { regex: new RegExp(`\\b${word(["determin", "istic"])}\\s+${word(["re", "play"])}\\b`, "gi"), why: "implies text playback; use content-blind framing" },
   { regex: /\breconstructs?\s+the\s+buffer\b/gi, why: "implies text storage" },
-  { regex: /\bfinal_text_(hash|length)\b/gi, why: "removed from v0 content-opaque format" },
+  { regex: /\bfinal_text_(hash|length)\b/gi, why: "removed from v0 content-blind format" },
 ];
 
 async function walk(path) {
@@ -46,7 +46,7 @@ async function collectTextFiles() {
   return files.filter((file) => TEXTLIKE.has(extname(file)));
 }
 
-test("user-facing copy contains no banned content-opaque-violating phrases", async () => {
+test("user-facing copy contains no banned content-blind-violating phrases", async () => {
   const files = await collectTextFiles();
   const hits = [];
   for (const file of files) {

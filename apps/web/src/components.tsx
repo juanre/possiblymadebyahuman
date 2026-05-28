@@ -64,7 +64,7 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
     <section className="card">
       <h2>Edit timeline</h2>
       <p className="muted">Operation shape only: observed length, edit position, operation size, source, large inserts, and long pauses. No text is stored, hashed, or reconstructed.</p>
-      <div className="timeline" role="img" aria-label="Content-opaque edit timeline">
+      <div className="timeline" role="img" aria-label="Content-blind edit timeline">
         {points.map((point) => {
           const left = point.pos === null ? "0%" : `${Math.min(100, (point.pos / maxLength) * 100)}%`;
           const operationSize = (point.ins_len ?? 0) + (point.del_len ?? 0);

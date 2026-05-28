@@ -67,7 +67,7 @@ test("Postgres migration defines records, stats, and analysis-results tables", a
   assert.doesNotMatch(migration, /plaintext|observed_token|final_text\s+text|final_text_hash|final_text_length/i);
 });
 
-test("POST /api/records ingests a valid content-opaque record", async () => {
+test("POST /api/records ingests a valid content-blind record", async () => {
   const { api } = makeApi();
   const record = await fixtureRecord();
   const response = await api.postRecord(record);

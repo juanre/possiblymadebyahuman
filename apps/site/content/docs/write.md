@@ -3,7 +3,7 @@ title: "Write in the browser"
 summary: "Use the first-party drafting page when you want a no-install PMBAH record for text written inside that page."
 ---
 
-The `/write` page is the no-install producer. It gives you an empty drafting canvas, records content-opaque edit events from that canvas, and signs/uploads a PMBAH record when you choose **Sign and upload**.
+The `/write` page is the no-install producer. It gives you an empty drafting canvas, records content-blind edit events from that canvas, and signs/uploads a PMBAH record when you choose **Sign and upload**.
 
 What it captures:
 

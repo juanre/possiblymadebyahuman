@@ -144,7 +144,7 @@ test("content script retains no text snapshots between events", async () => {
     /\binferTextFieldMutation\b/,
   ];
   for (const pattern of bannedRetainedTextSymbols) {
-    assert.doesNotMatch(body, pattern, `content/capture.ts retains text via ${pattern} — content-opacity violation`);
+    assert.doesNotMatch(body, pattern, `content/capture.ts retains text via ${pattern} — content-blindness violation`);
   }
 });
 

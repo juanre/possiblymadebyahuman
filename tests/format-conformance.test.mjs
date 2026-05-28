@@ -126,8 +126,8 @@ test("public manifest validation rejects text-derived fields", async () => {
     final_text_hash: "b3:6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85",
     final_text_length: 2,
   });
-  assert.ok(errors.some((error) => error.includes("final_text_hash is not a content-opaque public manifest field")));
-  assert.ok(errors.some((error) => error.includes("final_text_length is not a content-opaque public manifest field")));
+  assert.ok(errors.some((error) => error.includes("final_text_hash is not a content-blind public manifest field")));
+  assert.ok(errors.some((error) => error.includes("final_text_length is not a content-blind public manifest field")));
 });
 
 test("public manifest validation rejects storage-only parent_record_hash", async () => {

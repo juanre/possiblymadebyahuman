@@ -1,4 +1,4 @@
-# Content-opaque browser capture feasibility spike
+# Content-blind browser capture feasibility spike
 
 Task: `default-aaaa.37`. Investigates which `PendingMutation` fields can be derived from browser APIs **without retaining or exfiltrating text content**. Output: matrix + recommendations for the format and producer-core contracts. No production code.
 
@@ -49,7 +49,7 @@ Legend: ✓ direct (numeric only) · ✓† transient string read, immediately d
 
 | Case (`inputType`) | source | `pos` | `del_len` | `ins_len` | notes |
 |---|---|---|---|---|---|
-| `insertText` (typing) | typing | ✓ `selectionStart` before | ✓ `getTargetRanges()[0]` size or `selectionEnd − selectionStart` before | ✓ via cursor-displacement OR ✓† `event.data.length` (UTF-16) / `Array.from(event.data).length` (codepoints) | both paths content-opaque; cursor delta needs no string at all |
+| `insertText` (typing) | typing | ✓ `selectionStart` before | ✓ `getTargetRanges()[0]` size or `selectionEnd − selectionStart` before | ✓ via cursor-displacement OR ✓† `event.data.length` (UTF-16) / `Array.from(event.data).length` (codepoints) | both paths content-blind; cursor delta needs no string at all |
 | `insertLineBreak`, `insertParagraph` | typing | ✓ | ✓ | `1` (constant) | |
 | `insertFromPaste`, `insertFromPasteAsQuotation` | paste | ✓ | ✓ | ✓ via cursor delta, or ✓† `event.data.length` | paste content discarded after counting |
 | `insertFromDrop` | drop | ✓ | ✓ | ✓ via cursor delta, or ✓† | |
@@ -71,7 +71,7 @@ Legend: ✓ direct (numeric only) · ✓† transient string read, immediately d
 | `insertFromDrop` | drop | ✓† | ✓† | ✓† if data is a string; otherwise nullable | |
 | programmatic (DOM mutation w/o `input` event) | programmatic | unknown unless inferred via `MutationObserver` | nullable | nullable | `MutationObserver(characterDataOldValue:true)` exposes `oldValue` as a transient string; counting only is allowed, but reconstructing every mutation is fragile. The format should accept `null`. |
 
-**Bottom line**: every user-driven case in the matrices above is capturable content-opaquely. The narrow remainder — multi-node HTML paste / rich drag-drop into contenteditable, and programmatic mutations that rewrite the DOM — is represented by allowing explicit `null` in `pos`/`del_len`/`ins_len`. Producers must not pretend to know a length they cannot derive content-opaquely.
+**Bottom line**: every user-driven case in the matrices above is capturable content-blindly. The narrow remainder — multi-node HTML paste / rich drag-drop into contenteditable, and programmatic mutations that rewrite the DOM — is represented by allowing explicit `null` in `pos`/`del_len`/`ins_len`. Producers must not pretend to know a length they cannot derive content-blindly.
 
 ## Codepoints vs UTF-16 units
 
@@ -92,7 +92,7 @@ Unchanged from the previous version, but with the rationale corrected:
 2. **Drop `BufferMutation.ins_hash`**. Same reason.
 3. **No `getInsertedText` or replay-with-text mode** in `verifyRecord`. Replay is a retention vector (the consumer would have to keep the original text to replay it).
 4. **Producer-core's `sign(id)`** has no content parameter. Self-checks chain only.
-5. **Format admits `pos`/`del_len`/`ins_len` as `number | null`, with explicit `null` for unknowns.** Producers emit `null` for the narrow cases where even transient inspection cannot derive a sensible value (multi-node HTML paste into contenteditable, certain programmatic mutations). Rationale: these three fields are semantically part of every mutation's shape, just sometimes unknowable content-opaquely; an explicit `null` is clearer in stored/public records and in the record-page UI than a silently absent field, and pre-release schemas can lock the null branch cleanly. `canonicalizeEvent` serialises `null` consistently; `validateEvent` accepts `null` and relaxes op-specific numeric constraints when any required numeric is `null`. Producers should not omit these fields for new v0 events.
+5. **Format admits `pos`/`del_len`/`ins_len` as `number | null`, with explicit `null` for unknowns.** Producers emit `null` for the narrow cases where even transient inspection cannot derive a sensible value (multi-node HTML paste into contenteditable, certain programmatic mutations). Rationale: these three fields are semantically part of every mutation's shape, just sometimes unknowable content-blindly; an explicit `null` is clearer in stored/public records and in the record-page UI than a silently absent field, and pre-release schemas can lock the null branch cleanly. `canonicalizeEvent` serialises `null` consistently; `validateEvent` accepts `null` and relaxes op-specific numeric constraints when any required numeric is `null`. Producers should not omit these fields for new v0 events.
 6. **Codepoint units stay** per the original spec; producers count via transient iteration over the string (`for (const _ of s) count++`) and discard. For long pastes, the for-of form avoids materialising a large intermediate array — use it in preference to `Array.from(s).length` whenever the transient string is unbounded (paste, drop, autocomplete commit).
 
 ## Recommendations for `.7` (browser extension)
@@ -182,7 +182,7 @@ The canary check fails the run if `RETENTION-CANARY-9F4A2B` is found anywhere. T
 
 ## Copy invariant (cross-reference)
 
-The content-opaque rule also has a user-facing copy consequence: the README, the SOT, the Hugo site docs, and the M4 record-app UI must drop legacy replay/final-document wording wherever it could suggest the system stores or reconstructs text. Preferred replacements: "inspectable, hash-addressed process record"; "content-opaque timeline of edit operations"; "shows operation shape/timing, not words"; "does not store, upload, or reconstruct your text". Broad user-facing wording cleanup is owned by `.38`; `.35` owns the technical schema/storage/API wording required by the migration.
+The content-blind rule also has a user-facing copy consequence: the README, the SOT, the Hugo site docs, and the M4 record-app UI must drop legacy replay/final-document wording wherever it could suggest the system stores or reconstructs text. Preferred replacements: "inspectable, hash-addressed process record"; "content-blind timeline of edit operations"; "shows operation shape/timing, not words"; "does not store, upload, or reconstruct your text". Broad user-facing wording cleanup is owned by `.38`; `.35` owns the technical schema/storage/API wording required by the migration.
 
 ## What is NOT proposed
 

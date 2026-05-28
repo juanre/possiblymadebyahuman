@@ -1,4 +1,4 @@
-;;; pmbah-mode.el --- PMBAH content-opaque Emacs producer -*- lexical-binding: t; -*-
+;;; pmbah-mode.el --- PMBAH content-blind Emacs producer -*- lexical-binding: t; -*-
 
 ;; Copyright (c) 2026
 ;; SPDX-License-Identifier: MIT
@@ -8,7 +8,7 @@
 
 ;;; Commentary:
 
-;; pmbah-mode records Emacs buffer mutations as content-opaque
+;; pmbah-mode records Emacs buffer mutations as content-blind
 ;; PossiblyMadeByAHuman writing records.  It hooks `after-change-functions`,
 ;; records mutation shape (positions/lengths/timing/source), computes hashes
 ;; locally through the shared format helper, uploads only the public record, and
@@ -22,7 +22,7 @@
 (require 'url-http)
 
 (defgroup pmbah nil
-  "Content-opaque PMBAH writing-record producer."
+  "Content-blind PMBAH writing-record producer."
   :group 'convenience
   :prefix "pmbah-")
 
@@ -69,7 +69,7 @@ The helper receives only process metadata and computes public process hashes."
 
 ;;;###autoload
 (define-minor-mode pmbah-mode
-  "Record this buffer's mutation history as a content-opaque PMBAH session.
+  "Record this buffer's mutation history as a content-blind PMBAH session.
 
 The mode records buffer mutations, not physical keystrokes.  Uploaded records
 contain event shape and public process hashes only; plaintext is not stored,
@@ -117,7 +117,7 @@ unit for these captured text buffers."
         (pmbah--append-event op pos len inserted-len (pmbah--source-for-current-command))))))
 
 (defun pmbah--append-event (op pos del-len ins-len source &optional timestamp-ms)
-  "Append a content-opaque PMBAH public event."
+  "Append a content-blind PMBAH public event."
   (let* ((seq pmbah--next-seq)
          (event (list :seq seq
                       :t (or timestamp-ms (pmbah--elapsed-ms))
@@ -221,7 +221,7 @@ Absolute file paths are shown as omitted and are not included by default."
         (erase-buffer)
         (insert "PMBAH capture context preview\n")
         (insert "================================\n\n")
-        (insert "The public record is content-opaque: it uploads mutation shape, timing, metadata, and hashes, not plaintext.\n\n")
+        (insert "The public record is content-blind: it uploads mutation shape, timing, metadata, and hashes, not plaintext.\n\n")
         (insert (format "Buffer name candidate: %s\n" buffer-label))
         (insert (format "Major mode candidate: %s\n" mode-label))
         (insert (format "Absolute file path: omitted by default (%s)\n" file-label))

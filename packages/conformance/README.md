@@ -3,14 +3,14 @@
 Compatibility gate for producers and format implementations.
 
 A producer is conformant for format `0.1` iff it passes canonicalization,
-hash-chain, content-opaque process-length, golden-record, and capability-accuracy
+hash-chain, content-blind process-length, golden-record, and capability-accuracy
 checks that apply to its declared capabilities.
 
 ## Responsibility
 
 - Canonicalization vectors for public process events.
 - Hash-chain vectors over public manifest/event data.
-- Content-opaque process-length vectors that use operation positions and lengths,
+- Content-blind process-length vectors that use operation positions and lengths,
   not document text; unknown process measurements are explicit JSON `null`.
 - Golden sample records without text-derived manifest fields.
 - Capability-accuracy notes/checks.
@@ -33,5 +33,5 @@ Vector files live in `packages/conformance/vectors/`:
 - `golden-records.json`
 - `capability-accuracy.json`
 
-Public v0 vectors are content-opaque. They do not contain `ins_text`,
+Public v0 vectors are content-blind. They do not contain `ins_text`,
 `ins_hash`, `final_text`, `final_text_hash`, or `final_text_length`.

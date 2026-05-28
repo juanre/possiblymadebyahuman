@@ -3,7 +3,7 @@ title: "Server-observed commitments"
 summary: "What the server-observed checkpoints on a record mean — and the limits of what they say."
 ---
 
-A writing record published by `possiblymadebyahuman` can carry a list of **server-observed commitments**. Each commitment is a short, content-opaque message that the producer sent to the ingest service while the writing session was still open: it names a position in the event-chain (the commitment's `event_count`) and a chain-tip (a BLAKE3 prefix hash that depends on every event up to that point). The server timestamps each commitment as it arrives and stores it alongside the finalised record.
+A writing record published by `possiblymadebyahuman` can carry a list of **server-observed commitments**. Each commitment is a short, content-blind message that the producer sent to the ingest service while the writing session was still open: it names a position in the event-chain (the commitment's `event_count`) and a chain-tip (a BLAKE3 prefix hash that depends on every event up to that point). The server timestamps each commitment as it arrives and stores it alongside the finalised record.
 
 The record page surfaces this as a one-line **Observation status** and a collapsible list of commitments inside the Verification panel. Below is what each public state name means.
 
@@ -42,7 +42,7 @@ A reader might reasonably ask: "If the server saw a chain tip at 14:02 and anoth
 
 ## What they are
 
-- A timestamped, content-opaque record of what the server received and when it received it.
+- A timestamped, content-blind record of what the server received and when it received it.
 - A check the ingest service can use at finalisation: if the commitments do not match the submitted record's event-chain prefix, finalisation is rejected and no public record is published.
 - A bound that makes after-the-fact fabrication of a session materially more work. An attacker who wants to publish a record with a long server-observed span has to commit chain tips at real wall-clock cadence; they cannot fold a long span onto a single offline burst.
 

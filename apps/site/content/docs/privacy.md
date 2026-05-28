@@ -1,13 +1,13 @@
 ---
-title: "Content-opaque privacy model"
+title: "Content-blind privacy model"
 summary: "What public records store, what they deliberately do not, and what the signer controls before upload."
 ---
 
-The default mode of `possiblymadebyahuman` is **content-opaque**. Public records describe the shape of an editing process. They do not contain, store, hash, upload, or reconstruct the document's text.
+The default mode of `possiblymadebyahuman` is **content-blind**. Public records describe the shape of an editing process. They do not contain, store, hash, upload, or reconstruct the document's text.
 
 ## What public records contain
 
-- A canonical event log of buffer mutations: `seq`, `t`, `op`, `pos`, `del_len`, `ins_len`, and `source`. Each numeric field carries a content-opaquely derived number; when a producer cannot derive a value without retaining text, the field is explicit `null` rather than a guess.
+- A canonical event log of buffer mutations: `seq`, `t`, `op`, `pos`, `del_len`, `ins_len`, and `source`. Each numeric field carries a content-blindly derived number; when a producer cannot derive a value without retaining text, the field is explicit `null` rather than a guess.
 - A manifest with the BLAKE3 chain hash over the canonical events, producer identity and version, declared capabilities, capture context (when provided), event count, and duration.
 - Precomputed statistics: typing/paste/cut/drop/IME/autocomplete/programmatic/unknown counts, codepoints inserted/deleted when known, largest atomic insert, observed process length when known, inter-event delay percentiles, active/idle time, and a delay histogram.
 - Analyzer signals, each with explicit measures and an explanation.

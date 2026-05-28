@@ -1,10 +1,10 @@
 ---
 title: "Write in Emacs"
-summary: "Native pmbah-mode for content-opaque writing records from GNU Emacs."
+summary: "Native pmbah-mode for content-blind writing records from GNU Emacs."
 eyebrow: "Producer"
 ---
 
-`pmbah-mode` is a buffer-local minor mode for GNU Emacs 29.1+ that records the shape of your editing as a content-opaque process record. When you choose to sign, it uploads only the public, content-opaque manifest and event log to the configured ingest service and copies the returned record URL to your kill ring. Nothing about what you typed leaves your machine; only the shape of the editing does.
+`pmbah-mode` is a buffer-local minor mode for GNU Emacs 29.1+ that records the shape of your editing as a content-blind process record. When you choose to sign, it uploads only the public, content-blind manifest and event log to the configured ingest service and copies the returned record URL to your kill ring. Nothing about what you typed leaves your machine; only the shape of the editing does.
 
 ## What it captures
 
@@ -143,7 +143,7 @@ For a custom local port, start with `PMBAH_PORT=18800 make local-container` and 
 - the buffer name candidate;
 - the major mode candidate;
 - absolute file path status (omitted by default);
-- the content-opaque upload guarantee.
+- the content-blind upload guarantee.
 
 It then asks separately whether to include `emacs.buffer_name` and `emacs.major_mode`. If both are declined, the context is only:
 
@@ -172,4 +172,4 @@ It then asks separately whether to include `emacs.buffer_name` and `emacs.major_
 
 The [browser writing page](/write) is the no-install producer: an empty drafting canvas in your browser that records edits made inside it, signs, and returns a short URL. A capture-all browser extension producer of the same record format is also in the repository (`apps/browser-extension/`); its public install path will be linked here once the Chrome Web Store listing is approved.
 
-All three producers — Emacs, the browser writing page, and the extension — sign content-opaque manifests that `packages/format` verifies the same way. See [the verification page](/docs/verification/) for the chain of trust and [the records page](/docs/records/) for the public record format.
+All three producers — Emacs, the browser writing page, and the extension — sign content-blind manifests that `packages/format` verifies the same way. See [the verification page](/docs/verification/) for the chain of trust and [the records page](/docs/records/) for the public record format.

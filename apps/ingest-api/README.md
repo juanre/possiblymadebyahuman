@@ -6,10 +6,10 @@ Layer 2 ingestion service package.
 
 - `POST /api/observed-sessions/:id/checkpoints`, `POST /api/records`, `GET /api/records/:short_signature_or_hash`, and `GET /api/health` endpoint handlers.
 - Schema validation through `packages/format`.
-- Public content-opaque enforcement: plaintext/content-bearing fields are rejected.
+- Public content-blind enforcement: plaintext/content-bearing fields are rejected.
 - Hash-chain verification, content addressing, `ingested_server_t` stamping, short-signature generation, immutable storage, and record stats computation.
 - Server-observed process commitments: checkpoint append/receipt, token-hash binding, final prefix verification, and observation metadata on fetched records.
-- Returning the content-opaque `{ manifest, events, stats, signals, observation }` record shape for the web app.
+- Returning the content-blind `{ manifest, events, stats, signals, observation }` record shape for the web app.
 
 ## Non-responsibility
 

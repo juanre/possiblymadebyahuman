@@ -18,7 +18,7 @@ function runEmacs(scriptPath) {
   });
 }
 
-test("Emacs producer captures Unicode codepoint mutations and builds a conformant content-opaque record", { skip: emacs ? false : "emacs binary not available" }, async () => {
+test("Emacs producer captures Unicode codepoint mutations and builds a conformant content-blind record", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-test-"));
   const outputPath = join(temp, "record.json");
   const scriptPath = join(temp, "scenario.el");
@@ -185,7 +185,7 @@ test("Emacs helper payload contains only process metadata", { skip: emacs ? fals
   }
 });
 
-test("Emacs helper handles large content-opaque event shapes without text replay", () => {
+test("Emacs helper handles large content-blind event shapes without text replay", () => {
   const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
   const payload = {
     format_version: "0.1",

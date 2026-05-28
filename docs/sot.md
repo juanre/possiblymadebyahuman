@@ -85,7 +85,7 @@ Owns:
 - BLAKE3-prefixed `b3:` hashing
 - event hash-chain computation
 - record-hash verification
-- content-opaque process-length validation using Unicode codepoint offsets, with explicit JSON `null` for unknown process measurements
+- content-blind process-length validation using Unicode codepoint offsets, with explicit JSON `null` for unknown process measurements
 
 Does not own:
 
@@ -103,7 +103,7 @@ Owns:
 
 - canonicalization vectors
 - hash-chain vectors
-- content-opaque process-length/codepoint vectors
+- content-blind process-length/codepoint vectors
 - golden sample records
 - conformance runner
 - documentation for what “conformant producer” means
@@ -141,7 +141,7 @@ Owns:
 
 - per-field session identity, certainty (`fresh` / `resumed` / `degraded` / `collision`) and registry
 - wall-clock-anchored event timeline (idle gaps preserved)
-- content-opaque manifest construction via `packages/format`
+- content-blind manifest construction via `packages/format`
 - session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
 - capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
 - TTL sweep
@@ -209,7 +209,7 @@ Vite React app for record pages.
 Owns:
 
 - `/<short_signature>` record page
-- content-opaque process timeline
+- content-blind process timeline
 - quick stats panel
 - analyzer signal cards
 - verification panel
@@ -273,7 +273,7 @@ All v0 producers record the writing process captured after a user starts a sessi
 
 - **Emacs** refuses to enable `pmbah-mode` in a non-empty buffer by default. Its helper receives only process metadata (`events`, producer info, capture context, duration), not buffer text, inserted text, final text, text hashes, or text replay fixtures.
 - **Browser extension** treats a fresh non-empty field as ineligible unless it can resume an existing PMBAH session for the same field. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths, but it must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
-- **`/write` first-party page** starts from an empty textarea and clears/discards the visible canvas independently of the persisted content-opaque session record.
+- **`/write` first-party page** starts from an empty textarea and clears/discards the visible canvas independently of the persisted content-blind session record.
 - **`packages/producer-core`** accepts only public mutation shapes and session metadata. It must not require plaintext, final text, inserted text, text hashes, or text replay to sign/verify a record.
 
 Tests and audits for each producer must cover this invariant before release.
@@ -616,7 +616,7 @@ Input:
 Backend behavior:
 
 1. Validate schema.
-2. Verify events are content-opaque by default; no plaintext or text-derived hash field is accepted in public mode.
+2. Verify events are content-blind by default; no plaintext or text-derived hash field is accepted in public mode.
 3. Recompute canonical event bytes.
 4. Recompute BLAKE3 hash chain.
 5. Verify manifest `record_hash` equals final chain hash.
@@ -661,7 +661,7 @@ Returns:
 }
 ```
 
-Still content-opaque. Observation state is server metadata, not a manifest field.
+Still content-blind. Observation state is server metadata, not a manifest field.
 
 ### 10.3 `POST /api/observed-sessions/:session_id/checkpoints`
 
@@ -743,7 +743,7 @@ The page should show:
 5. Analyzer signals as facts.
 6. Verification panel.
 
-### 11.2 Process timeline in content-opaque mode
+### 11.2 Process timeline in content-blind mode
 
 The public service should not render or reconstruct text. Instead, the timeline visualizes structure:
 
@@ -777,7 +777,7 @@ Landing page goals:
 
 - Explain the gesture: “we can’t prove it, but here’s us caring enough to show the work.”
 - Show a simple example of a writing record.
-- Explain content-opaque storage.
+- Explain content-blind storage.
 - Link to browser extension and Emacs producer when available.
 - Link to docs and threat model.
 
@@ -975,7 +975,7 @@ Rules:
 - Implement canonicalization.
 - Implement BLAKE3 `b3:` hashing.
 - Implement hash-chain computation and verification.
-- Implement content-opaque process-length validation with Unicode codepoint offsets and explicit nulls for unknown process measurements.
+- Implement content-blind process-length validation with Unicode codepoint offsets and explicit nulls for unknown process measurements.
 - Add conformance vectors.
 - Wire CI/test command.
 
@@ -1007,7 +1007,7 @@ Rules:
 
 - Implement public record page.
 - Implement quick stats panel.
-- Implement content-opaque process timeline.
+- Implement content-blind process timeline.
 - Implement signal cards.
 - Implement verification panel with browser-side chain verification.
 

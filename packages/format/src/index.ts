@@ -406,8 +406,8 @@ export function validateManifest(manifest: unknown): string[] {
   }
   validateNonNegativeInteger(candidate.event_count, "event_count", errors);
   validateNonNegativeInteger(candidate.duration_ms, "duration_ms", errors);
-  if ("final_text_hash" in candidate) errors.push("final_text_hash is not a content-opaque public manifest field");
-  if ("final_text_length" in candidate) errors.push("final_text_length is not a content-opaque public manifest field");
+  if ("final_text_hash" in candidate) errors.push("final_text_hash is not a content-blind public manifest field");
+  if ("final_text_length" in candidate) errors.push("final_text_length is not a content-blind public manifest field");
   validateNullableString(candidate.created_client_t, "created_client_t", errors);
   validateNullableString(candidate.ingested_server_t, "ingested_server_t", errors);
   if ("parent_record_hash" in candidate) {

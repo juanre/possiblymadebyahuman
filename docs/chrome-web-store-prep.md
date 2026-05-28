@@ -109,7 +109,7 @@ PossiblyMadeByAHuman Writing Records
 
 ### Draft short description
 
-Records the shape of your editing as a content-opaque writing record. Sign and
+Records the shape of your editing as a content-blind writing record. Sign and
 share a short URL. Not a human/AI detector.
 
 ### Draft detailed description
@@ -118,7 +118,7 @@ possiblymadebyahuman records the shape of a writing process without uploading th
 words you wrote.
 
 When you focus an empty textarea or plain text input on any page, the extension
-starts recording the shape of your editing as a content-opaque event log:
+starts recording the shape of your editing as a content-blind event log:
 insert/delete/replace positions and lengths in Unicode codepoints, timing, and
 source attribution (typing, paste, drop, cut, IME, autocomplete) when the browser
 reports it. Existing non-empty fields are not recorded — the badge labels them
@@ -126,7 +126,7 @@ reports it. Existing non-empty fields are not recorded — the badge labels them
 draft you started elsewhere. Nothing leaves your device while you write.
 
 When you click Sign & upload in the popup, the extension builds a public
-content-opaque writing record from the events: codepoint-anchored process
+content-blind writing record from the events: codepoint-anchored process
 metadata plus a BLAKE3 hash chain over the event sequence. The public service
 stores that record and returns a short URL you can share. The returned URL is
 copied to your clipboard.
@@ -137,7 +137,7 @@ fragment, page title, field kind) is shown for review before upload and can be
 edited or removed.
 
 This is not an AI detector. It does not decide who wrote something, assign a
-confidence score, or certify authorship. It gives readers a content-opaque
+confidence score, or certify authorship. It gives readers a content-blind
 view of an editing session's structure and makes large pastes or atomic
 insertions visible as process facts.
 
@@ -186,7 +186,7 @@ and final extension behavior.
 
 ### Data transmitted on explicit sign/upload
 
-- Content-opaque PMBAH record manifest and event log:
+- Content-blind PMBAH record manifest and event log:
   - `manifest`: format version, BLAKE3 record hash, session id, producer
     identity (`browser-extension` v0.1.0 with capabilities `timing` and
     `source_attribution`), capture context, event count, duration, and
@@ -235,7 +235,7 @@ justifications into the Chrome Web Store privacy form verbatim.
 
 | Permission / host access | Manifest field | Justification |
 | --- | --- | --- |
-| `storage` | `permissions: ["storage", ...]` | The service worker stores unsigned per-field session event logs in `chrome.storage.local` (`pmbah:sessions:v1`) until the user signs and uploads them, discards them, or the 3-day TTL sweeps them. Storage holds only content-opaque numeric event records and observation state (`observed_session_id`, bearer `token`, commitments — never text). |
+| `storage` | `permissions: ["storage", ...]` | The service worker stores unsigned per-field session event logs in `chrome.storage.local` (`pmbah:sessions:v1`) until the user signs and uploads them, discards them, or the 3-day TTL sweeps them. Storage holds only content-blind numeric event records and observation state (`observed_session_id`, bearer `token`, commitments — never text). |
 | `clipboardWrite` | `permissions: [..., "clipboardWrite", ...]` | After a successful sign+upload, the popup copies the returned short record URL to the user's clipboard so they can paste it where they want to share it. No other clipboard write occurs. |
 | `alarms` | `permissions: [..., "alarms"]` | The service worker registers a single repeating alarm (`pmbah-ttl-sweep`, every 60 minutes) that runs the local 3-day TTL sweep over unsigned sessions. No other alarm is registered. |
 | `host_permissions: ["<all_urls>"]` | top-level | Required for the content script to attach to textarea and plain text input fields on any page the user visits. This is the capture-all writer producer scope. The content script reads only what is needed transiently inside the `beforeinput` handler to compute codepoint-anchored numeric metadata and never retains text across event boundaries. Non-empty pre-existing fields are marked "not recording (existing content)" and produce no events. |
@@ -257,7 +257,7 @@ Use these notes to keep the submission aligned with PMBAH's product promise:
 - The extension is a writing-record producer, not an AI detector.
 - The extension must not claim to verify, certify, or score human authorship.
 - The privacy policy and listing must state that public uploads are
-  content-opaque by default.
+  content-blind by default.
 - The final listing must describe when capture is active and what user action
   triggers upload.
 - Permission justifications must be concrete and match the final manifest.
@@ -272,7 +272,7 @@ listing / artwork / submission actions.
 **Implementation done** (verified at frontend `35799f3`):
 
 - `.7` browser extension landed (`fe6edf8` + amendment `2a44c93`): per-field
-  session identity via producer-core, beforeinput-driven content-opaque
+  session identity via producer-core, beforeinput-driven content-blind
   capture with no retained text snapshots, INELIGIBLE policy for non-empty
   pre-existing fields, server-observed checkpoint integration via the `.40`
   `CheckpointAdapter`, sign+upload flow with clipboard copy, per-session
@@ -371,7 +371,7 @@ each unlocks the next.
 
 6. **Privacy policy URL (Juan).**
    - Chrome Web Store requires a hosted privacy policy URL. The docs site
-     already explains the content-opaque guarantees at `/docs/privacy/`. The
+     already explains the content-blind guarantees at `/docs/privacy/`. The
      simplest v0 answer is to use that URL once the site domain is live.
    - Record the privacy policy URL here once approved:
      > Privacy policy URL: **TBD by Juan** (recommended:
@@ -392,7 +392,7 @@ each unlocks the next.
      checklist is enumerated there: textarea capture, contenteditable
      degraded capture, multi-field multi-site session isolation, INELIGIBLE
      pre-existing content, idle-gap preservation, failed-upload Discard
-     path, and content-opaque network-payload inspection in DevTools.
+     path, and content-blind network-payload inspection in DevTools.
    - Record sideload evidence (screenshots, brief notes per item) and any
      blockers found before submission. Sideload outcome:
      > Sideload checklist outcome: **TBD by Juan / human reviewer**.

@@ -1,16 +1,16 @@
 # possiblymadebyahuman
 
-`possiblymadebyahuman` records the *shape* of a writing process — operation positions, lengths, timing, and source classification — and presents it as a content-opaque, hash-addressed process record. The record never contains, stores, or reconstructs the text that was written.
+`possiblymadebyahuman` records the *shape* of a writing process — operation positions, lengths, timing, and source classification — and presents it as a content-blind, hash-addressed process record. The record never contains, stores, or reconstructs the text that was written.
 
 It is **not** a human/AI detector. It does not emit humanness verdicts, confidence percentages, or certification-style badges. The allowed claim is just: this record shows the shape of an editing process.
 
-The public service is content-opaque by default: uploaded records store mutation structure, metadata, statistics, and analyzer facts, not plaintext writing. Producers may transiently inspect editor text only to derive numeric process metadata, then must discard it; they do not store, hash, reconstruct, or upload document text.
+The public service is content-blind by default: uploaded records store mutation structure, metadata, statistics, and analyzer facts, not plaintext writing. Producers may transiently inspect editor text only to derive numeric process metadata, then must discard it; they do not store, hash, reconstruct, or upload document text.
 
 `possiblymadebyahuman` is most certainly _not_ made by a human. It is instead made by a team of agents coordinating with [https://aweb.ai](aweb.ai). The human is only the instigator, and also somehow responsible for the result even though he has not actually looked at the code. His only real contribution has been the line drawing in the home page. He also plans to document how long it took from the first idea to the release of the site, as a note for posterity.
 
 ## Current milestone
 
-Release-readiness work is in progress. Implemented pieces include the content-opaque record format, ingest API, immutable Postgres storage, analyzer facts, Docker/local Postgres stack, and Vite public record page. Remaining release work is tracked in aweb tasks; do not treat a local feature demo as release-ready until the release-readiness task is reviewed.
+Release-readiness work is in progress. Implemented pieces include the content-blind record format, ingest API, immutable Postgres storage, analyzer facts, Docker/local Postgres stack, and Vite public record page. Remaining release work is tracked in aweb tasks; do not treat a local feature demo as release-ready until the release-readiness task is reviewed.
 
 ## Producer installation docs
 

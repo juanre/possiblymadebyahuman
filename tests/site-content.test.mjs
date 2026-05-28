@@ -25,11 +25,11 @@ const sectionsCoveringProductPromise = [
   { file: "emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open an **empty** writing buffer", "refuses to start in a non-empty buffer"] },
   { file: "docs/product-promise.md", needs: ["No verdicts", "Process, not content", "Hash-addressed records"] },
   { file: "docs/claims.md", needs: ["We claim", "We do not claim"] },
-  { file: "docs/privacy.md", needs: ["content-opaque", "capture context", "no public deletion API", "no user system"] },
+  { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system"] },
   { file: "docs/records.md", needs: ["buffer mutation", "short_signature", "Hash chain", "Reserved route prefixes"] },
   { file: "docs/verification.md", needs: ["Re-verify chain", "hash chain", "What verification does and does not mean"] },
   { file: "docs/threat-model.md", needs: ["adversary", "Retype an AI draft", "hash chain detects any change"] },
-  { file: "docs/conformance.md", needs: ["Canonicalization vectors", "Capability accuracy", "Content-opacity", "Capture-context preview"] },
+  { file: "docs/conformance.md", needs: ["Canonicalization vectors", "Capability accuracy", "Content-blindness", "Capture-context preview"] },
   { file: "docs/routing.md", needs: ["/api/", "/docs/", "short_signature", "SITE_DIST_DIR"] },
   {
     file: "docs/server-observed-commitments.md",
@@ -52,7 +52,7 @@ const banVerdictPatterns = [
   /\bguaranteed\s+human(?:-?(?:written|authored))?\b/i,
 ];
 
-test("hugo config is configured for the content-opaque landing + docs surface", async () => {
+test("hugo config is configured for the content-blind landing + docs surface", async () => {
   const hugo = await read(join(siteRoot, "hugo.toml"));
   assert.match(hugo, /possiblymadebyahuman\.com/);
   assert.match(hugo, /title = 'possiblymadebyahuman'/);
@@ -98,7 +98,7 @@ test("each doc page renders content-aligned content and avoids verdict language"
 
 test("layout base sets the candid description, provides site nav with producer CTAs, exposes the OSS/MIT footer, and links no blog route", async () => {
   const base = await read(join(siteRoot, "layouts/_default/baseof.html"));
-  assert.match(base, /content="A content-opaque writing-record service/);
+  assert.match(base, /content="A content-blind writing-record service/);
   assert.match(base, /aria-label="Site sections"/);
   // Left rail: Home + Docs.
   assert.match(base, /href="\/docs\/"/);

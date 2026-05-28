@@ -5,7 +5,7 @@ Future Vite React record-viewing app.
 ## Responsibility
 
 - Public `/<short_signature>` record page.
-- Standing disclaimer, capture-context summary, quick stats, content-opaque process timeline, analyzer signal cards, and verification panel.
+- Standing disclaimer, capture-context summary, quick stats, content-blind process timeline, analyzer signal cards, and verification panel.
 - Browser-side chain verification using `packages/format` when implemented.
 
 ## Non-responsibility

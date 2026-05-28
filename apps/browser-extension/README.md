@@ -1,8 +1,8 @@
 # browser extension
 
-Chrome/Chromium Manifest V3 producer for `possiblymadebyahuman` content-opaque writing records.
+Chrome/Chromium Manifest V3 producer for `possiblymadebyahuman` content-blind writing records.
 
-The extension captures the **shape** of editing in any textarea or plain text input on any page — codepoint-anchored insert/delete/replace events with wall-clock timestamps and source attribution — and uploads a signed, content-opaque writing record to the configured ingest service when the user clicks **Sign & upload** in the popup. No document text is ever stored, hashed, logged, or transmitted.
+The extension captures the **shape** of editing in any textarea or plain text input on any page — codepoint-anchored insert/delete/replace events with wall-clock timestamps and source attribution — and uploads a signed, content-blind writing record to the configured ingest service when the user clicks **Sign & upload** in the popup. No document text is ever stored, hashed, logged, or transmitted.
 
 ## Responsibility
 
@@ -60,7 +60,7 @@ A new producer scope rule applies: **the extension does not snapshot existing no
 - **Non-empty field, resumable session matches** → resumed, mutations continue.
 - **Non-empty field, no resumable session** → INELIGIBLE. Badge reads `not recording (existing content)`. To start a session in this field the user must either clear the field or open a fresh one.
 
-This is deliberate: silently snapshotting pre-existing draft text would be a content-opacity violation, and silently merging an unrelated session into the field would be misleading.
+This is deliberate: silently snapshotting pre-existing draft text would be a content-blindness violation, and silently merging an unrelated session into the field would be misleading.
 
 ## Sign / upload flow
 
@@ -122,7 +122,7 @@ The agent that wrote this code cannot load a real browser. The following manual 
 - **TTL sweep.** Leave a session untouched. After 3 days plus an hour the `chrome.alarms` job should sweep it. Easier to verify in tests than by waiting: see `tests/producer-core.test.mjs`.
 - **Failed upload.** Block the configured ingest endpoint (e.g. via DevTools network throttling or by pointing `EXT_BASE_URL` at a closed port). Sign; the popup should show the failure reason and offer **Discard**. Discarding clears the session.
 
-## Content-opacity guarantees
+## Content-blindness guarantees
 
 The package's static + runtime safeguards:
 

@@ -112,7 +112,7 @@ export function WritePage() {
     });
     setSession(record);
     setStatus("ready");
-    setMessage("Text stays in this browser canvas. Signing uploads only content-opaque process metadata.");
+    setMessage("Text stays in this browser canvas. Signing uploads only content-blind process metadata.");
     await registry.persist();
   }, [registry]);
 
@@ -163,7 +163,7 @@ export function WritePage() {
       try {
         const updated = registry.appendMutation(session.session_id, mutation);
         setSession(updated);
-        setMessage("Capturing content-opaque edit events locally.");
+        setMessage("Capturing content-blind edit events locally.");
         void registry.persist();
         void registry.awaitObservationIdle(session.session_id).then(() => refreshSession(session.session_id));
       } catch (error) {
@@ -180,7 +180,7 @@ export function WritePage() {
   const signAndUpload = useCallback(async () => {
     if (!session) return;
     setStatus("signing");
-    setMessage("Flushing server-observed checkpoints, then uploading the content-opaque record…");
+    setMessage("Flushing server-observed checkpoints, then uploading the content-blind record…");
     try {
       await registry.flushObservation(session.session_id);
       const draft = signedDraft.current ?? registry.sign(session.session_id);
@@ -236,7 +236,7 @@ export function WritePage() {
   return <main className="page-shell write-page">
     <p className="eyebrow">possiblymadebyahuman</p>
     <h1>Write and sign</h1>
-    <p className="write-intro">A no-install drafting page for creating a content-opaque writing-process record. It only captures edits made inside this page.</p>
+    <p className="write-intro">A no-install drafting page for creating a content-blind writing-process record. It only captures edits made inside this page.</p>
 
     <section className="banner" aria-label="Privacy note">
       <strong>Text stays in the browser.</strong>

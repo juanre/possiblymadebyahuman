@@ -21,7 +21,7 @@ export function codepointOffsetOf(text: string, utf16Index: number): number {
 
 /**
  * Maps DOM InputEvent.inputType to the format's Source enum, honouring the
- * content-opacity rule: when the inputType is unknown or ambiguous, return
+ * content-blindness rule: when the inputType is unknown or ambiguous, return
  * "unknown" rather than guessing.
  */
 export function sourceFromInputType(inputType: string | undefined | null): Source {

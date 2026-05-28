@@ -473,7 +473,7 @@ function findContentBearingFields(input: unknown): string[] {
   const errors: string[] = [];
   visit(input, "$", (path, key) => {
     if (["text", "plaintext", "content", "ins_text", "ins_hash", "final_text", "final_text_hash", "final_text_length"].includes(key)) {
-      errors.push(`${path} is not allowed in public content-opaque records`);
+      errors.push(`${path} is not allowed in public content-blind records`);
     }
   });
   return errors;

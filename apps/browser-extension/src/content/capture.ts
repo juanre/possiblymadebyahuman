@@ -10,7 +10,7 @@ declare const chrome: {
   };
 };
 
-// Per-field UI state. There are no string fields here — by content-opacity
+// Per-field UI state. There are no string fields here — by content-blindness
 // rule the content script must not retain text across input events. Every
 // beforeinput cycle inspects the field's text once inside the handler scope
 // and discards the reference when the handler returns.
@@ -180,7 +180,7 @@ async function registerField(element: HTMLElement): Promise<void> {
 }
 
 /**
- * beforeinput is the canonical content-opaque capture point: it fires BEFORE
+ * beforeinput is the canonical content-blind capture point: it fires BEFORE
  * the browser applies the change, so `target.value`, `target.selectionStart`,
  * and `target.selectionEnd` reflect the pre-change state. We read those three
  * values inline, compute codepoint-anchored numeric metadata via

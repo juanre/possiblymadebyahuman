@@ -6,7 +6,7 @@ This document maps the approved v0 source of truth (`docs/sot.md`) into the repo
 
 `possiblymadebyahuman` is a writing-record system, not a detector.
 
-- Public records are content-opaque by default: they store edit structure, metadata, statistics, and analyzer facts, not plaintext writing or text-derived hashes.
+- Public records are content-blind by default: they store edit structure, metadata, statistics, and analyzer facts, not plaintext writing or text-derived hashes.
 - Producers may transiently inspect editor text only when necessary to derive numeric process metadata, then must discard it; they do not store, hash, replay, or upload document text.
 - The product must not display a human/AI verdict, confidence percentage, humanness score, or certification-style badge.
 - Producers emit the event-log contract.
@@ -42,7 +42,7 @@ producers/
 
 The event-log/core format is the first hard dependency for every other layer.
 
-1. `packages/format` defines the shared content-opaque contract and canonicalize/hash-chain/verify APIs.
+1. `packages/format` defines the shared content-blind contract and canonicalize/hash-chain/verify APIs.
 2. Producers depend on `packages/format` and the conformance vectors.
 3. `apps/ingest-api` depends on `packages/format`, `packages/storage`, and later `packages/analyzers`.
 4. `apps/web` depends on `packages/format` for browser-side verification and consumes backend record data.
@@ -57,7 +57,7 @@ Current milestone. Create the monorepo skeleton, architecture docs, canonicaliza
 
 ### M1 — core format and conformance
 
-Implement event/manifest types, canonical JSON serialization, BLAKE3 `b3:` hashing, event hash-chain verification, content-opaque process-length math, and conformance vectors.
+Implement event/manifest types, canonical JSON serialization, BLAKE3 `b3:` hashing, event hash-chain verification, content-blind process-length math, and conformance vectors.
 
 ### M2 — backend persistence and stats
 
@@ -69,7 +69,7 @@ Implement analyzer interface/registry plus `timing-distribution` and `edit-topol
 
 ### M4 — Vite React record app
 
-Build the public record page, content-opaque process timeline, quick stats, signal cards, and verification panel.
+Build the public record page, content-blind process timeline, quick stats, signal cards, and verification panel.
 
 ### M5 — Hugo site
 
@@ -87,7 +87,7 @@ Build the minor mode, buffer capture, signing/upload flow, capture-context revie
 
 - Canonicalization implementation.
 - BLAKE3 hashing or event hash-chain implementation.
-- Content-opaque verification implementation.
+- Content-blind verification implementation.
 - Event/manifest schema completion beyond scaffold placeholders.
 - Conformance vectors beyond placeholder homes.
 - HTTP APIs, database migrations, storage implementations, or analyzer execution.

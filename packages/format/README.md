@@ -1,6 +1,6 @@
 # `@possiblymadebyahuman/format`
 
-Core content-opaque event-log contract package for format version `0.1`.
+Core content-blind event-log contract package for format version `0.1`.
 
 ## Responsibility
 
@@ -19,7 +19,7 @@ Core content-opaque event-log contract package for format version `0.1`.
 - Plaintext storage for public records.
 - Human/AI verdicts, scores, or badges.
 
-Public v0 records are content-opaque. They do not contain `ins_text`, `ins_hash`,
+Public v0 records are content-blind. They do not contain `ins_text`, `ins_hash`,
 `final_text`, `final_text_hash`, or `final_text_length`. Unknown public mutation
 measurements use explicit JSON `null` for `pos`, `del_len`, and `ins_len`; those
 fields are not omitted.

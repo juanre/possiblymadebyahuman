@@ -65,8 +65,8 @@ The final chain hash is the full `record_hash` and the basis for record addressi
 
 M1 vectors live under `packages/conformance/vectors/` and cover:
 
-- event canonicalization for content-opaque mutation shapes, including explicit-null unknown measurements,
+- event canonicalization for content-blind mutation shapes, including explicit-null unknown measurements,
 - hash-chain outputs for a sample log,
 - observed process-length math using Unicode codepoint counts supplied by producers,
-- a golden content-opaque sample record,
+- a golden content-blind sample record,
 - capability-accuracy checks documenting how missing source attribution is represented.

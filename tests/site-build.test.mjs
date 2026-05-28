@@ -7,7 +7,7 @@ import test from "node:test";
 
 const hugoAvailable = spawnSync("hugo", ["version"], { stdio: "ignore" }).status === 0;
 
-test("hugo builds landing + docs with content-opaque copy and no plaintext fixture leak", { skip: !hugoAvailable ? "hugo binary not available" : undefined }, () => {
+test("hugo builds landing + docs with content-blind copy and no plaintext fixture leak", { skip: !hugoAvailable ? "hugo binary not available" : undefined }, () => {
   const out = mkdtempSync(join(tmpdir(), "pmbah-site-"));
   try {
     const build = spawnSync(
@@ -38,7 +38,7 @@ test("hugo builds landing + docs with content-opaque copy and no plaintext fixtu
       const body = readFileSync(path, "utf8");
       assert.ok(body.length > 0, `${relative} is empty`);
       assert.ok(body.includes("possiblymadebyahuman"), `${relative} missing product name`);
-      assert.ok(body.includes("content-opaque"), `${relative} missing content-opaque framing`);
+      assert.ok(body.includes("content-blind"), `${relative} missing content-blind framing`);
     }
 
     assert.ok(!existsSync(join(out, "blog/index.html")), "blog/ should not be built");

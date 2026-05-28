@@ -1,10 +1,10 @@
 # Emacs producer
 
-Native Emacs producer for PossiblyMadeByAHuman (PMBAH) content-opaque writing records.
+Native Emacs producer for PossiblyMadeByAHuman (PMBAH) content-blind writing records.
 
 `pmbah-mode` is a buffer-local minor mode. It records Emacs buffer mutations from
 `after-change-functions`, builds a PMBAH format `0.1` record locally, uploads only
-the public content-opaque record to an ingest API, and copies the returned short URL
+the public content-blind record to an ingest API, and copies the returned short URL
 to the kill ring.
 
 ## Privacy and scope
@@ -195,7 +195,7 @@ shows:
 - buffer name candidate;
 - major mode candidate;
 - absolute file path status, explicitly omitted by default;
-- the content-opaque upload guarantee.
+- the content-blind upload guarantee.
 
 It then asks separately whether to include `emacs.buffer_name` and
 `emacs.major_mode`. If both are declined, the context is only:
