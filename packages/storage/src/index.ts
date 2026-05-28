@@ -37,10 +37,69 @@ export type AnalysisResult = Signal & {
   created_at?: string;
 };
 
+export const OBSERVED_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+export type ObservationState = "observed" | "partial" | "unobserved" | "not_requested";
+export type BoundObservationState = "observed" | "partial";
+
+export type ObservationCommitment = {
+  checkpoint_id: string;
+  event_count: number;
+  chain_tip: B3Hash;
+  observed_at: string;
+};
+
+export type RecordObservation = {
+  state: ObservationState;
+  observed_session_id: string | null;
+  commitments: ObservationCommitment[];
+  checkpoint_count: number;
+  first_observed_at: string | null;
+  last_observed_at: string | null;
+  server_observed_span_ms: number | null;
+};
+
+export type ObservedSession = {
+  observed_session_id: string;
+  token_hash: string;
+  finalized_record_hash: B3Hash | null;
+  observation_state: ObservationState | null;
+  created_at: string;
+  finalized_at: string | null;
+  checkpoints: ObservationCommitment[];
+};
+
+export type AppendObservedCheckpointInput = {
+  observed_session_id: string;
+  observed_token_hash?: string;
+  new_observed_token_hash: string;
+  event_count: number;
+  chain_tip: B3Hash;
+  observed_at?: string;
+};
+
+export type AppendObservedCheckpointResult = {
+  observed_session_id: string;
+  checkpoint: ObservationCommitment;
+  session_created: boolean;
+  checkpoint_created: boolean;
+};
+
+export type ObservationBindingInput = {
+  observed_session_id: string;
+  observed_token_hash: string;
+};
+
+export type BoundRecordObservation = Omit<RecordObservation, "state" | "observed_session_id"> & {
+  state: BoundObservationState;
+  observed_session_id: string;
+};
+
 export type StoredRecord = WritingRecord & {
   short_signature: string;
   stats: RecordStats;
   signals: AnalysisResult[];
+  observation: RecordObservation;
   created_at: string;
 };
 
@@ -49,6 +108,7 @@ export type SaveRecordInput = {
   short_signature: string;
   stats: RecordStats;
   signals?: AnalysisResult[];
+  observation?: RecordObservation;
   created_at?: string;
 };
 
@@ -63,6 +123,8 @@ export interface RecordStore {
   findByShortSignature(shortSignature: string): Promise<StoredRecord | null>;
   findByShortSignatureOrHash(id: string): Promise<StoredRecord | null>;
   shortSignatureExists(shortSignature: string): Promise<boolean>;
+  appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult>;
+  getObservedSessionForBinding(input: ObservationBindingInput): Promise<ObservedSession>;
 }
 
 export class DuplicateRecordConflictError extends Error {
@@ -72,9 +134,33 @@ export class DuplicateRecordConflictError extends Error {
   }
 }
 
+export class ObservedSessionTokenError extends Error {
+  readonly code: "observed_token_required" | "invalid_observed_token" | "observed_session_not_found";
+
+  constructor(code: ObservedSessionTokenError["code"], message: string) {
+    super(message);
+    this.name = "ObservedSessionTokenError";
+    this.code = code;
+  }
+}
+
+export class ObservedCheckpointConflictError extends Error {
+  readonly code:
+    | "checkpoint_event_count_not_monotonic"
+    | "checkpoint_chain_tip_conflict"
+    | "observed_session_finalized";
+
+  constructor(code: ObservedCheckpointConflictError["code"], message: string) {
+    super(message);
+    this.name = "ObservedCheckpointConflictError";
+    this.code = code;
+  }
+}
+
 export class InMemoryRecordStore implements RecordStore {
   readonly #byHash = new Map<B3Hash, StoredRecord>();
   readonly #byShortSignature = new Map<string, B3Hash>();
+  readonly #observedSessions = new Map<string, ObservedSession>();
 
   async saveRecord(input: SaveRecordInput): Promise<SaveRecordResult> {
     const recordHash = input.record.manifest.record_hash;
@@ -91,12 +177,27 @@ export class InMemoryRecordStore implements RecordStore {
       throw new DuplicateRecordConflictError("short_signature already belongs to another record");
     }
 
+    if (input.observation?.observed_session_id) {
+      const session = this.#observedSessions.get(input.observation.observed_session_id);
+      if (!session) throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
+      if (session.finalized_record_hash && session.finalized_record_hash !== recordHash) {
+        throw new ObservedCheckpointConflictError("observed_session_finalized", "observed session already finalized");
+      }
+      if (input.observation.state !== "observed" && input.observation.state !== "partial") {
+        throw new ObservedCheckpointConflictError("observed_session_finalized", "observed session has invalid final observation state");
+      }
+      session.finalized_record_hash = recordHash;
+      session.observation_state = input.observation.state;
+      session.finalized_at = input.record.manifest.ingested_server_t ?? input.created_at ?? new Date().toISOString();
+    }
+
     const stored: StoredRecord = {
       manifest: cloneJson(input.record.manifest),
       events: cloneJson(input.record.events),
       short_signature: input.short_signature,
       stats: cloneJson(input.stats),
       signals: cloneJson(input.signals ?? []),
+      observation: cloneJson(input.observation ?? notRequestedObservation()),
       created_at: input.created_at ?? new Date().toISOString(),
     };
     this.#byHash.set(recordHash, stored);
@@ -121,6 +222,82 @@ export class InMemoryRecordStore implements RecordStore {
 
   async shortSignatureExists(shortSignature: string): Promise<boolean> {
     return this.#byShortSignature.has(shortSignature);
+  }
+
+  async appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult> {
+    let session = this.#observedSessions.get(input.observed_session_id);
+    let sessionCreated = false;
+    const observedAt = input.observed_at ?? new Date().toISOString();
+    if (session && isExpiredUnfinalizedObservedSession(session, observedAt)) {
+      this.#observedSessions.delete(input.observed_session_id);
+      session = undefined;
+    }
+
+    if (!session) {
+      if (input.observed_token_hash) {
+        throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
+      }
+      sessionCreated = true;
+      session = {
+        observed_session_id: input.observed_session_id,
+        token_hash: input.new_observed_token_hash,
+        finalized_record_hash: null,
+        observation_state: null,
+        created_at: observedAt,
+        finalized_at: null,
+        checkpoints: [],
+      };
+      this.#observedSessions.set(input.observed_session_id, session);
+    } else {
+      assertObservedToken(session, input.observed_token_hash);
+      if (session.finalized_record_hash) {
+        throw new ObservedCheckpointConflictError("observed_session_finalized", "observed session already finalized");
+      }
+    }
+
+    const existingAtCount = session.checkpoints.find((checkpoint) => checkpoint.event_count === input.event_count);
+    if (existingAtCount) {
+      if (existingAtCount.chain_tip !== input.chain_tip) {
+        throw new ObservedCheckpointConflictError("checkpoint_chain_tip_conflict", "checkpoint already exists with a different chain_tip");
+      }
+      return {
+        observed_session_id: session.observed_session_id,
+        checkpoint: cloneJson(existingAtCount),
+        session_created: sessionCreated,
+        checkpoint_created: false,
+      };
+    }
+
+    const maxEventCount = Math.max(0, ...session.checkpoints.map((checkpoint) => checkpoint.event_count));
+    if (input.event_count < maxEventCount) {
+      throw new ObservedCheckpointConflictError("checkpoint_event_count_not_monotonic", "checkpoint event_count must be monotonic");
+    }
+
+    const checkpoint: ObservationCommitment = {
+      checkpoint_id: crypto.randomUUID(),
+      event_count: input.event_count,
+      chain_tip: input.chain_tip,
+      observed_at: observedAt,
+    };
+    session.checkpoints.push(checkpoint);
+    session.checkpoints.sort((left, right) => left.event_count - right.event_count || left.observed_at.localeCompare(right.observed_at));
+    return {
+      observed_session_id: session.observed_session_id,
+      checkpoint: cloneJson(checkpoint),
+      session_created: sessionCreated,
+      checkpoint_created: true,
+    };
+  }
+
+  async getObservedSessionForBinding(input: ObservationBindingInput): Promise<ObservedSession> {
+    const session = this.#observedSessions.get(input.observed_session_id);
+    if (!session) throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
+    if (isExpiredUnfinalizedObservedSession(session, new Date().toISOString())) {
+      this.#observedSessions.delete(input.observed_session_id);
+      throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
+    }
+    assertObservedToken(session, input.observed_token_hash);
+    return cloneJson(session);
   }
 }
 
@@ -163,8 +340,8 @@ export class PostgresRecordStore implements RecordStore {
             record_hash, short_signature, format_version, session_id,
             producer_id, producer_version, producer_capabilities, capture_context,
             event_count, duration_ms,
-            created_client_t, ingested_server_t, parent_record_hash, attestations, events, created_at
-          ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16)`,
+            created_client_t, ingested_server_t, parent_record_hash, attestations, events, created_at, observation_state
+          ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16,$17)`,
           [
             manifest.record_hash,
             input.short_signature,
@@ -182,6 +359,7 @@ export class PostgresRecordStore implements RecordStore {
             JSON.stringify(manifest.attestations),
             JSON.stringify(input.record.events),
             createdAt,
+            input.observation?.state === "unobserved" ? "unobserved" : "not_requested",
           ],
         );
 
@@ -242,6 +420,19 @@ export class PostgresRecordStore implements RecordStore {
               signal.explanation,
             ],
           );
+        }
+
+        if (input.observation?.observed_session_id) {
+          const result = await client.query(
+            `update observed_sessions
+             set finalized_record_hash = $1, observation_state = $2, finalized_at = $3
+             where observed_session_id = $4
+               and (finalized_record_hash is null or finalized_record_hash = $1)`,
+            [manifest.record_hash, input.observation.state, manifest.ingested_server_t ?? createdAt, input.observation.observed_session_id],
+          );
+          if ("rowCount" in result && (result as { rowCount?: number }).rowCount === 0) {
+            throw new ObservedCheckpointConflictError("observed_session_finalized", "observed session already finalized");
+          }
         }
       });
       const stored = await this.findByRecordHash(manifest.record_hash);
@@ -305,6 +496,7 @@ export class PostgresRecordStore implements RecordStore {
          r.attestations,
          r.events,
          r.created_at,
+         r.observation_state as record_observation_state,
          s.insert_op_count,
          s.delete_op_count,
          s.replace_op_count,
@@ -340,7 +532,29 @@ export class PostgresRecordStore implements RecordStore {
        where r.record_hash = $1`,
       [recordHash],
     );
-    return result.rows[0] ? rowToStoredRecord(result.rows[0]) : null;
+    if (!result.rows[0]) return null;
+    const observation = await this.#findObservationByRecordHash(recordHash, (result.rows[0].record_observation_state ?? "not_requested") as ObservationState);
+    return rowToStoredRecord(result.rows[0], observation);
+  }
+
+  async #findObservationByRecordHash(recordHash: B3Hash, fallbackState: ObservationState): Promise<RecordObservation> {
+    const sessionResult = await this.#db.query<ObservedSessionRow>(
+      `select observed_session_id, token_hash, finalized_record_hash, observation_state, created_at, finalized_at
+       from observed_sessions where finalized_record_hash = $1`,
+      [recordHash],
+    );
+    const session = sessionResult.rows[0];
+    if (!session) return fallbackState === "unobserved" ? unobservedObservation() : notRequestedObservation();
+    const checkpointResult = await this.#db.query<ObservedCheckpointRow>(
+      `select checkpoint_id, event_count, chain_tip, observed_at
+       from observed_checkpoints where observed_session_id = $1 order by event_count, observed_at`,
+      [session.observed_session_id],
+    );
+    return observationFromCheckpoints(
+      session.observed_session_id,
+      (session.observation_state ?? "partial") as BoundObservationState,
+      checkpointResult.rows.map(rowToObservationCommitment),
+    );
   }
 
   async findByShortSignature(shortSignature: string): Promise<StoredRecord | null> {
@@ -363,6 +577,112 @@ export class PostgresRecordStore implements RecordStore {
     );
     return result.rows[0]?.exists ?? false;
   }
+
+  async appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult> {
+    return this.#withTransaction(async (client) => {
+      const observedAt = input.observed_at ?? new Date().toISOString();
+      await deleteExpiredObservedSession(client, input.observed_session_id, observedAt);
+      let session = (await client.query<ObservedSessionRow>(
+        `select observed_session_id, token_hash, finalized_record_hash, observation_state, created_at, finalized_at
+         from observed_sessions where observed_session_id = $1 for update`,
+        [input.observed_session_id],
+      )).rows[0];
+      let sessionCreated = false;
+
+      if (!session) {
+        if (input.observed_token_hash) {
+          throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
+        }
+        sessionCreated = true;
+        session = (await client.query<ObservedSessionRow>(
+          `insert into observed_sessions (observed_session_id, token_hash, created_at)
+           values ($1,$2,$3)
+           returning observed_session_id, token_hash, finalized_record_hash, observation_state, created_at, finalized_at`,
+          [input.observed_session_id, input.new_observed_token_hash, observedAt],
+        )).rows[0] as ObservedSessionRow;
+      } else {
+        assertObservedToken(rowToObservedSession(session, []), input.observed_token_hash);
+        if (session.finalized_record_hash) {
+          throw new ObservedCheckpointConflictError("observed_session_finalized", "observed session already finalized");
+        }
+      }
+
+      const existing = (await client.query<ObservedCheckpointRow>(
+        `select checkpoint_id, event_count, chain_tip, observed_at
+         from observed_checkpoints where observed_session_id = $1 and event_count = $2`,
+        [input.observed_session_id, input.event_count],
+      )).rows[0];
+      if (existing) {
+        if (existing.chain_tip !== input.chain_tip) {
+          throw new ObservedCheckpointConflictError("checkpoint_chain_tip_conflict", "checkpoint already exists with a different chain_tip");
+        }
+        return {
+          observed_session_id: input.observed_session_id,
+          checkpoint: rowToObservationCommitment(existing),
+          session_created: sessionCreated,
+          checkpoint_created: false,
+        };
+      }
+
+      const maxResult = await client.query<{ max_event_count: number | string | null }>(
+        `select max(event_count) as max_event_count from observed_checkpoints where observed_session_id = $1`,
+        [input.observed_session_id],
+      );
+      const maxEventCount = Number(maxResult.rows[0]?.max_event_count ?? 0);
+      if (input.event_count < maxEventCount) {
+        throw new ObservedCheckpointConflictError("checkpoint_event_count_not_monotonic", "checkpoint event_count must be monotonic");
+      }
+
+      const inserted = (await client.query<ObservedCheckpointRow>(
+        `insert into observed_checkpoints (checkpoint_id, observed_session_id, event_count, chain_tip, observed_at)
+         values ($1,$2,$3,$4,$5)
+         on conflict (observed_session_id, event_count) do nothing
+         returning checkpoint_id, event_count, chain_tip, observed_at`,
+        [crypto.randomUUID(), input.observed_session_id, input.event_count, input.chain_tip, observedAt],
+      )).rows[0];
+      if (inserted) {
+        return {
+          observed_session_id: input.observed_session_id,
+          checkpoint: rowToObservationCommitment(inserted),
+          session_created: sessionCreated,
+          checkpoint_created: true,
+        };
+      }
+
+      const racedExisting = (await client.query<ObservedCheckpointRow>(
+        `select checkpoint_id, event_count, chain_tip, observed_at
+         from observed_checkpoints where observed_session_id = $1 and event_count = $2`,
+        [input.observed_session_id, input.event_count],
+      )).rows[0];
+      if (racedExisting && racedExisting.chain_tip === input.chain_tip) {
+        return {
+          observed_session_id: input.observed_session_id,
+          checkpoint: rowToObservationCommitment(racedExisting),
+          session_created: sessionCreated,
+          checkpoint_created: false,
+        };
+      }
+      throw new ObservedCheckpointConflictError("checkpoint_chain_tip_conflict", "checkpoint already exists with a different chain_tip");
+    });
+  }
+
+  async getObservedSessionForBinding(input: ObservationBindingInput): Promise<ObservedSession> {
+    await deleteExpiredObservedSession(this.#db, input.observed_session_id, new Date().toISOString());
+    const session = (await this.#db.query<ObservedSessionRow>(
+      `select observed_session_id, token_hash, finalized_record_hash, observation_state, created_at, finalized_at
+       from observed_sessions where observed_session_id = $1`,
+      [input.observed_session_id],
+    )).rows[0];
+    if (!session) throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
+    const checkpoints = (await this.#db.query<ObservedCheckpointRow>(
+      `select checkpoint_id, event_count, chain_tip, observed_at
+       from observed_checkpoints where observed_session_id = $1 order by event_count, observed_at`,
+      [input.observed_session_id],
+    )).rows.map(rowToObservationCommitment);
+    const observedSession = rowToObservedSession(session, checkpoints);
+    assertObservedToken(observedSession, input.observed_token_hash);
+    return observedSession;
+  }
 }
 
 type RecordRow = Record<string, unknown> & {
@@ -382,12 +702,29 @@ type RecordRow = Record<string, unknown> & {
   attestations: Array<{ type: string; [key: string]: JsonValue | undefined }>;
   events: EventLog;
   created_at: string;
+  record_observation_state?: string | null;
   observed_final_length: number | null;
   delay_histogram: Array<{ bucket: string; count: number }>;
   signals: AnalysisResult[];
 };
 
-function rowToStoredRecord(row: RecordRow): StoredRecord {
+type ObservedSessionRow = Record<string, unknown> & {
+  observed_session_id: string;
+  token_hash: string;
+  finalized_record_hash: B3Hash | null;
+  observation_state: string | null;
+  created_at: string;
+  finalized_at: string | null;
+};
+
+type ObservedCheckpointRow = Record<string, unknown> & {
+  checkpoint_id: string;
+  event_count: number;
+  chain_tip: B3Hash;
+  observed_at: string;
+};
+
+function rowToStoredRecord(row: RecordRow, observation: RecordObservation): StoredRecord {
   const manifest: RecordManifest = {
     format_version: row.format_version,
     record_hash: row.record_hash,
@@ -441,8 +778,101 @@ function rowToStoredRecord(row: RecordRow): StoredRecord {
       delay_histogram: row.delay_histogram,
     },
     signals: row.signals,
+    observation,
     created_at: row.created_at,
   };
+}
+
+function rowToObservedSession(row: ObservedSessionRow, checkpoints: ObservationCommitment[]): ObservedSession {
+  return {
+    observed_session_id: row.observed_session_id,
+    token_hash: row.token_hash,
+    finalized_record_hash: row.finalized_record_hash,
+    observation_state: row.observation_state as ObservationState | null,
+    created_at: row.created_at,
+    finalized_at: row.finalized_at,
+    checkpoints,
+  };
+}
+
+function rowToObservationCommitment(row: ObservedCheckpointRow): ObservationCommitment {
+  return {
+    checkpoint_id: row.checkpoint_id,
+    event_count: numberFromRow(row.event_count),
+    chain_tip: row.chain_tip,
+    observed_at: row.observed_at,
+  };
+}
+
+export function observationFromCheckpoints(
+  observedSessionId: string,
+  state: BoundObservationState,
+  checkpoints: ObservationCommitment[],
+): BoundRecordObservation {
+  const commitments = [...checkpoints].sort((left, right) => left.event_count - right.event_count || left.observed_at.localeCompare(right.observed_at));
+  const first = commitments[0]?.observed_at ?? null;
+  const last = commitments.at(-1)?.observed_at ?? null;
+  return {
+    state,
+    observed_session_id: observedSessionId,
+    commitments,
+    checkpoint_count: commitments.length,
+    first_observed_at: first,
+    last_observed_at: last,
+    server_observed_span_ms: first && last ? Math.max(0, Date.parse(last) - Date.parse(first)) : null,
+  };
+}
+
+export function unobservedObservation(): RecordObservation {
+  return {
+    state: "unobserved",
+    observed_session_id: null,
+    commitments: [],
+    checkpoint_count: 0,
+    first_observed_at: null,
+    last_observed_at: null,
+    server_observed_span_ms: null,
+  };
+}
+
+export function notRequestedObservation(): RecordObservation {
+  return {
+    state: "not_requested",
+    observed_session_id: null,
+    commitments: [],
+    checkpoint_count: 0,
+    first_observed_at: null,
+    last_observed_at: null,
+    server_observed_span_ms: null,
+  };
+}
+
+function isExpiredUnfinalizedObservedSession(session: Pick<ObservedSession, "finalized_record_hash" | "created_at" | "checkpoints">, nowIso: string): boolean {
+  if (session.finalized_record_hash) return false;
+  const lastActivity = session.checkpoints.reduce(
+    (latest, checkpoint) => checkpoint.observed_at > latest ? checkpoint.observed_at : latest,
+    session.created_at,
+  );
+  return Date.parse(lastActivity) + OBSERVED_SESSION_TTL_MS < Date.parse(nowIso);
+}
+
+async function deleteExpiredObservedSession(db: PostgresQueryable, observedSessionId: string, nowIso: string): Promise<void> {
+  const cutoff = new Date(Date.parse(nowIso) - OBSERVED_SESSION_TTL_MS).toISOString();
+  await db.query(
+    `delete from observed_sessions
+     where observed_session_id = $1
+       and finalized_record_hash is null
+       and coalesce(
+         (select max(observed_at) from observed_checkpoints where observed_session_id = $1),
+         created_at
+       ) < $2`,
+    [observedSessionId, cutoff],
+  );
+}
+
+function assertObservedToken(session: Pick<ObservedSession, "token_hash">, tokenHash: string | undefined): void {
+  if (!tokenHash) throw new ObservedSessionTokenError("observed_token_required", "observed_token is required");
+  if (tokenHash !== session.token_hash) throw new ObservedSessionTokenError("invalid_observed_token", "observed_token is invalid");
 }
 
 function cloneStoredRecord(record: StoredRecord): StoredRecord {

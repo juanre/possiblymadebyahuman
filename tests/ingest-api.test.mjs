@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { createIngestApi, generateShortSignature, isReservedShortSignature } from "../apps/ingest-api/src/index.ts";
+import { computeEventHashChain } from "../packages/format/src/index.ts";
 import { InMemoryRecordStore, PostgresRecordStore } from "../packages/storage/src/index.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
@@ -35,11 +36,16 @@ test("Postgres migration defines records, stats, and analysis-results tables", a
   assert.match(migration, /create table if not exists records/i);
   assert.match(migration, /create table if not exists record_stats/i);
   assert.match(migration, /create table if not exists analysis_results/i);
+  assert.match(migration, /create table if not exists observed_sessions/i);
+  assert.match(migration, /create table if not exists observed_checkpoints/i);
   assert.match(migration, /parent_record_hash\s+text null references records\(record_hash\)/i);
   assert.match(migration, /record_hash\s+text not null references records\(record_hash\) on delete cascade/i);
   assert.doesNotMatch(migration, /records_short_signature_idx/i);
   assert.match(migration, /observed_final_length\s+integer null/i);
-  assert.doesNotMatch(migration, /plaintext|final_text\s+text|final_text_hash|final_text_length/i);
+  assert.match(migration, /records_observation_state/i);
+  assert.match(migration, /token_hash\s+text not null/i);
+  assert.match(migration, /observed_checkpoints_chain_tip_format/i);
+  assert.doesNotMatch(migration, /plaintext|observed_token|final_text\s+text|final_text_hash|final_text_length/i);
 });
 
 test("POST /api/records ingests a valid content-opaque record", async () => {
@@ -84,6 +90,8 @@ test("GET /api/records/:id supports short signature and full hash lookup", async
   assert.equal(byShort.body.manifest.record_hash, record.manifest.record_hash);
   assert.equal(byShort.body.manifest.ingested_server_t, "2026-05-28T10:00:00.000Z");
   assert.deepEqual(byShort.body.events, record.events);
+  assert.equal(byShort.body.observation.state, "not_requested");
+  assert.equal(byShort.body.observation.checkpoint_count, 0);
   assert.equal(byShort.body.signals.length, 2);
   assert.deepEqual(byShort.body.signals.map((signal) => signal.analyzer_id), ["timing-distribution", "edit-topology"]);
 
@@ -101,6 +109,191 @@ test("ingest rejects invalid record hashes", async () => {
   assert.equal(response.status, 400);
   assert.equal(response.body.error, "verification_failed");
   assert.ok(response.body.details.some((detail) => detail.includes("record_hash mismatch")));
+});
+
+test("explicit unobserved records are distinct from not-requested observation", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  const ingest = await api.postRecord({ ...record, observation: { state: "unobserved" } });
+  assert.equal(ingest.status, 201);
+
+  const fetched = await api.getRecord(ingest.body.short_signature);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.body.observation.state, "unobserved");
+  assert.equal(fetched.body.observation.checkpoint_count, 0);
+  assert.equal(fetched.body.observation.observed_session_id, null);
+});
+
+test("observed checkpoints are idempotent commitments and bind to final records", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
+  const observedSessionId = "123e4567-e89b-42d3-a456-426614174111";
+
+  const first = await api.postObservedCheckpoint(observedSessionId, { event_count: 1, chain_tip: chain[0] });
+  assert.equal(first.status, 201);
+  assert.equal(first.body.observed_session_id, observedSessionId);
+  assert.equal(first.body.event_count, 1);
+  assert.equal(first.body.chain_tip, chain[0]);
+  assert.ok(first.body.token.length >= 32);
+
+  const retry = await api.postObservedCheckpoint(observedSessionId, {
+    event_count: 1,
+    chain_tip: chain[0],
+    token: first.body.token,
+  });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.body.checkpoint_id, first.body.checkpoint_id);
+  assert.equal(retry.body.token, first.body.token);
+
+  const finalCheckpoint = await api.postObservedCheckpoint(observedSessionId, {
+    event_count: record.events.length,
+    chain_tip: chain.at(-1),
+    token: first.body.token,
+  });
+  assert.equal(finalCheckpoint.status, 201);
+
+  const ingest = await api.postRecord({
+    ...record,
+    observation: { observed_session_id: observedSessionId, token: first.body.token },
+  });
+  assert.equal(ingest.status, 201);
+  const fetched = await api.getRecord(ingest.body.short_signature);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.body.observation.state, "observed");
+  assert.equal(fetched.body.observation.observed_session_id, observedSessionId);
+  assert.equal(fetched.body.observation.checkpoint_count, 2);
+  assert.equal(fetched.body.observation.commitments.at(-1).event_count, record.events.length);
+  assert.equal(fetched.body.observation.server_observed_span_ms, 0);
+  assert.equal("observed_elapsed_ms" in fetched.body.observation, false);
+  assert.equal(JSON.stringify(fetched.body).includes(first.body.token), false);
+});
+
+test("observed checkpoint conflicts and final prefix mismatches are rejected", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
+  const observedSessionId = "123e4567-e89b-42d3-a456-426614174222";
+
+  const first = await api.postObservedCheckpoint(observedSessionId, { event_count: 1, chain_tip: chain[0] });
+  assert.equal(first.status, 201);
+
+  const conflict = await api.postObservedCheckpoint(observedSessionId, {
+    event_count: 1,
+    chain_tip: chain[1],
+    token: first.body.token,
+  });
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.body.error, "checkpoint_chain_tip_conflict");
+
+  const badToken = await api.postObservedCheckpoint(observedSessionId, {
+    event_count: 2,
+    chain_tip: chain[1],
+    token: "wrong-token-wrong-token-wrong-token-wrong",
+  });
+  assert.equal(badToken.status, 404);
+  assert.equal(badToken.body.error, "observation_unavailable");
+
+  const otherRecord = await fixtureRecord();
+  otherRecord.events[0].ins_len = 1;
+  otherRecord.manifest.record_hash = "b3:0000000000000000000000000000000000000000000000000000000000000000";
+  const mismatch = await api.postRecord({
+    ...otherRecord,
+    observation: { observed_session_id: observedSessionId, token: first.body.token },
+  });
+  assert.equal(mismatch.status, 400);
+  assert.equal(mismatch.body.error, "verification_failed");
+
+  const wrongPrefixRecord = await fixtureRecord();
+  wrongPrefixRecord.events[0].source = "paste";
+  const wrongPrefixChain = computeEventHashChain(wrongPrefixRecord.events, wrongPrefixRecord.manifest.session_id, wrongPrefixRecord.manifest.format_version);
+  wrongPrefixRecord.manifest.record_hash = wrongPrefixChain.at(-1);
+  const prefixMismatch = await api.postRecord({
+    ...wrongPrefixRecord,
+    observation: { observed_session_id: observedSessionId, token: first.body.token },
+  });
+  assert.equal(prefixMismatch.status, 409);
+  assert.equal(prefixMismatch.body.error, "observation_mismatch");
+});
+
+test("partial observation is exposed when final record has uncheckpointed tail events", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
+  const observedSessionId = "123e4567-e89b-42d3-a456-426614174333";
+
+  const first = await api.postObservedCheckpoint(observedSessionId, { event_count: 2, chain_tip: chain[1] });
+  assert.equal(first.status, 201);
+  const ingest = await api.postRecord({
+    ...record,
+    observation: { observed_session_id: observedSessionId, token: first.body.token },
+  });
+  assert.equal(ingest.status, 201);
+
+  const fetched = await api.getRecord(ingest.body.short_signature);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.body.observation.state, "partial");
+  assert.equal(fetched.body.observation.commitments[0].event_count, 2);
+});
+
+test("observed-session boundary rejects malformed ids and hides lookup/token failures", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
+
+  const invalidPath = await api.postObservedCheckpoint("../not-a-session", { event_count: 1, chain_tip: chain[0] });
+  assert.equal(invalidPath.status, 400);
+  assert.equal(invalidPath.body.error, "invalid_payload");
+
+  const contentBearing = await api.postObservedCheckpoint("123e4567-e89b-42d3-a456-426614174444", {
+    event_count: 1,
+    chain_tip: chain[0],
+    text: "not stored",
+  });
+  assert.equal(contentBearing.status, 400);
+  assert.equal(contentBearing.body.error, "content_not_allowed");
+
+  const missing = await api.postObservedCheckpoint("123e4567-e89b-42d3-a456-426614174444", {
+    event_count: 1,
+    chain_tip: chain[0],
+    token: "missing-token-missing-token-missing-token",
+  });
+  assert.equal(missing.status, 404);
+  assert.deepEqual(missing.body, { error: "observation_unavailable" });
+
+  const badBinding = await api.postRecord({
+    ...record,
+    observation: {
+      observed_session_id: "123e4567-e89b-42d3-a456-426614174555",
+      token: "missing-token-missing-token-missing-token",
+    },
+  });
+  assert.equal(badBinding.status, 404);
+  assert.deepEqual(badBinding.body, { error: "observation_unavailable" });
+});
+
+test("unfinalized observed sessions expire after seven days without leaking token state", async () => {
+  let wallClock = new Date("2026-05-28T10:00:00.000Z");
+  const { api } = makeApi({ now: () => wallClock });
+  const record = await fixtureRecord();
+  const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
+  const observedSessionId = "123e4567-e89b-42d3-a456-426614174666";
+
+  const first = await api.postObservedCheckpoint(observedSessionId, { event_count: 1, chain_tip: chain[0] });
+  assert.equal(first.status, 201);
+
+  wallClock = new Date("2026-06-05T10:00:00.001Z");
+  const expired = await api.postObservedCheckpoint(observedSessionId, {
+    event_count: 2,
+    chain_tip: chain[1],
+    token: first.body.token,
+  });
+  assert.equal(expired.status, 404);
+  assert.deepEqual(expired.body, { error: "observation_unavailable" });
+
+  const recreated = await api.postObservedCheckpoint(observedSessionId, { event_count: 2, chain_tip: chain[1] });
+  assert.equal(recreated.status, 201);
+  assert.notEqual(recreated.body.token, first.body.token);
 });
 
 test("stats are computed and persisted with meaningful fields", async () => {

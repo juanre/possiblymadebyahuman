@@ -23,8 +23,10 @@ create table if not exists records (
   events jsonb not null,
 
   created_at timestamptz not null default now(),
+  observation_state text not null default 'not_requested',
 
-  constraint records_hash_prefix check (record_hash like 'b3:%')
+  constraint records_hash_prefix check (record_hash like 'b3:%'),
+  constraint records_observation_state check (observation_state in ('not_requested', 'unobserved'))
 );
 
 create index if not exists records_parent_record_hash_idx on records(parent_record_hash);
@@ -84,3 +86,32 @@ create table if not exists analysis_results (
 );
 
 create index if not exists analysis_results_record_hash_idx on analysis_results(record_hash);
+
+create table if not exists observed_sessions (
+  observed_session_id uuid primary key,
+  token_hash text not null,
+  finalized_record_hash text null references records(record_hash),
+  observation_state text null,
+  created_at timestamptz not null default now(),
+  finalized_at timestamptz null,
+
+  constraint observed_sessions_observation_state check (
+    observation_state is null or observation_state in ('observed', 'partial')
+  )
+);
+
+create index if not exists observed_sessions_finalized_record_hash_idx on observed_sessions(finalized_record_hash);
+
+create table if not exists observed_checkpoints (
+  checkpoint_id uuid primary key,
+  observed_session_id uuid not null references observed_sessions(observed_session_id) on delete cascade,
+  event_count integer not null,
+  chain_tip text not null,
+  observed_at timestamptz not null default now(),
+
+  constraint observed_checkpoints_event_count_positive check (event_count >= 1),
+  constraint observed_checkpoints_chain_tip_format check (chain_tip ~ '^b3:[0-9a-f]{64}$'),
+  unique(observed_session_id, event_count)
+);
+
+create index if not exists observed_checkpoints_session_order_idx on observed_checkpoints(observed_session_id, event_count, observed_at);

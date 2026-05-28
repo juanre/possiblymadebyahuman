@@ -594,7 +594,8 @@ Input:
 ```jsonc
 {
   "manifest": {},
-  "events": []
+  "events": [],
+  "observation": { "observed_session_id": "...", "token": "..." } // optional; or { "state": "unobserved" } when observation was requested but no commitment succeeded
 }
 ```
 
@@ -611,7 +612,8 @@ Backend behavior:
 9. Store immutable record row.
 10. Compute and store `record_stats`.
 11. Run v0 analyzers and store `analysis_results` if cheap enough synchronously; otherwise queue later.
-12. Return record URL.
+12. If an observation binding is present, recompute every stored checkpoint prefix from the submitted public events and reject finalization on mismatch.
+13. Return record URL.
 
 Output:
 
@@ -634,13 +636,49 @@ Returns:
   "manifest": {},
   "events": [],
   "stats": {},
-  "signals": []
+  "signals": [],
+  "observation": {
+    "state": "observed", // observed | partial | unobserved | not_requested
+    "commitments": [{ "checkpoint_id": "...", "event_count": 1, "chain_tip": "b3:...", "observed_at": "..." }],
+    "first_observed_at": "...",
+    "last_observed_at": "...",
+    "server_observed_span_ms": 0
+  }
 }
 ```
 
-Still content-opaque.
+Still content-opaque. Observation state is server metadata, not a manifest field.
 
-### 10.3 `GET /api/health`
+### 10.3 `POST /api/observed-sessions/:session_id/checkpoints`
+
+Used by producers that request server-observed commitments. `:session_id` must be strict UUIDv4. The first checkpoint creates the observed session and returns the bearer `token`; later checkpoints send the same token.
+
+Input:
+
+```jsonc
+{
+  "event_count": 1,
+  "chain_tip": "b3:...",
+  "token": "..." // omitted only for first successful checkpoint
+}
+```
+
+Output:
+
+```jsonc
+{
+  "observed_session_id": "...",
+  "token": "...",
+  "checkpoint_id": "...",
+  "event_count": 1,
+  "chain_tip": "b3:...",
+  "server_t": "..."
+}
+```
+
+The server stores only `token_hash`, never the bearer token. Checkpoint bodies contain no text or text-derived hashes. Same `(event_count, chain_tip)` is idempotent; same count with a different tip or a stale lower count is a conflict. Token/session lookup failures, including expired unfinalized sessions, return the uniform `observation_unavailable` shape. Unfinalized observed sessions expire after seven days from last checkpoint or creation.
+
+### 10.4 `GET /api/health`
 
 Basic deployment health for the API.
 

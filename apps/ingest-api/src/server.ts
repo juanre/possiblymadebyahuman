@@ -104,6 +104,8 @@ export async function readiness(
       records_ready: string | null;
       stats_ready: string | null;
       analysis_ready: string | null;
+      observed_sessions_ready: string | null;
+      observed_checkpoints_ready: string | null;
       migrations_ready: string | null;
       required_migration_count: number | string;
       applied_required_migration_count: number | string;
@@ -113,6 +115,8 @@ export async function readiness(
          to_regclass('public.records')::text as records_ready,
          to_regclass('public.record_stats')::text as stats_ready,
          to_regclass('public.analysis_results')::text as analysis_ready,
+         to_regclass('public.observed_sessions')::text as observed_sessions_ready,
+         to_regclass('public.observed_checkpoints')::text as observed_checkpoints_ready,
          to_regclass('public.schema_migrations')::text as migrations_ready,
          (select count(*) from required_migrations) as required_migration_count,
          (select count(*) from required_migrations required join schema_migrations applied using (version)) as applied_required_migration_count`,
@@ -125,6 +129,8 @@ export async function readiness(
       row?.records_ready
         && row.stats_ready
         && row.analysis_ready
+        && row.observed_sessions_ready
+        && row.observed_checkpoints_ready
         && row.migrations_ready
         && appliedCount === requiredCount,
     );

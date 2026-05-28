@@ -1,8 +1,11 @@
 import { readFile } from 'node:fs/promises';
 
+import { computeEventHashChain } from '../packages/format/src/index.ts';
+
 const baseUrl = process.env.SMOKE_BASE_URL ?? `http://localhost:${process.env.PMBAH_PORT ?? 8000}`;
 const [golden] = JSON.parse(await readFile(new URL('../packages/conformance/vectors/golden-records.json', import.meta.url), 'utf8'));
 const record = golden.record;
+const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
 const plaintextFixtures = [' there', 'Hi ther!'];
 const shortPlaintextJsonFixture = '"Hi"';
 
@@ -22,10 +25,24 @@ await checkHtml('/docs/', ['Docs']);
 await checkBinary('/images/pmbah-figure-600.webp', 'image/webp');
 await checkBinary('/images/pmbah-figure-1200.jpg', 'image/jpeg');
 
+const checkpoint = await fetch(`${baseUrl}/api/observed-sessions/${record.manifest.session_id}/checkpoints`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ event_count: record.events.length, chain_tip: chain.at(-1) }),
+});
+if (checkpoint.status !== 201) throw new Error(`checkpoint failed: ${checkpoint.status} ${await checkpoint.text()}`);
+const observed = await checkpoint.json();
+assertEqual(observed.event_count, record.events.length, 'checkpoint event_count');
+assertEqual(observed.chain_tip, chain.at(-1), 'checkpoint chain_tip');
+if (!observed.token) throw new Error('missing token');
+
 const post = await fetch(`${baseUrl}/api/records`, {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify(record),
+  body: JSON.stringify({
+    ...record,
+    observation: { observed_session_id: record.manifest.session_id, token: observed.token },
+  }),
 });
 if (![200, 201].includes(post.status)) throw new Error(`POST failed: ${post.status} ${await post.text()}`);
 const created = await post.json();
@@ -44,8 +61,11 @@ const fetched = await checkJson(`/api/records/${created.short_signature}`, (body
   assertEqual(body.stats?.paste_event_count, 1, 'GET stats paste_event_count');
   assertEqual(Array.isArray(body.signals), true, 'GET signals array');
   assertEqual(body.signals.length, 2, 'GET signals length');
+  assertEqual(body.observation?.state, 'observed', 'GET observation state');
+  assertEqual(body.observation?.checkpoint_count, 1, 'GET observation checkpoint_count');
 });
 assertNoPlaintext('GET API response', JSON.stringify(fetched), true);
+if (JSON.stringify(fetched).includes(observed.token)) throw new Error('GET API response leaked token');
 
 const recordShell = await checkHtml(`/${created.short_signature}`, ['possiblymadebyahuman record', 'id="root"', '/record-assets/']);
 const assetMatch = recordShell.match(/src="(\/record-assets\/[^\"]+\.js)"/);

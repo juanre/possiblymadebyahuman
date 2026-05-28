@@ -38,7 +38,7 @@ We are not building a detector, a plagiarism checker, or a keylogger. We are bui
 
 ### 1.4 What this lets us NOT build (for v0)
 
-Because we are explicitly *not* making a proof claim, the heavy anti-forgery machinery is out of scope for the first version. A determined forger can fake a caring-gesture — but faking a gesture nobody is being graded on is a strange use of effort, so the threat barely applies. Concretely, **deferred out of v0**: server-streaming timestamp attestation, entropy/rate plausibility checks, third-party timestamping, client attestation (all of §4.3 beyond a plain ingestion timestamp). We still hash-chain the log so it is at least **tamper-evident** (§3.5) — cheap, and it protects the gesture's integrity — but we do not pretend it is tamper-proof. The proof-grade version can come later, for the later audience that actually wants it (§8, §10).
+Because we are explicitly *not* making a proof claim, the heavy anti-forgery machinery is out of scope for the first version. A determined forger can fake a caring-gesture — but faking a gesture nobody is being graded on is a strange use of effort, so the threat barely applies. Concretely, **deferred out of v0**: continuous server-streaming event ingestion, entropy/rate plausibility checks, third-party timestamping, client attestation, and anything requiring plaintext. V0 may receive content-opaque checkpoint commitments (§4.3), but those are not continuous monitoring and are checked against the final public event chain only at upload. We still hash-chain the log so it is at least **tamper-evident** (§3.5) — cheap, and it protects the gesture's integrity — but we do not pretend it is tamper-proof. The proof-grade version can come later, for the later audience that actually wants it (§8, §10).
 
 ---
 
@@ -229,14 +229,17 @@ Defined capabilities (extensible list):
 
 A Google-Docs-revision importer might declare only `[]` or `[pause_fidelity:false]`-style absence and emit `source: unknown` throughout. Analyzers that need `source_attribution` then return *not applicable* for that record rather than a damning low score. An importer must never be scored as if it were a high-fidelity live capture that happens to look weak.
 
-### 4.3 Attestations and server timestamping
+### 4.3 Server metadata and observed commitments
 
-Layer 2 may add attestations — facts the *server* vouches for, distinct from anything the producer claims:
+Layer 2 may add server metadata distinct from anything the producer claims:
 
-- `ingested_server_t`: the server's clock when events arrived. For *streaming* ingestion (events POSTed as they happen), this anchors the timeline to a clock the author does not control, which is the primary defense against a fully synthetic log (§8).
-- Future: third-party timestamping authority, transparency-log inclusion proof.
+- `ingested_server_t`: the server's clock when the final record arrived.
+- **Server-observed commitments**: activity-driven checkpoints where the server receives `event_count` and the public `chain_tip` for that event-chain prefix, then stamps its receive time. Checkpoints contain no text and no text hashes.
+- Future: third-party timestamping authority or transparency-log inclusion metadata.
 
-Attestations are additive metadata; their presence or absence is shown in the UI (§7). The system never pretends an unattested record is attested.
+A checkpoint is a commitment, not a text or authorship claim. At checkpoint time the server validates session/token shape, monotonic event counts, and same-count conflicts; it does not receive events and therefore cannot verify prefix contents yet. At final upload the server recomputes public prefix chain tips from the submitted events and checks each stored commitment against the corresponding prefix. If commitments do not match the final record, finalization is rejected rather than publishing a normal record.
+
+Checkpoint cadence is activity-driven: first captured event, after a producer-chosen event-count threshold, approximately once per minute only if new events exist since the last checkpoint, and before final upload if uncheckpointed events remain. Producers must not send idle heartbeats when no new events were captured. Public UI should describe the wall-clock distance between first and last commitments as a **server-observed span**, not as active writing time; the API field for that value is `server_observed_span_ms`.
 
 ---
 
