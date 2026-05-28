@@ -204,8 +204,17 @@ callers and must be a JSON-serializable plist."
          (url (or (alist-get 'url response) (alist-get 'record_hash response))))
     (when url
       (kill-new url))
-    (pmbah--start-session)
-    (message "PMBAH record uploaded; copied %s" url)
+    (if (= (point-min) (point-max))
+        (pmbah--start-session)
+      (remove-hook 'after-change-functions #'pmbah--after-change t)
+      (setq pmbah-mode nil
+            pmbah--session-id nil
+            pmbah--session-start-time nil
+            pmbah--events nil
+            pmbah--next-seq 0))
+    (message "PMBAH record uploaded; copied %s%s"
+             url
+             (if pmbah-mode "" "; capture disabled because buffer is non-empty"))
     response))
 
 (defun pmbah-review-capture-context ()

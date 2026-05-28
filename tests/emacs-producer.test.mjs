@@ -128,6 +128,52 @@ test("Emacs producer refuses non-empty buffers by default", { skip: emacs ? fals
   }
 });
 
+test("Emacs producer disables capture after successful upload in a non-empty buffer", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-post-upload-"));
+  const outputPath = join(temp, "post-upload.json");
+  const scriptPath = join(temp, "post-upload.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+  const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
+
+  await writeFile(scriptPath, `;;; post-upload.el --- PMBAH post-upload scope test -*- lexical-binding: t; -*-
+(require 'cl-lib)
+(load ${JSON.stringify(modePath)})
+(setq pmbah-helper-script ${JSON.stringify(helperPath)})
+(with-temp-buffer
+  (text-mode)
+  (pmbah-mode 1)
+  (insert "PostUploadCanary🙂")
+  (let ((response nil))
+    (cl-letf (((symbol-function 'pmbah--post-record)
+               (lambda (_record)
+                 (list :record_hash "b3:stub" :short_signature "stub" :url "http://localhost:8000/stub" :created t))))
+      (setq response (pmbah-sign-buffer (list :surface "emacs"))))
+    (let ((output (list :response response
+                        :enabled (if pmbah-mode t :json-false)
+                        :session pmbah--session-id
+                        :events pmbah--events
+                        :event_count pmbah--next-seq
+                        :hook_present (if (memq #'pmbah--after-change after-change-functions) t :json-false))))
+      (with-temp-file ${JSON.stringify(outputPath)}
+        (insert (pmbah--json-encode output))))))
+`);
+
+  try {
+    const result = runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.response.url, "http://localhost:8000/stub");
+    assert.equal(output.enabled, false);
+    assert.equal(output.session, null);
+    assert.equal(output.events, null);
+    assert.equal(output.event_count, 0);
+    assert.equal(output.hook_present, false);
+    assert.equal(JSON.stringify(output).includes("PostUploadCanary"), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Emacs helper payload contains only process metadata", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-payload-"));
   const outputPath = join(temp, "payload.json");
