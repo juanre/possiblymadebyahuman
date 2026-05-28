@@ -6,17 +6,66 @@
     <title>possiblymadebyahuman</title>
     <style>
       body {
-        min-width: 18rem;
+        min-width: 22rem;
+        max-width: 26rem;
         margin: 0;
         padding: 1rem;
-        font: 14px/1.45 system-ui, sans-serif;
+        font: 13px/1.45 system-ui, sans-serif;
         color: #221b17;
-        background: #fffaf2;
+        background: #fbf8f2;
       }
+      h1 { font: 600 14px/1.2 system-ui; margin: 0 0 .25rem; }
+      .lede { color: #6e665d; margin: 0 0 1rem; font-size: 12px; }
+      .empty { color: #6e665d; font-style: italic; padding: 1rem 0; }
+      .group-origin { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b5e34; margin: 1rem 0 .25rem; text-transform: lowercase; letter-spacing: 0.04em; }
+      .session {
+        border: 1px solid #eadfce;
+        border-radius: 12px;
+        background: #fffaf2;
+        padding: .6rem .75rem;
+        margin-bottom: .55rem;
+      }
+      .session-head { display: flex; align-items: baseline; gap: .5rem; }
+      .session-title { font-weight: 600; flex: 1; }
+      .session-state { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 6px; border-radius: 999px; background: #efe5d6; }
+      .session-state.recording { background: #d1e7c8; color: #1b5e20; }
+      .session-state.signing,
+      .session-state.uploading { background: #fdebc4; color: #6e5631; }
+      .session-state.uploaded { background: #d0e4ff; color: #1f3a73; }
+      .session-state.failed_upload { background: #ffd9d4; color: #872626; }
+      .session-meta { font-size: 11px; color: #6e665d; margin-top: .15rem; }
+      .session-actions { display: flex; gap: .4rem; margin-top: .5rem; }
+      button {
+        font: inherit;
+        background: #202124;
+        border: 0;
+        color: #fbf8f2;
+        padding: 4px 10px;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      button.secondary { background: transparent; color: #8b5e34; border: 1px solid #d8c8a6; }
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      .toast {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        background: #202124;
+        color: #fbf8f2;
+        padding: .6rem 1rem;
+        font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+        text-align: center;
+      }
+      .toast.error { background: #872626; }
+      .footer { color: #6e665d; font-size: 11px; margin-top: 1rem; }
+      .footer a { color: #8b5e34; }
     </style>
   </head>
   <body>
-    <main id="app">possiblymadebyahuman</main>
+    <h1>possiblymadebyahuman</h1>
+    <p class="lede">Content-opaque writing record. Sign per-field; no text leaves your device.</p>
+    <section id="app" aria-live="polite"></section>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+    <p class="footer">v0 captures textareas and plain text inputs. Existing non-empty fields are marked "not recording"; clear the field or start a fresh one to begin a session.</p>
     <script type="module" src="popup.js"></script>
   </body>
 </html>

@@ -488,6 +488,21 @@ test("sweepExpired returns kept+removed without mutating input", () => {
   assert.equal(sample.length, 1);
 });
 
+test("discard removes a single session by id and leaves siblings untouched", () => {
+  const { registry } = makeRegistry();
+  const a = registry.findOrCreate(originA, descriptor({ id: "a" }), captureForOrigin(originA, descriptor({ id: "a" })));
+  const b = registry.findOrCreate(originA, descriptor({ id: "b", dom_signature: "sig-b" }), captureForOrigin(originA, descriptor({ id: "b", dom_signature: "sig-b" })));
+  registry.appendMutation(a.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  registry.appendMutation(b.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 2, source: "typing" });
+  const removed = registry.discard(a.session_id);
+  assert.ok(removed);
+  assert.equal(removed.session_id, a.session_id);
+  assert.equal(registry.get(a.session_id), undefined);
+  assert.ok(registry.get(b.session_id));
+  // discarding a non-existent session is a no-op that returns null
+  assert.equal(registry.discard("00000000-0000-4000-8000-000000abcdef"), null);
+});
+
 test("UnknownSessionError surfaces explicit id", () => {
   const { registry } = makeRegistry();
   assert.throws(

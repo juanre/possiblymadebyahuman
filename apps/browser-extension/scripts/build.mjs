@@ -7,7 +7,9 @@ import { deflateSync } from "node:zlib";
 import { build, context } from "esbuild";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const dist = join(root, "dist");
+const dist = process.env.EXT_DIST_DIR && process.env.EXT_DIST_DIR.trim().length > 0
+  ? process.env.EXT_DIST_DIR
+  : join(root, "dist");
 const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
 const watch = process.argv.includes("--watch");
 const rawBaseUrl = process.env.EXT_BASE_URL || "https://possiblymadebyahuman.com";

@@ -261,6 +261,21 @@ export class SessionRegistry {
     record.last_failure_reason = reason;
   }
 
+  /**
+   * Drops a specific session immediately. User-driven (e.g. "discard this draft"
+   * from a popup), distinct from the time-based `sweep`. Returns the removed
+   * record so callers can persist a tombstone or surface a confirmation.
+   * Returns `null` if the session id is not in the registry.
+   */
+  discard(session_id: SessionId): SessionRecord | null {
+    const existing = this.#sessions.get(session_id);
+    if (!existing) return null;
+    const cloned = cloneSession(existing);
+    this.#sessions.delete(session_id);
+    this.#inFlight.delete(session_id);
+    return cloned;
+  }
+
   sweep(options?: { ttl_ms?: number; uploaded_grace_ms?: number }): SessionRecord[] {
     const now = this.#clock.now();
     const snapshot = this.snapshot();
