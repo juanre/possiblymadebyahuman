@@ -25,6 +25,25 @@ function makeApi(options = {}) {
   return { api, store };
 }
 
+class InterleavingRecordStore {
+  constructor(base, beforeSave) {
+    this.base = base;
+    this.beforeSave = beforeSave;
+  }
+
+  async saveRecord(input) {
+    await this.beforeSave(input);
+    return this.base.saveRecord(input);
+  }
+
+  findByRecordHash(...args) { return this.base.findByRecordHash(...args); }
+  findByShortSignature(...args) { return this.base.findByShortSignature(...args); }
+  findByShortSignatureOrHash(...args) { return this.base.findByShortSignatureOrHash(...args); }
+  shortSignatureExists(...args) { return this.base.shortSignatureExists(...args); }
+  appendObservedCheckpoint(...args) { return this.base.appendObservedCheckpoint(...args); }
+  getObservedSessionForBinding(...args) { return this.base.getObservedSessionForBinding(...args); }
+}
+
 test("Postgres migration defines records, stats, and analysis-results tables", async () => {
   await access("packages/storage/migrations/001_init.sql");
   const migration = await readFile("packages/storage/migrations/001_init.sql", "utf8");
@@ -294,6 +313,87 @@ test("unfinalized observed sessions expire after seven days without leaking toke
   const recreated = await api.postObservedCheckpoint(observedSessionId, { event_count: 2, chain_tip: chain[1] });
   assert.equal(recreated.status, 201);
   assert.notEqual(recreated.body.token, first.body.token);
+});
+
+test("finalization revalidates checkpoints appended after observation preflight", async () => {
+  const baseStore = new InMemoryRecordStore();
+  const baseApi = createIngestApi({ store: baseStore, baseUrl: "https://possiblymadebyahuman.test" });
+  const record = await fixtureRecord();
+  const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
+  const observedSessionId = "123e4567-e89b-42d3-a456-426614174777";
+  const first = await baseApi.postObservedCheckpoint(observedSessionId, { event_count: 1, chain_tip: chain[0] });
+  assert.equal(first.status, 201);
+
+  const racingApi = createIngestApi({
+    store: new InterleavingRecordStore(baseStore, async () => {
+      await baseApi.postObservedCheckpoint(observedSessionId, {
+        event_count: 2,
+        chain_tip: "b3:0000000000000000000000000000000000000000000000000000000000000000",
+        token: first.body.token,
+      });
+    }),
+    baseUrl: "https://possiblymadebyahuman.test",
+  });
+  const finalized = await racingApi.postRecord({
+    ...record,
+    observation: { observed_session_id: observedSessionId, token: first.body.token },
+  });
+  assert.equal(finalized.status, 409);
+  assert.equal(finalized.body.error, "observation_mismatch");
+  const fetched = await baseApi.getRecord(record.manifest.record_hash);
+  assert.equal(fetched.status, 404);
+});
+
+test("finalization includes matching checkpoints appended after observation preflight", async () => {
+  const baseStore = new InMemoryRecordStore();
+  const baseApi = createIngestApi({ store: baseStore, baseUrl: "https://possiblymadebyahuman.test" });
+  const record = await fixtureRecord();
+  const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
+  const observedSessionId = "123e4567-e89b-42d3-a456-426614174888";
+  const first = await baseApi.postObservedCheckpoint(observedSessionId, { event_count: 1, chain_tip: chain[0] });
+  assert.equal(first.status, 201);
+
+  const racingApi = createIngestApi({
+    store: new InterleavingRecordStore(baseStore, async () => {
+      await baseApi.postObservedCheckpoint(observedSessionId, {
+        event_count: record.events.length,
+        chain_tip: chain.at(-1),
+        token: first.body.token,
+      });
+    }),
+    baseUrl: "https://possiblymadebyahuman.test",
+  });
+  const finalized = await racingApi.postRecord({
+    ...record,
+    observation: { observed_session_id: observedSessionId, token: first.body.token },
+  });
+  assert.equal(finalized.status, 201);
+  const fetched = await baseApi.getRecord(finalized.body.short_signature);
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.body.observation.state, "observed");
+  assert.equal(fetched.body.observation.commitments.at(-1).event_count, record.events.length);
+});
+
+test("checkpoint appended after finalization is rejected", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
+  const observedSessionId = "123e4567-e89b-42d3-a456-426614174999";
+  const first = await api.postObservedCheckpoint(observedSessionId, { event_count: 1, chain_tip: chain[0] });
+  assert.equal(first.status, 201);
+  const finalized = await api.postRecord({
+    ...record,
+    observation: { observed_session_id: observedSessionId, token: first.body.token },
+  });
+  assert.equal(finalized.status, 201);
+
+  const late = await api.postObservedCheckpoint(observedSessionId, {
+    event_count: 2,
+    chain_tip: chain[1],
+    token: first.body.token,
+  });
+  assert.equal(late.status, 409);
+  assert.equal(late.body.error, "observed_session_finalized");
 });
 
 test("stats are computed and persisted with meaningful fields", async () => {
