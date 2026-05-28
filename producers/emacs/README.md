@@ -168,9 +168,10 @@ Use the path printed by `command -v node` in the shell where the repo tests pass
    M-x pmbah-discard-session
    ```
 
-After a successful upload, the local event log is cleared and a fresh session is
-started for the current buffer. If upload fails, the local event log remains so
-you can retry.
+After a successful upload, the local event log is cleared. If the current buffer
+is still non-empty, capture is disabled so a new record is not silently started
+against existing text; open a new empty buffer for another record. If upload
+fails, the local event log remains so you can retry.
 
 ## Verify the installation
 
