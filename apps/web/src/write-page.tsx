@@ -229,44 +229,89 @@ export function WritePage() {
 
   const eventCount = session?.events.length ?? 0;
   const elapsed = session && eventCount > 0 ? Math.max(0, session.events.at(-1)?.t ?? 0) : 0;
-  const observationState = session?.observation.state ?? "unknown";
   const canSign = status === "ready" && eventCount > 0;
   const canRetry = status === "error" && session?.state === "failed_upload" && signedDraft.current !== null;
+  const canDiscard = eventCount > 0 || !!uploaded;
+  const phase = displayPhase(status, eventCount);
+  const shortError = status === "error" ? "upload failed — try again" : null;
 
-  return <main className="page-shell write-page">
-    <p className="eyebrow">possiblymadebyahuman</p>
-    <h1>Write and sign</h1>
-    <p className="write-intro">A no-install drafting page for creating a content-blind writing-process record. It only captures edits made inside this page.</p>
+  // Cmd/Ctrl+Enter triggers sign-or-retry from anywhere on the page.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Enter") return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (!canSign && !canRetry) return;
+      event.preventDefault();
+      void signAndUpload();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canSign, canRetry, signAndUpload]);
 
-    <section className="banner" aria-label="Privacy note">
-      <strong>Text stays in the browser.</strong>
-      <p>PMBAH records event timing and edit shape. Signing uploads the manifest, event log, and server-observed checkpoint binding — not the words in the canvas.</p>
-    </section>
+  return <div className="write-shell">
+    <a className="write-home" href="/">← possiblymadebyahuman</a>
 
-    <textarea
-      ref={textareaRef}
-      id="pmbah-write-canvas"
-      className="write-canvas"
-      aria-label="Writing canvas"
-      placeholder="Start with an empty canvas…"
-      disabled={status === "signing" || status === "uploaded"}
-      spellCheck="true"
-    />
+    <div className="write-canvas-wrap">
+      <textarea
+        ref={textareaRef}
+        id="pmbah-write-canvas"
+        className="write-canvas"
+        aria-label="Writing canvas"
+        placeholder=""
+        disabled={status === "signing" || status === "uploaded"}
+        spellCheck="true"
+      />
+    </div>
 
-    <section className="card write-status" aria-label="Drafting status">
-      <div className="stats-grid">
-        <div className="stat"><span>Status</span><strong>{status}</strong></div>
-        <div className="stat"><span>Events captured</span><strong>{eventCount}</strong></div>
-        <div className="stat"><span>Elapsed edit time</span><strong>{elapsed}ms</strong></div>
-        <div className="stat"><span>Checkpoint state</span><strong>{observationState}</strong></div>
+    {uploaded ? (
+      <div className="write-result" role="status" aria-live="polite">
+        <a className="write-result-link" href={uploaded.url}>{uploaded.url}</a>
+        <span className="write-result-arrow">open record →</span>
       </div>
-      <p className={status === "error" ? "error" : "muted"}>{message}</p>
-      <div className="write-actions">
-        <button className="verify-button" type="button" disabled={!canSign && !canRetry} onClick={signAndUpload}>{canRetry ? "Retry upload" : "Sign and upload"}</button>
-        <button className="secondary-button" type="button" onClick={reset}>Discard/reset</button>
-        {uploaded ? <button className="secondary-button" type="button" onClick={copyLink}>Copy link</button> : null}
-      </div>
-      {uploaded ? <p className="write-link">Short URL: <a href={uploaded.url}>{uploaded.url}</a></p> : null}
-    </section>
-  </main>;
+    ) : null}
+
+    <footer className="write-modeline" aria-label="Drafting status">
+      <span className="ml-left">
+        <span className="ml-status" data-state={uploaded ? "saved" : phase} aria-live="polite" aria-atomic="true">
+          {uploaded ? "saved" : phase}
+        </span>
+        {!uploaded ? <>
+          <span className="ml-sep">·</span>
+          <span className="ml-stat">{eventCount} event{eventCount === 1 ? "" : "s"}</span>
+          <span className="ml-sep">·</span>
+          <span className="ml-stat">{(elapsed / 1000).toFixed(1)}s</span>
+        </> : null}
+        {shortError ? <>
+          <span className="ml-sep">·</span>
+          <span className="ml-error" title={message}>{shortError}</span>
+        </> : null}
+      </span>
+      <span className="ml-right">
+        {uploaded ? <button className="ml-button" type="button" onClick={copyLink}>copy link</button> : null}
+        {!uploaded ? (
+          <button
+            className="ml-button ml-primary"
+            type="button"
+            disabled={!canSign && !canRetry}
+            onClick={signAndUpload}
+            title="sign (⌘↵ / Ctrl↵)"
+          >
+            {canRetry ? "retry" : "sign"}
+          </button>
+        ) : null}
+        <button className="ml-button" type="button" disabled={!canDiscard} onClick={reset}>discard</button>
+      </span>
+    </footer>
+  </div>;
+}
+
+function displayPhase(status: WriteStatus, eventCount: number): string {
+  switch (status) {
+    case "loading": return "preparing";
+    case "signing": return "signing";
+    case "uploaded": return "saved";
+    case "error":    return "error";
+    case "ready":    return eventCount === 0 ? "idle" : "drafting";
+    default:         return status;
+  }
 }

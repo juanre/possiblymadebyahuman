@@ -46,15 +46,15 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
   });
 
   await page.goto("/write");
-  await expect(page.getByRole("heading", { name: "Write and sign" })).toBeVisible();
   const canvas = page.getByRole("textbox", { name: "Writing canvas" });
+  await expect(canvas).toBeVisible();
   await canvas.click();
   await page.keyboard.type("A");
   await page.keyboard.insertText("🙂");
   await page.keyboard.type("B");
-  await page.getByRole("button", { name: "Sign and upload" }).click();
+  await page.getByRole("button", { name: "sign" }).click();
 
-  await expect(page.getByText("Short URL:")).toBeVisible();
+  await expect(page.getByText("open record →")).toBeVisible();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/writetest1" })).toBeVisible();
 
   expect(uploadedPayload, "record upload payload captured").toBeTruthy();
@@ -117,7 +117,7 @@ test("/write captures Enter as a one-codepoint line break event", async ({ page 
   await page.keyboard.type("LineOne");
   await page.keyboard.press("Enter");
   await page.keyboard.type("LineTwo");
-  await page.getByRole("button", { name: "Sign and upload" }).click();
+  await page.getByRole("button", { name: "sign" }).click();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/newline1" })).toBeVisible();
 
   expect(uploadedPayload, "record upload payload captured").toBeTruthy();
@@ -178,10 +178,14 @@ test("/write keeps a failed upload available for retry", async ({ page }) => {
   await page.goto("/write");
   await page.getByRole("textbox", { name: "Writing canvas" }).click();
   await page.keyboard.type("Retry me");
-  await page.getByRole("button", { name: "Sign and upload" }).click();
-  await expect(page.getByText(/Upload failed: temporary_test_failure/)).toBeVisible();
-  await expect(page.getByText("Events captured")).toBeVisible();
-  await page.getByRole("button", { name: "Retry upload" }).click();
+  await page.getByRole("button", { name: "sign" }).click();
+  // After a failed upload the mode line shows the short status + the full
+  // technical detail is preserved in the title attribute on the error span.
+  const errorSpan = page.locator(".ml-error");
+  await expect(errorSpan).toBeVisible();
+  await expect(errorSpan).toHaveText("upload failed — try again");
+  await expect(errorSpan).toHaveAttribute("title", /Upload failed: temporary_test_failure/);
+  await page.getByRole("button", { name: "retry" }).click();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/retrytest1" })).toBeVisible();
   expect(uploadAttempts).toBe(2);
 });

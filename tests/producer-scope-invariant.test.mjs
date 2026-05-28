@@ -61,7 +61,12 @@ test("/write starts empty and has no retained-text audit", async () => {
   const audit = await text("tests/write-page-audit.test.mjs");
   const browser = await text("tests/browser/write-page.spec.mjs");
 
-  assert.match(page, /placeholder="Start with an empty canvas…"/);
+  // The /write page renders a blank, placeholderless textarea — the empty
+  // start is the invitation. The empty-start invariant is structurally
+  // enforced by the producer-core eligibility policy and the explicit
+  // textarea reset on upload; this audit anchors on those, not on placeholder
+  // copy. The `aria-label="Writing canvas"` is the stable a11y anchor.
+  assert.match(page, /aria-label="Writing canvas"/);
   assert.match(page, /textareaRef\.current\.value = ""/);
   assert.match(audit, /does not retain or name plaintext snapshots/);
   assert.match(browser, /uploads no plaintext/);
