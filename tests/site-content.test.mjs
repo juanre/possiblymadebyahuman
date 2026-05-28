@@ -20,7 +20,7 @@ const requiredDocPages = [
 ];
 
 const sectionsCoveringProductPromise = [
-  { file: "_index.md", needs: ["content-blind", "We cannot prove a human wrote it"] },
+  { file: "_index.md", needs: ["We cannot prove a human wrote it", "reverse Turing test"] },
   { file: "docs/product-promise.md", needs: ["No verdicts", "Process, not content", "Hash-addressed records"] },
   { file: "docs/claims.md", needs: ["We claim", "We do not claim"] },
   { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system"] },
@@ -28,7 +28,7 @@ const sectionsCoveringProductPromise = [
   { file: "docs/verification.md", needs: ["Re-verify chain", "hash chain", "What verification does and does not mean"] },
   { file: "docs/threat-model.md", needs: ["adversary", "Retype an AI draft", "hash chain detects any change"] },
   { file: "docs/conformance.md", needs: ["Canonicalization vectors", "Capability honesty", "Content-blindness", "Capture-context preview"] },
-  { file: "docs/routing.md", needs: ["/api/", "/docs/", "/blog/", "short_signature", "SITE_DIST_DIR"] },
+  { file: "docs/routing.md", needs: ["/api/", "/docs/", "short_signature", "SITE_DIST_DIR"] },
 ];
 
 const banVerdictPatterns = [
@@ -38,19 +38,20 @@ const banVerdictPatterns = [
   /\bguaranteed\s+human(?:-?(?:written|authored))?\b/i,
 ];
 
-test("hugo config enables content-blind landing + docs + blog sections", async () => {
+test("hugo config is configured for the content-blind landing + docs surface", async () => {
   const hugo = await read(join(siteRoot, "hugo.toml"));
   assert.match(hugo, /possiblymadebyahuman\.com/);
   assert.match(hugo, /title = 'possiblymadebyahuman'/);
   assert.match(hugo, /unsafe = true/);
 });
 
-test("home content reinforces product promise and links to docs and blog", async () => {
+test("home content explains the product and links to docs without per-record disclaimer copy", async () => {
   const home = await read(join(contentRoot, "_index.md"));
-  assert.match(home, /content-blind writing-record/);
-  assert.match(home, /standing-claim/);
+  assert.match(home, /We cannot prove a human wrote it/);
+  assert.match(home, /reverse Turing test/);
   assert.match(home, /\/docs\//);
-  assert.match(home, /\/blog\//);
+  assert.doesNotMatch(home, /\/blog\//, "home must not link to a blog");
+  assert.doesNotMatch(home, /standing-claim/, "per-record standing claim must not appear on the home page");
   assert.doesNotMatch(home, /\bdetector\s+score\b/i);
 });
 
@@ -73,27 +74,16 @@ test("each doc page renders content-aligned content and avoids verdict language"
   }
 });
 
-test("blog scaffold has an index and at least one dated post", async () => {
-  const blogDir = await readdir(join(contentRoot, "blog"));
-  assert.ok(blogDir.includes("_index.md"), "blog/_index.md missing");
-  const posts = blogDir.filter((entry) => entry !== "_index.md" && entry.endsWith(".md"));
-  assert.ok(posts.length >= 1, "blog must contain at least one post");
-  for (const post of posts) {
-    const body = await read(join(contentRoot, "blog", post));
-    assert.match(body, /^---/, `${post} missing front matter`);
-    assert.match(body, /\ndate:\s*20\d\d-\d\d-\d\d/, `${post} missing ISO date`);
-    assert.match(body, /\nsummary:\s*"/, `${post} missing summary`);
-  }
-});
-
-test("layout base sets the candid description and provides site nav", async () => {
+test("layout base sets the candid description, provides site nav, exposes the OSS/MIT footer, and links no blog route", async () => {
   const base = await read(join(siteRoot, "layouts/_default/baseof.html"));
   assert.match(base, /content="A content-blind writing-record service/);
   assert.match(base, /aria-label="Site sections"/);
   assert.match(base, /href="\/docs\/"/);
-  assert.match(base, /href="\/blog\/"/);
-  const blogList = await read(join(siteRoot, "layouts/blog/list.html"));
-  assert.match(blogList, /ByDate\.Reverse/);
+  assert.match(base, /href="https:\/\/github\.com\/juanre\/possiblymadebyahuman"/);
+  assert.match(base, /class="site-nav-repo"/);
+  assert.match(base, /Open source/);
+  assert.match(base, /MIT licensed/);
+  assert.doesNotMatch(base, /href="\/blog\/"/);
 });
 
 test("SOT M5 milestone is reflected by the implemented site structure", async () => {

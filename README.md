@@ -22,8 +22,8 @@ make docker-build
 make local-container
 make local-container-test  # full local Docker+Postgres HTTP e2e journey
 make local-container-down
-make build-site             # build the Hugo landing/docs/blog into apps/site/public
-make dev-site               # run the Hugo dev server while editing the site
+make build-site             # build the Hugo landing/docs into apps/site/public
+make dev-site               # run the Hugo dev server while editing the site (override port with SITE_PORT=...)
 make test-web-browser       # build the record app and run the Playwright smoke
 ```
 

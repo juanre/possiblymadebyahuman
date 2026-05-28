@@ -18,7 +18,6 @@ await checkJson('/ready', (body) => {
 
 await checkHtml('/', ['possiblymadebyahuman', 'content-blind']);
 await checkHtml('/docs/', ['Docs']);
-await checkHtml('/blog/', ['Blog']);
 
 const post = await fetch(`${baseUrl}/api/records`, {
   method: 'POST',

@@ -6,28 +6,164 @@
     <title>{{ if .IsHome }}possiblymadebyahuman{{ else }}{{ .Title }} · possiblymadebyahuman{{ end }}</title>
     <meta name="description" content="A content-blind writing-record service. Not a detector. Not a certificate of humanity.">
     <style>
-      :root { color-scheme: light; }
-      body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #202124; background: #fbf8f2; line-height: 1.55; }
-      main { max-width: 760px; margin: 0 auto; padding: 8vh 24px 12vh; }
-      a { color: #8b5e34; }
-      h1 { font-size: 2.4rem; margin-bottom: 0.25rem; }
-      h2 { margin-top: 2.4rem; }
+      :root {
+        color-scheme: light;
+        --paper: #fbf8f2;
+        --ink: #202124;
+        --pencil: #3d2f17;
+        --warm-link: #8b5e34;
+        --warm-link-dim: #5a432a;
+        --paper-shadow: #ead9b8;
+        --eyebrow: #947751;
+        --serif: 'Iowan Old Style', 'New York', ui-serif, Georgia, 'Times New Roman', serif;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+        --mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+      }
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        color: var(--ink);
+        background-color: var(--paper);
+        background-image:
+          linear-gradient(rgba(139, 94, 52, 0.045) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(139, 94, 52, 0.045) 1px, transparent 1px);
+        background-size: 28px 28px;
+        background-position: -1px -1px;
+        line-height: 1.55;
+      }
+      main { max-width: 760px; margin: 0 auto; padding: 7vh 24px 12vh; }
+      a { color: var(--warm-link); }
+      h1 {
+        font-family: var(--serif);
+        font-weight: 600;
+        font-size: clamp(2.2rem, 1.6rem + 2vw, 3.2rem);
+        line-height: 1.05;
+        letter-spacing: -0.01em;
+        margin: 0 0 0.6rem;
+      }
+      h2 { font-family: var(--serif); font-weight: 600; margin-top: 2.4rem; }
       h3 { margin-top: 1.6rem; }
       p, li { font-size: 1.02rem; }
-      code { background: #f1ebdb; padding: 0.1em 0.35em; border-radius: 4px; }
+      code { background: #f1ebdb; padding: 0.1em 0.35em; border-radius: 4px; font-family: var(--mono); font-size: 0.92em; }
       pre code { display: block; padding: 0.75rem 1rem; overflow-x: auto; }
       blockquote { border-left: 4px solid #d8c8a6; margin: 1.4rem 0; padding: 0.6rem 1rem; background: #f5efde; color: #4a3a23; }
-      nav.site-nav { display: flex; gap: 1.2rem; margin-bottom: 2.4rem; font-size: 0.95rem; }
-      nav.site-nav a { color: #5a432a; text-decoration: none; border-bottom: 1px solid transparent; }
-      nav.site-nav a:hover, nav.site-nav a:focus { border-bottom-color: #8b5e34; }
-      .eyebrow { letter-spacing: 0.16em; text-transform: uppercase; font-size: 0.78rem; color: #7a6442; margin-bottom: 0.4rem; }
-      .standing-claim { background: #f5efde; border-left: 4px solid #8b5e34; padding: 1rem 1.2rem; margin: 2rem 0; border-radius: 4px; }
+      nav.site-nav { display: flex; align-items: center; gap: 1.4rem; margin-bottom: 2.6rem; font-size: 0.95rem; }
+      nav.site-nav a { color: var(--warm-link-dim); text-decoration: none; border-bottom: 1px solid transparent; padding-bottom: 1px; }
+      nav.site-nav a:hover, nav.site-nav a:focus { border-bottom-color: var(--warm-link); }
+      nav.site-nav .site-nav-repo { margin-left: auto; display: inline-flex; align-items: center; gap: 0.4em; }
+      nav.site-nav .site-nav-repo svg { width: 1.05em; height: 1.05em; }
+      .eyebrow { letter-spacing: 0.16em; text-transform: uppercase; font-size: 0.78rem; color: var(--eyebrow); margin-bottom: 0.4rem; }
+      .standing-claim {
+        position: relative;
+        background: #f3ead6;
+        border: none;
+        padding: 1.15rem 1.4rem 1.25rem;
+        margin: 2.4rem 0;
+        font-family: var(--serif);
+        font-style: italic;
+        font-size: 1.05rem;
+        line-height: 1.55;
+        color: var(--pencil);
+        transform: rotate(-0.35deg);
+        box-shadow:
+          inset 1px 0 0 var(--warm-link),
+          inset 0 0 0 1px rgba(139, 94, 52, 0.18),
+          2px 3px 0 -2px rgba(60, 40, 20, 0.08);
+        border-radius: 2px 5px 3px 6px / 4px 3px 6px 2px;
+      }
+      .standing-claim p { margin: 0; font-size: 1.05rem; }
+      .home-hero {
+        display: grid;
+        grid-template-columns: 1fr 220px;
+        gap: 2.4rem;
+        align-items: start;
+        margin: 0 0 2rem;
+      }
+      .home-headline { margin-top: 0; }
+      .home-intro {
+        font-family: var(--serif);
+        font-style: italic;
+        font-weight: 400;
+        font-size: 1.2rem;
+        line-height: 1.5;
+        color: var(--pencil);
+        margin: 0.4rem 0 0;
+      }
+      .home-figure { margin: 0; }
+      .home-figure img {
+        display: block;
+        width: 100%;
+        height: auto;
+        transform: rotate(-1deg);
+        transition: transform 180ms cubic-bezier(.4,0,.2,1);
+        filter: drop-shadow(0 4px 12px rgba(60, 40, 20, 0.08));
+      }
+      .home-figure:hover img,
+      .home-figure:focus-within img { transform: rotate(0.4deg) translateY(-1px); }
+      .home-prose { margin: 2.6rem 0 1.6rem; }
+      .home-prose > p {
+        position: relative;
+        margin: 0 0 1.6rem;
+        padding-left: 1.4rem;
+        font-family: var(--serif);
+        font-size: 1.1rem;
+        line-height: 1.6;
+        color: var(--pencil);
+      }
+      .home-prose > p::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0.78em;
+        width: 14px;
+        border-top: 1.5px dashed rgba(139, 94, 52, 0.32);
+      }
+      .home-closer {
+        font-family: var(--serif);
+        font-style: italic;
+        font-size: 1.3rem;
+        line-height: 1.45;
+        color: var(--pencil);
+        text-align: center;
+        margin: 3rem auto 2.4rem;
+        max-width: 30rem;
+      }
+      .home-callout {
+        font-family: var(--mono);
+        font-size: 0.86rem;
+        line-height: 1.55;
+        letter-spacing: 0.02em;
+        color: var(--eyebrow);
+        border-top: 1px dashed rgba(139, 94, 52, 0.25);
+        padding-top: 1rem;
+        margin: 2rem 0 0.8rem;
+      }
+      .home-links { font-family: var(--mono); font-size: 0.88rem; letter-spacing: 0.06em; margin: 0.8rem 0 0; }
+      .home-links a { color: var(--warm-link); text-decoration: none; border-bottom: 1px solid rgba(139, 94, 52, 0.35); padding-bottom: 1px; }
+      .home-links a:hover, .home-links a:focus { border-bottom-color: var(--warm-link); }
+      .home-links .dot { color: var(--paper-shadow); margin: 0 0.5rem; }
       .page-list { list-style: none; padding: 0; margin: 1.6rem 0; }
-      .page-list li { margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #ead9b8; }
+      .page-list li { margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--paper-shadow); }
       .page-list li:last-child { border-bottom: none; }
       .page-list a { font-size: 1.08rem; font-weight: 600; }
       .page-list .summary { color: #4a3a23; margin-top: 0.25rem; }
-      footer { margin-top: 6rem; padding-top: 1.4rem; border-top: 1px solid #ead9b8; color: #7a6442; font-size: 0.88rem; }
+      footer { margin-top: 6rem; padding-top: 1.4rem; border-top: 1px solid var(--paper-shadow); color: var(--eyebrow); font-size: 0.88rem; }
+      footer .footer-meta { margin-top: 0.6rem; font-family: var(--mono); font-size: 0.78rem; letter-spacing: 0.02em; }
+      footer .footer-meta a { color: var(--warm-link); text-decoration: none; border-bottom: 1px solid rgba(139, 94, 52, 0.3); }
+      footer .footer-meta a:hover, footer .footer-meta a:focus { border-bottom-color: var(--warm-link); }
+      @media (max-width: 640px) {
+        main { padding: 5vh 20px 10vh; }
+        .home-hero { grid-template-columns: 1fr; gap: 1.2rem; }
+        .home-figure { order: -1; width: 40vw; max-width: 200px; margin: 0 auto 0.4rem; }
+        .home-intro { font-size: 1.05rem; }
+        .home-prose > p { font-size: 1.04rem; padding-left: 1.2rem; }
+        .home-prose > p::before { width: 12px; top: 0.72em; }
+        .home-closer { font-size: 1.12rem; margin: 2.4rem auto 1.8rem; }
+        .home-callout { font-size: 0.82rem; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .home-figure img { transition: none; }
+      }
     </style>
   </head>
   <body>
@@ -35,11 +171,15 @@
       <nav class="site-nav" aria-label="Site sections">
         <a href="/">Home</a>
         <a href="/docs/">Docs</a>
-        <a href="/blog/">Blog</a>
+        <a class="site-nav-repo" href="https://github.com/juanre/possiblymadebyahuman" rel="noopener" target="_blank">
+          <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2 .37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span>GitHub</span>
+        </a>
       </nav>
       {{ block "main" . }}{{ end }}
       <footer>
         <p>possiblymadebyahuman is a content-blind writing-record service. It is not a detector, score, badge, or certificate of humanity.</p>
+        <p class="footer-meta">Open source · <a href="https://github.com/juanre/possiblymadebyahuman/blob/main/LICENSE" rel="noopener" target="_blank">MIT licensed</a> · <a href="https://github.com/juanre/possiblymadebyahuman" rel="noopener" target="_blank">github.com/juanre/possiblymadebyahuman</a></p>
       </footer>
     </main>
   </body>

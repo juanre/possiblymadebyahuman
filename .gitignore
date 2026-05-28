@@ -29,3 +29,8 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+.playwright-mcp/
+
+# Ad-hoc local previews/screenshots at the repo root (not committed assets)
+/site-*.png
+/pmbah.jpg

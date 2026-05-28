@@ -28,7 +28,7 @@ help:
 	@echo "  make prod-container-migrate Run migrations against external Neon DATABASE_URL"
 	@echo "  make prod-container-down   Stop prod-like stack"
 	@echo "  make test-web-browser      Build web app and run Playwright smoke for the record page"
-	@echo "  make build-site            Build the Hugo landing/docs/blog into apps/site/public"
+	@echo "  make build-site            Build the Hugo landing/docs into apps/site/public"
 	@echo "  make clean                 Remove safe local build/test output"
 	@echo ""
 	@echo "Ports: app=$${PMBAH_PORT:-$(PMBAH_PORT)} postgres=$${POSTGRES_PORT:-5432}"

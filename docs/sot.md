@@ -59,8 +59,8 @@ producers/
 Notes:
 
 - `apps/web` is the Vite React record-viewing app.
-- `apps/site` is the Hugo static site for the landing/docs/blog surface.
-- The public root `/`, `/docs/*`, and `/blog/*` belong to Hugo.
+- `apps/site` is the Hugo static site for the landing/docs surface.
+- The public root `/` and `/docs/*` belong to Hugo.
 - Record pages such as `/<short_signature>` belong to the Vite React app.
 - `/api/*` belongs to the backend.
 
@@ -194,7 +194,7 @@ Owns:
 
 Does not own:
 
-- marketing/docs/blog pages
+- marketing/docs pages
 - ingestion
 - capture
 
@@ -206,12 +206,13 @@ Owns:
 
 - `/` landing page
 - `/docs/*`
-- `/blog/*`
 - product explanation
 - installation/use docs
 - threat-model docs
 
 The landing page should reinforce the product promise and avoid detector/certificate language.
+
+A public blog (`/blog/*`) was scoped originally and dropped in `default-aaaa.25` per human direction. The backend still reserves `blog` in its short-signature prefix list so the route prefix stays safe to reintroduce later without breaking existing records.
 
 ### 3.8 `apps/browser-extension`
 
@@ -531,7 +532,7 @@ Routing priority:
 
 1. `/api/*` -> backend
 2. Runtime/health routes such as `/health` or `/ready`, if present -> backend
-3. `/`, `/docs/*`, `/blog/*` -> Hugo static site
+3. `/` and `/docs/*` -> Hugo static site
 4. Static assets for the Hugo site and Vite app -> static file serving
 5. `/<short_signature>` -> Vite React record app
 
@@ -703,7 +704,6 @@ Hugo owns:
 ```text
 /
 /docs/*
-/blog/*
 ```
 
 Landing page goals:
@@ -725,9 +725,9 @@ Docs should include:
 
 Build/deploy note:
 
-- Unlike the sister `aweb-cloud` project, the Hugo landing/docs/blog site is not deployed as a separate static surface for v0.
+- Unlike the sister `aweb-cloud` project, the Hugo landing/docs site is not deployed as a separate static surface for v0.
 - Hugo output must be included in the same production Docker image as the API and Vite record app.
-- The container serves Hugo for `/`, `/docs/*`, and `/blog/*`, while preserving `/<short_signature>` for record pages.
+- The container serves Hugo for `/` and `/docs/*`, while preserving `/<short_signature>` for record pages.
 
 ---
 
@@ -790,7 +790,7 @@ Deploy the public service as a **single Docker container** containing:
 
 1. the Node/TypeScript ingestion API/runtime;
 2. the built Vite React record app;
-3. the built Hugo landing/docs/blog site.
+3. the built Hugo landing/docs site.
 
 This follows the sister-project pattern in `~/prj/awebai/aweb-cloud`:
 
@@ -812,7 +812,7 @@ The runtime container should:
 - listen on `0.0.0.0:${PORT:-8000}`;
 - expose `/api/*` API routes;
 - expose health/readiness routes for container/load-balancer checks;
-- serve Hugo static output for `/`, `/docs/*`, and `/blog/*`;
+- serve Hugo static output for `/` and `/docs/*`;
 - serve Vite record-app assets from a reserved prefix such as `/record-assets/*`;
 - serve the Vite record app shell for `/<short_signature>`;
 - never serve source files, local env files, tests, `.aw/`, or unbuilt workspace internals.
@@ -924,7 +924,7 @@ Rules:
 ### M2.x — Docker/local real-Postgres deployment foundation
 
 - Add Dockerfile, .dockerignore, Docker Compose, env examples, and Makefile targets modeled after `aweb-cloud` but simplified for this app.
-- Build one runtime image containing API + Vite record app + Hugo landing/docs/blog output.
+- Build one runtime image containing API + Vite record app + Hugo landing/docs output.
 - Add local container stack with real Postgres and migration execution.
 - Add smoke/integration test proving ingest/readback through the container against real Postgres.
 - Add prod-like path for running the same image against external Neon `DATABASE_URL`.
@@ -944,7 +944,7 @@ Rules:
 - Implement signal cards.
 - Implement verification panel with browser-side chain verification.
 
-### M5 — Hugo landing/docs/blog
+### M5 — Hugo landing/docs
 
 - Implement landing page.
 - Add docs and threat model pages.
