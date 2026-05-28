@@ -13,11 +13,19 @@ const USER_FACING_TARGETS = [
 
 const TEXTLIKE = new Set([".md", ".html", ".tsx", ".ts", ".jsx", ".js"]);
 
+// Hard-banned phrases in user-facing copy. The `honest` family is the
+// flagship case: it must not appear at all (use `clear` / `explicit` /
+// `accurate` / `precise` instead). `replayable`, `deterministic replay`,
+// `reconstructs the buffer`, and `final_text_*` imply the system stores
+// or reconstructs text and are also forbidden.
+//
+// Note on `humanness` / `humanlike` / `humanly`: coord allows these in
+// explicit negative/anti-pattern context (e.g. "does not emit humanness
+// verdicts") with reviewer ACK. The audit cannot reliably distinguish
+// positive from negative uses via regex, so it does not enforce here;
+// positive uses are caught by manual review.
 const BANNED = [
   { regex: /\bhonest(ly|y)?\b/gi, why: "moralizing — use 'clear' / 'explicit' / 'accurate' / 'precise'" },
-  { regex: /\bhumanness\b/gi, why: "essence/score language — drop or rephrase as 'human/AI score'" },
-  { regex: /\bhumanlike\b/gi, why: "essence language — drop or rephrase" },
-  { regex: /\bhumanly\b/gi, why: "adverb form — drop or rephrase" },
   { regex: /\breplayable\b/gi, why: "implies text storage/reconstruction; use 'inspectable' / 'content-opaque process record'" },
   { regex: /\bdeterministic\s+replay\b/gi, why: "implies text playback; use content-opaque framing" },
   { regex: /\breconstructs?\s+the\s+buffer\b/gi, why: "implies text storage" },
