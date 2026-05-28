@@ -5,7 +5,7 @@ Hugo static site for the public-facing landing page and docs.
 ## Responsibility
 
 - Public `/` and `/docs/*` routes.
-- Product explanation, content-blind privacy model, how records and verification work, threat model, and producer conformance.
+- Product explanation, content-opaque privacy model, how records and verification work, threat model, and producer conformance.
 - Candid lightweight tone: "we cannot prove it, but here is us caring enough to show the work."
 
 ## Non-responsibility

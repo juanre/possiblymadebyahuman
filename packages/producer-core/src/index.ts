@@ -11,7 +11,6 @@ export type {
 export type {
   FieldDescriptor,
   FieldOrigin,
-  FinalTextMetadata,
   IdentityCertainty,
   IngestRecordInput,
   IngestRecordResponse,

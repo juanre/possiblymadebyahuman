@@ -1,4 +1,4 @@
-;;; pmbah-mode.el --- PMBAH content-blind Emacs producer -*- lexical-binding: t; -*-
+;;; pmbah-mode.el --- PMBAH content-opaque Emacs producer -*- lexical-binding: t; -*-
 
 ;; Copyright (c) 2026
 ;; SPDX-License-Identifier: MIT
@@ -8,7 +8,7 @@
 
 ;;; Commentary:
 
-;; pmbah-mode records Emacs buffer mutations as content-blind
+;; pmbah-mode records Emacs buffer mutations as content-opaque
 ;; PossiblyMadeByAHuman writing records.  It hooks `after-change-functions`,
 ;; records mutation shape (positions/lengths/timing/source), computes hashes
 ;; locally through the shared format helper, uploads only the public record, and
@@ -22,7 +22,7 @@
 (require 'url-http)
 
 (defgroup pmbah nil
-  "Content-blind PMBAH writing-record producer."
+  "Content-opaque PMBAH writing-record producer."
   :group 'convenience
   :prefix "pmbah-")
 
@@ -36,8 +36,7 @@ The producer posts records to `/api/records` below this URL."
 (defcustom pmbah-node-command
   (or (getenv "PMBAH_NODE") "node")
   "Node.js executable used by the local record-building helper.
-Plaintext buffer content is passed only to this local helper on stdin so it can
-compute hashes; it is not uploaded."
+The helper receives only process metadata and computes public process hashes."
   :type 'string
   :group 'pmbah)
 
@@ -58,7 +57,6 @@ compute hashes; it is not uploaded."
 (defvar-local pmbah--session-id nil)
 (defvar-local pmbah--session-start-time nil)
 (defvar-local pmbah--events nil)
-(defvar-local pmbah--insertions nil)
 (defvar-local pmbah--next-seq 0)
 (defvar-local pmbah--inhibit-capture nil)
 
@@ -70,30 +68,36 @@ compute hashes; it is not uploaded."
 
 ;;;###autoload
 (define-minor-mode pmbah-mode
-  "Record this buffer's mutation history as a content-blind PMBAH session.
+  "Record this buffer's mutation history as a content-opaque PMBAH session.
 
 The mode records buffer mutations, not physical keystrokes.  Uploaded records
-contain event shape and hashes only; plaintext is kept local for final-text
-hashing and optional local verification."
+contain event shape and public process hashes only; plaintext is not stored,
+hashed, passed to the helper, or uploaded."
   :lighter (:eval (pmbah--mode-line))
   (if pmbah-mode
-      (progn
-        (pmbah--start-session)
-        (add-hook 'after-change-functions #'pmbah--after-change nil t))
+      (condition-case error
+          (progn
+            (pmbah--assert-empty-buffer-for-start)
+            (pmbah--start-session)
+            (add-hook 'after-change-functions #'pmbah--after-change nil t))
+        (error
+         (setq pmbah-mode nil)
+         (remove-hook 'after-change-functions #'pmbah--after-change t)
+         (signal (car error) (cdr error))))
     (remove-hook 'after-change-functions #'pmbah--after-change t)))
 
+(defun pmbah--assert-empty-buffer-for-start ()
+  "Refuse to start capture when the buffer already contains text."
+  (unless (= (point-min) (point-max))
+    (user-error
+     "PMBAH refuses to start in a non-empty buffer; start in an empty draft before writing so existing text is not silently included")))
+
 (defun pmbah--start-session ()
-  "Start a fresh per-buffer PMBAH session.
-If the buffer is non-empty, record an initial programmatic snapshot shape so the
-session can replay deterministically from an empty buffer using local fixtures."
+  "Start a fresh per-buffer PMBAH session."
   (setq pmbah--session-id (pmbah--uuid-v4)
         pmbah--session-start-time (current-time)
         pmbah--events nil
-        pmbah--insertions (make-hash-table :test 'equal)
-        pmbah--next-seq 0)
-  (let ((initial-text (pmbah--buffer-string)))
-    (when (> (length initial-text) 0)
-      (pmbah--append-event "insert" 0 0 (length initial-text) "programmatic" initial-text 0))))
+        pmbah--next-seq 0))
 
 (defun pmbah--after-change (beg end len)
   "Record a public mutation shape after a buffer change.
@@ -101,8 +105,7 @@ BEG, END, and LEN are supplied by `after-change-functions` and are Emacs
 character positions/lengths, which match the PMBAH format's Unicode codepoint
 unit for these captured text buffers."
   (unless (or pmbah--inhibit-capture (not pmbah-mode) (not pmbah--session-id))
-    (let* ((inserted-text (if (> end beg) (buffer-substring-no-properties beg end) ""))
-           (inserted-len (- end beg))
+    (let* ((inserted-len (- end beg))
            (op (cond
                 ((and (= len 0) (> inserted-len 0)) "insert")
                 ((and (> len 0) (= inserted-len 0)) "delete")
@@ -110,10 +113,10 @@ unit for these captured text buffers."
                 (t nil)))
            (pos (1- beg)))
       (when op
-        (pmbah--append-event op pos len inserted-len (pmbah--source-for-current-command) inserted-text)))))
+        (pmbah--append-event op pos len inserted-len (pmbah--source-for-current-command))))))
 
-(defun pmbah--append-event (op pos del-len ins-len source inserted-text &optional timestamp-ms)
-  "Append a PMBAH public event and keep INSERTED-TEXT as a local-only fixture."
+(defun pmbah--append-event (op pos del-len ins-len source &optional timestamp-ms)
+  "Append a content-opaque PMBAH public event."
   (let* ((seq pmbah--next-seq)
          (event (list :seq seq
                       :t (or timestamp-ms (pmbah--elapsed-ms))
@@ -123,8 +126,6 @@ unit for these captured text buffers."
                       :ins_len ins-len
                       :source source)))
     (push event pmbah--events)
-    (when (> ins-len 0)
-      (puthash (number-to-string seq) inserted-text pmbah--insertions))
     (setq pmbah--next-seq (1+ pmbah--next-seq))))
 
 (defun pmbah--source-for-current-command ()
@@ -163,16 +164,26 @@ declare source_attribution."
 
 ;;;###autoload
 (defun pmbah-discard-session ()
-  "Discard the current local PMBAH event log and start a fresh session.
-No data is uploaded.  If the buffer is non-empty, the new session records a
-programmatic initial snapshot shape."
+  "Discard the current local PMBAH event log.
+No data is uploaded.  If the buffer is empty, start a fresh session.  If the
+buffer is non-empty, disable capture so existing text is not silently included in
+a new record scope."
   (interactive)
   (unless pmbah-mode
     (user-error "pmbah-mode is not active"))
   (when (or (not (called-interactively-p 'interactive))
             (yes-or-no-p "Discard this local PMBAH session without uploading? "))
-    (pmbah--start-session)
-    (message "PMBAH session discarded; new session %s started" pmbah--session-id)))
+    (if (= (point-min) (point-max))
+        (progn
+          (pmbah--start-session)
+          (message "PMBAH session discarded; new session %s started" pmbah--session-id))
+      (remove-hook 'after-change-functions #'pmbah--after-change t)
+      (setq pmbah-mode nil
+            pmbah--session-id nil
+            pmbah--session-start-time nil
+            pmbah--events nil
+            pmbah--next-seq 0)
+      (message "PMBAH session discarded; capture disabled because buffer is non-empty"))))
 
 ;;;###autoload
 (defun pmbah-sign-buffer (&optional capture-context)
@@ -209,7 +220,7 @@ Absolute file paths are shown as omitted and are not included by default."
         (erase-buffer)
         (insert "PMBAH capture context preview\n")
         (insert "================================\n\n")
-        (insert "The public record is content-blind: it uploads mutation shape, timing, metadata, and hashes, not plaintext.\n\n")
+        (insert "The public record is content-opaque: it uploads mutation shape, timing, metadata, and hashes, not plaintext.\n\n")
         (insert (format "Buffer name candidate: %s\n" buffer-label))
         (insert (format "Major mode candidate: %s\n" mode-label))
         (insert (format "Absolute file path: omitted by default (%s)\n" file-label))
@@ -239,10 +250,8 @@ The returned alist contains only the public `manifest` and `events` shape."
                                         :capabilities ["timing" "pause_fidelity"])
                         :capture_context (or capture-context (pmbah--capture-context nil nil))
                         :events (vconcat (pmbah--session-events))
-                        :final_text (pmbah--buffer-string)
                         :duration_ms (pmbah--elapsed-ms)
-                        :created_client_t (format-time-string "%FT%T%z" (current-time) t)
-                        :replay_insertions_by_seq pmbah--insertions)))
+                        :created_client_t (format-time-string "%FT%T%z" (current-time) t))))
     (pmbah--run-helper payload)))
 
 (defun pmbah--run-helper (payload)
@@ -310,16 +319,6 @@ The returned alist contains only the public `manifest` and `events` shape."
 (defun pmbah--session-events ()
   "Return chronological public events for the active session."
   (nreverse (copy-sequence pmbah--events)))
-
-(defun pmbah--session-replay-insertions-alist ()
-  "Return local-only replay insertion fixtures as an alist for tests/debugging."
-  (let (items)
-    (maphash (lambda (key value) (push (cons key value) items)) pmbah--insertions)
-    items))
-
-(defun pmbah--buffer-string ()
-  "Return current buffer text without properties."
-  (buffer-substring-no-properties (point-min) (point-max)))
 
 (defun pmbah--elapsed-ms ()
   "Return integer milliseconds since the current session started."

@@ -4,11 +4,11 @@ import type { RecordApiResponse, VerificationState } from "./types.ts";
 export type ReplayPoint = {
   seq: number;
   t: number;
-  pos: number;
-  del_len: number;
-  ins_len: number;
+  pos: number | null;
+  del_len: number | null;
+  ins_len: number | null;
   source: string;
-  documentLength: number;
+  documentLength: number | null;
   isLargeInsert: boolean;
   isLongPause: boolean;
   delayFromPreviousMs: number;
@@ -27,12 +27,15 @@ export function verifyRecordChain(record: RecordApiResponse): VerificationState 
 }
 
 export function buildReplayPoints(events: BufferMutation[]): ReplayPoint[] {
-  let documentLength = 0;
+  let documentLength: number | null = 0;
   let previousT = 0;
   return events.map((event) => {
     const delayFromPreviousMs = event.seq === 0 ? 0 : event.t - previousT;
     previousT = event.t;
-    documentLength = Math.max(0, documentLength - event.del_len + event.ins_len);
+    documentLength =
+      documentLength === null || event.del_len === null || event.ins_len === null
+        ? null
+        : Math.max(0, documentLength - event.del_len + event.ins_len);
     return {
       seq: event.seq,
       t: event.t,
@@ -41,7 +44,7 @@ export function buildReplayPoints(events: BufferMutation[]): ReplayPoint[] {
       ins_len: event.ins_len,
       source: event.source,
       documentLength,
-      isLargeInsert: event.ins_len >= LARGE_INSERT_CODEPOINTS,
+      isLargeInsert: (event.ins_len ?? 0) >= LARGE_INSERT_CODEPOINTS,
       isLongPause: delayFromPreviousMs >= LONG_PAUSE_MS,
       delayFromPreviousMs,
     };

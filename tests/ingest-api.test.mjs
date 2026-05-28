@@ -38,10 +38,11 @@ test("Postgres migration defines records, stats, and analysis-results tables", a
   assert.match(migration, /parent_record_hash\s+text null references records\(record_hash\)/i);
   assert.match(migration, /record_hash\s+text not null references records\(record_hash\) on delete cascade/i);
   assert.doesNotMatch(migration, /records_short_signature_idx/i);
-  assert.doesNotMatch(migration, /plaintext|final_text\s+text/i);
+  assert.match(migration, /observed_final_length\s+integer null/i);
+  assert.doesNotMatch(migration, /plaintext|final_text\s+text|final_text_hash|final_text_length/i);
 });
 
-test("POST /api/records ingests a valid content-blind record", async () => {
+test("POST /api/records ingests a valid content-opaque record", async () => {
   const { api } = makeApi();
   const record = await fixtureRecord();
   const response = await api.postRecord(record);
@@ -112,7 +113,7 @@ test("stats are computed and persisted with meaningful fields", async () => {
   assert.equal(fetched.body.stats.record_hash, record.manifest.record_hash);
   assert.equal(fetched.body.stats.event_count, 4);
   assert.equal(fetched.body.stats.duration_ms, 240);
-  assert.equal(fetched.body.stats.final_text_length, 8);
+  assert.equal(fetched.body.stats.observed_final_length, 8);
   assert.equal(fetched.body.stats.insert_op_count, 3);
   assert.equal(fetched.body.stats.delete_op_count, 1);
   assert.equal(fetched.body.stats.replace_op_count, 0);
@@ -132,6 +133,29 @@ test("stats are computed and persisted with meaningful fields", async () => {
   assert.equal(fetched.body.signals.length, 2);
   assert.equal(fetched.body.signals[0].analyzer_id, "timing-distribution");
   assert.equal(fetched.body.signals[1].analyzer_id, "edit-topology");
+});
+
+test("ingest stores explicit-null unknown process measurements", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  const [, nullVector] = await readJson("packages/conformance/vectors/hash-chain.json");
+  record.events = clone(nullVector.events);
+  record.manifest.record_hash = nullVector.record_hash;
+  record.manifest.event_count = record.events.length;
+  record.manifest.duration_ms = 10;
+
+  const ingest = await api.postRecord(record);
+  assert.equal(ingest.status, 201);
+  const fetched = await api.getRecord(ingest.body.short_signature);
+
+  assert.equal(fetched.status, 200);
+  assert.equal(fetched.body.events[1].pos, null);
+  assert.equal(fetched.body.events[1].del_len, null);
+  assert.equal(fetched.body.events[1].ins_len, null);
+  assert.equal(fetched.body.stats.observed_final_length, null);
+  assert.equal(fetched.body.stats.inserted_codepoints_total, 3);
+  const topology = fetched.body.signals.find((signal) => signal.analyzer_id === "edit-topology");
+  assert.equal(topology.measures.find((measure) => measure.key === "unknown_process_measurement_count")?.value, 1);
 });
 
 test("buggy analyzers do not block ingestion or mutate stored records", async () => {
@@ -256,8 +280,6 @@ test("Postgres read SQL uses explicit columns so created_at is the record timest
           capture_context: record.manifest.capture_context,
           event_count: record.manifest.event_count,
           duration_ms: record.manifest.duration_ms,
-          final_text_hash: record.manifest.final_text_hash,
-          final_text_length: record.manifest.final_text_length,
           created_client_t: record.manifest.created_client_t,
           ingested_server_t: "2026-05-28T10:00:00.000Z",
           parent_record_hash: null,

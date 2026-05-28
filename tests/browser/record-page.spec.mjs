@@ -24,10 +24,10 @@ test.describe("public record page", () => {
     await expect(card).toContainText("markdown-mode");
   });
 
-  test("renders content-blind replay without document plaintext", async ({ page }) => {
-    const replay = page.locator("section.card", { hasText: "Content-blind replay" });
+  test("renders content-opaque timeline without document plaintext", async ({ page }) => {
+    const replay = page.locator("section.card", { hasText: "Content-opaque timeline" });
     await expect(replay).toContainText("Structure only");
-    await expect(replay).toContainText("No text is rendered.");
+    await expect(replay).toContainText("No text is reconstructed or rendered.");
     await expect(page.locator(".timeline .timeline-row")).toHaveCount(4);
     const html = await page.content();
     for (const plaintext of plaintextFixtures) {

@@ -1,6 +1,6 @@
 [
   {
-    "name": "three-event hash chain",
+    "name": "three-event content-opaque hash chain",
     "session_id": "123e4567-e89b-42d3-a456-426614174000",
     "format_version": "0.1",
     "events": [
@@ -20,8 +20,7 @@
         "pos": 1,
         "del_len": 0,
         "ins_len": 2,
-        "source": "paste",
-        "ins_hash": "b3:6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+        "source": "paste"
       },
       {
         "seq": 2,
@@ -35,9 +34,39 @@
     ],
     "chain": [
       "b3:5e995fa7fb12582f9a9a94adc9d52975fc314b116f250b95d6fec01f4c2aca04",
-      "b3:e4e5535a7a482d267a92c4be91f6712823ecf103b6ffb5d84dd33cc576744aad",
-      "b3:7d7e6c992ac2567ff6a71331a0517f3384cfc61c6f73609befb6e21efe72f1b8"
+      "b3:6c8bcbb96035f76d77a757e5522dcbd8a680acfc62a42cef8fc791aa06dcf765",
+      "b3:81501135e9b11884a4b7bd00096d43e6c0b6042e79b32d6d0146167055b359eb"
     ],
-    "record_hash": "b3:7d7e6c992ac2567ff6a71331a0517f3384cfc61c6f73609befb6e21efe72f1b8"
+    "record_hash": "b3:81501135e9b11884a4b7bd00096d43e6c0b6042e79b32d6d0146167055b359eb"
+  },
+  {
+    "name": "unknown process fields hash as explicit null",
+    "session_id": "123e4567-e89b-42d3-a456-426614174000",
+    "format_version": "0.1",
+    "events": [
+      {
+        "seq": 0,
+        "t": 0,
+        "op": "insert",
+        "pos": 0,
+        "del_len": 0,
+        "ins_len": 3,
+        "source": "typing"
+      },
+      {
+        "seq": 1,
+        "t": 10,
+        "op": "insert",
+        "pos": null,
+        "del_len": null,
+        "ins_len": null,
+        "source": "unknown"
+      }
+    ],
+    "chain": [
+      "b3:1fcebff9fe0ec3c9f21c56438f68b854e48f8a0141d68e5b5ed91298012cc8ad",
+      "b3:2813cbb2acdb09f604e59cca4382e622a1a386cf0ad32a587ba0d4761254d552"
+    ],
+    "record_hash": "b3:2813cbb2acdb09f604e59cca4382e622a1a386cf0ad32a587ba0d4761254d552"
   }
 ]

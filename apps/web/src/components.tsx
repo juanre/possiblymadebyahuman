@@ -39,7 +39,7 @@ export function QuickStatsPanel({ record }: { record: RecordApiResponse }) {
       <div className="stats-grid">
         <Stat label="Events" value={stats.event_count} />
         <Stat label="Duration" value={formatDuration(stats.duration_ms)} />
-        <Stat label="Final length" value={`${stats.final_text_length} codepoints`} />
+        <Stat label="Observed length" value={stats.observed_final_length === null ? "unknown" : `${stats.observed_final_length} codepoints`} />
         <Stat label="Typing events" value={stats.typed_event_count} />
         <Stat label="Insert / delete / replace" value={`${stats.insert_op_count} / ${stats.delete_op_count} / ${stats.replace_op_count}`} />
         <Stat label="Paste / unknown" value={`${stats.paste_event_count} / ${stats.unknown_source_count}`} />
@@ -57,15 +57,17 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
 
 export function ReplayScrubber({ record }: { record: RecordApiResponse }) {
   const points = useMemo(() => buildReplayPoints(record.events), [record.events]);
-  const maxLength = Math.max(1, ...points.map((point) => point.documentLength), record.manifest.final_text_length);
+  const knownLengths = points.map((point) => point.documentLength).filter((length): length is number => length !== null);
+  const maxLength = Math.max(1, ...knownLengths, record.stats.observed_final_length ?? 0);
   return (
     <section className="card">
-      <h2>Content-blind replay</h2>
-      <p className="muted">Structure only: document length, edit position, operation size, source, large inserts, and long pauses. No text is rendered.</p>
-      <div className="timeline" role="img" aria-label="Content-blind mutation timeline">
+      <h2>Content-opaque timeline</h2>
+      <p className="muted">Structure only: observed length, edit position, operation size, source, large inserts, and long pauses. No text is reconstructed or rendered.</p>
+      <div className="timeline" role="img" aria-label="Content-opaque mutation timeline">
         {points.map((point) => {
-          const left = `${Math.min(100, (point.pos / maxLength) * 100)}%`;
-          const width = `${Math.max(1.5, Math.min(18, ((point.ins_len + point.del_len) / maxLength) * 100))}%`;
+          const left = point.pos === null ? "0%" : `${Math.min(100, (point.pos / maxLength) * 100)}%`;
+          const operationSize = (point.ins_len ?? 0) + (point.del_len ?? 0);
+          const width = operationSize === 0 ? "4px" : `${Math.max(1.5, Math.min(18, (operationSize / maxLength) * 100))}%`;
           return (
             <div key={point.seq} className="timeline-row">
               <span className="timeline-label">#{point.seq}</span>
@@ -73,10 +75,10 @@ export function ReplayScrubber({ record }: { record: RecordApiResponse }) {
                 <span
                   className={`event-marker ${sourceClass(point.source)} ${point.isLargeInsert ? "large" : ""} ${point.isLongPause ? "pause" : ""}`}
                   style={{ left, width }}
-                  title={`seq ${point.seq}: ${point.source}, +${point.ins_len}/-${point.del_len}, length ${point.documentLength}`}
+                  title={`seq ${point.seq}: ${point.source}, +${point.ins_len ?? "unknown"}/-${point.del_len ?? "unknown"}, observed length ${point.documentLength ?? "unknown"}`}
                 />
               </div>
-              <span className="timeline-meta">len {point.documentLength}</span>
+              <span className="timeline-meta">len {point.documentLength ?? "?"}</span>
             </div>
           );
         })}

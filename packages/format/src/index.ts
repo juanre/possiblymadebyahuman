@@ -41,11 +41,10 @@ export type BufferMutation = {
   seq: number;
   t: number;
   op: Operation;
-  pos: number;
-  del_len: number;
-  ins_len: number;
+  pos: number | null;
+  del_len: number | null;
+  ins_len: number | null;
   source: Source;
-  ins_hash?: B3Hash;
 };
 
 export type EventLog = BufferMutation[];
@@ -84,8 +83,6 @@ export type RecordManifest = {
   capture_context?: CaptureContext | null;
   event_count: number;
   duration_ms: number;
-  final_text_hash: B3Hash;
-  final_text_length: number;
   created_client_t?: string | null;
   ingested_server_t?: string | null;
   parent_record?: B3Hash | null;
@@ -112,32 +109,17 @@ export type Signal = {
   explanation: string;
 };
 
-export type ReplayMutation = BufferMutation & {
-  /** Plaintext fixture/local-only insertion text. Never part of a public record. */
-  ins_text?: string;
-};
-
-export type ReplayTextProvider = (event: BufferMutation) => string;
-
-export type ReplayResult = {
-  finalText: string;
-  finalTextLength: number;
-  finalTextHash: B3Hash;
-};
-
 export type VerificationResult = {
   valid: boolean;
   errors: string[];
   computedRecordHash?: B3Hash;
   computedChain?: B3Hash[];
-  computedFinalTextLength?: number;
-  computedFinalTextHash?: B3Hash;
 };
 
 const OPERATION_SET = new Set<string>(OPERATIONS);
 const SOURCE_SET = new Set<string>(SOURCES);
 const CAPABILITY_SET = new Set<string>(CAPABILITIES);
-const EVENT_KEYS = new Set(["seq", "t", "op", "pos", "del_len", "ins_len", "source", "ins_hash"]);
+const EVENT_KEYS = new Set(["seq", "t", "op", "pos", "del_len", "ins_len", "source"]);
 
 export function canonicalizeJson(value: unknown): string {
   if (value === null) return "null";
@@ -181,7 +163,6 @@ export function canonicalizeEvent(event: BufferMutation): string {
     del_len: event.del_len,
     ins_len: event.ins_len,
     source: event.source,
-    ins_hash: event.ins_hash,
   };
   return canonicalizeJson(canonicalEvent);
 }
@@ -260,55 +241,26 @@ export function verifyEventHashChain(record: WritingRecord): VerificationResult 
   return { valid: errors.length === 0, errors, computedRecordHash, computedChain };
 }
 
-export function replayEvents(events: EventLog, getInsertedText: ReplayTextProvider): ReplayResult {
+export function computeObservedLength(events: EventLog): number | null {
   assertValidEventLog(events);
-  const buffer: string[] = [];
-
+  let length: number | null = 0;
   for (const event of events) {
-    if (event.pos > buffer.length) {
-      throw new RangeError(`event ${event.seq} position ${event.pos} exceeds buffer length ${buffer.length}`);
+    if (event.pos === null || event.del_len === null || event.ins_len === null || length === null) {
+      length = null;
+      continue;
     }
-    if (event.pos + event.del_len > buffer.length) {
-      throw new RangeError(`event ${event.seq} deletes beyond buffer length ${buffer.length}`);
+    if (event.pos > length) {
+      throw new RangeError(`event ${event.seq} position ${event.pos} exceeds observed length ${length}`);
     }
-
-    const inserted = event.ins_len > 0 ? getInsertedText(event) : "";
-    const insertedCodepoints = codepoints(inserted);
-    if (insertedCodepoints.length !== event.ins_len) {
-      throw new RangeError(
-        `event ${event.seq} inserted text length ${insertedCodepoints.length} does not match ins_len ${event.ins_len}`,
-      );
+    if (event.pos + event.del_len > length) {
+      throw new RangeError(`event ${event.seq} deletes beyond observed length ${length}`);
     }
-
-    buffer.splice(event.pos, event.del_len, ...insertedCodepoints);
+    length = length - event.del_len + event.ins_len;
   }
-
-  const finalText = buffer.join("");
-  const metadata = computeFinalTextMetadata(finalText);
-  return { finalText, ...metadata };
+  return length;
 }
 
-export function replayEventsWithText(events: ReplayMutation[]): ReplayResult {
-  return replayEvents(events.map(stripReplayText), (event) => {
-    const replayEvent = events[event.seq];
-    if (!replayEvent || replayEvent.seq !== event.seq) {
-      throw new RangeError(`missing replay fixture for event ${event.seq}`);
-    }
-    if (event.ins_len > 0 && replayEvent.ins_text === undefined) {
-      throw new RangeError(`event ${event.seq} requires local ins_text fixture`);
-    }
-    return replayEvent.ins_text ?? "";
-  });
-}
-
-export function computeFinalTextMetadata(text: string): Pick<ReplayResult, "finalTextLength" | "finalTextHash"> {
-  return {
-    finalTextLength: codepointLength(text),
-    finalTextHash: b3HashText(text),
-  };
-}
-
-export function verifyRecord(record: WritingRecord, options: { getInsertedText?: ReplayTextProvider } = {}): VerificationResult {
+export function verifyRecord(record: WritingRecord): VerificationResult {
   const errors = [...validateManifest(record.manifest), ...validateEventLog(record.events)];
 
   if (record.events.length === 0) {
@@ -338,24 +290,10 @@ export function verifyRecord(record: WritingRecord, options: { getInsertedText?:
     }
   }
 
-  let computedFinalTextLength: number | undefined;
-  let computedFinalTextHash: B3Hash | undefined;
-  if (options.getInsertedText) {
-    try {
-      const replay = replayEvents(record.events, options.getInsertedText);
-      computedFinalTextLength = replay.finalTextLength;
-      computedFinalTextHash = replay.finalTextHash;
-      if (record.manifest.final_text_length !== replay.finalTextLength) {
-        errors.push(
-          `final_text_length mismatch: manifest ${record.manifest.final_text_length}, replay ${replay.finalTextLength}`,
-        );
-      }
-      if (record.manifest.final_text_hash !== replay.finalTextHash) {
-        errors.push(`final_text_hash mismatch: expected ${record.manifest.final_text_hash}, computed ${replay.finalTextHash}`);
-      }
-    } catch (error) {
-      errors.push(error instanceof Error ? error.message : String(error));
-    }
+  try {
+    computeObservedLength(record.events);
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error));
   }
 
   return {
@@ -363,8 +301,6 @@ export function verifyRecord(record: WritingRecord, options: { getInsertedText?:
     errors,
     computedRecordHash,
     computedChain,
-    computedFinalTextLength,
-    computedFinalTextHash,
   };
 }
 
@@ -379,9 +315,9 @@ export function validateEvent(event: unknown, expectedSeq?: number): string[] {
   const candidate = event as Partial<BufferMutation>;
   validateNonNegativeInteger(candidate.seq, "seq", errors);
   validateNonNegativeInteger(candidate.t, "t", errors);
-  validateNonNegativeInteger(candidate.pos, "pos", errors);
-  validateNonNegativeInteger(candidate.del_len, "del_len", errors);
-  validateNonNegativeInteger(candidate.ins_len, "ins_len", errors);
+  validateNullableNonNegativeInteger(candidate.pos, "pos", errors);
+  validateNullableNonNegativeInteger(candidate.del_len, "del_len", errors);
+  validateNullableNonNegativeInteger(candidate.ins_len, "ins_len", errors);
 
   if (expectedSeq !== undefined && candidate.seq !== expectedSeq) {
     errors.push(`seq must be gap-free: expected ${expectedSeq}, got ${String(candidate.seq)}`);
@@ -393,13 +329,10 @@ export function validateEvent(event: unknown, expectedSeq?: number): string[] {
   if (typeof candidate.source !== "string" || !SOURCE_SET.has(candidate.source)) {
     errors.push(`source must be one of ${SOURCES.join(", ")}`);
   }
-  if (candidate.ins_hash !== undefined && !isB3Hash(candidate.ins_hash)) {
-    errors.push(`ins_hash must be a ${HASH_PREFIX} hash when present`);
-  }
-
   const delLen = candidate.del_len;
   const insLen = candidate.ins_len;
   if (
+    typeof candidate.pos === "number" &&
     typeof delLen === "number" &&
     typeof insLen === "number" &&
     Number.isInteger(delLen) &&
@@ -473,8 +406,8 @@ export function validateManifest(manifest: unknown): string[] {
   }
   validateNonNegativeInteger(candidate.event_count, "event_count", errors);
   validateNonNegativeInteger(candidate.duration_ms, "duration_ms", errors);
-  if (!isB3Hash(candidate.final_text_hash)) errors.push(`final_text_hash must be a ${HASH_PREFIX} hash`);
-  validateNonNegativeInteger(candidate.final_text_length, "final_text_length", errors);
+  if ("final_text_hash" in candidate) errors.push("final_text_hash is not a content-opaque public manifest field");
+  if ("final_text_length" in candidate) errors.push("final_text_length is not a content-opaque public manifest field");
   validateNullableString(candidate.created_client_t, "created_client_t", errors);
   validateNullableString(candidate.ingested_server_t, "ingested_server_t", errors);
   if ("parent_record_hash" in candidate) {
@@ -508,11 +441,6 @@ export function codepointLength(text: string): number {
   return codepoints(text).length;
 }
 
-function stripReplayText(event: ReplayMutation): BufferMutation {
-  const { ins_text: _localOnly, ...publicEvent } = event;
-  return publicEvent;
-}
-
 function concatBytes(...chunks: Uint8Array[]): Uint8Array {
   const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
   const output = new Uint8Array(length);
@@ -542,6 +470,12 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function validateNonNegativeInteger(value: unknown, name: string, errors: string[]): void {
   if (!Number.isInteger(value) || (value as number) < 0) errors.push(`${name} must be a non-negative integer`);
+}
+
+function validateNullableNonNegativeInteger(value: unknown, name: string, errors: string[]): void {
+  if (value !== null && (!Number.isInteger(value) || (value as number) < 0)) {
+    errors.push(`${name} must be a non-negative integer or null`);
+  }
 }
 
 function validateNullableString(value: unknown, name: string, errors: string[]): void {

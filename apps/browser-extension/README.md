@@ -1,6 +1,6 @@
 # browser extension
 
-Chrome/Chromium Manifest V3 producer for PMBAH content-blind writing records.
+Chrome/Chromium Manifest V3 producer for PMBAH content-opaque writing records.
 
 Implementation of capture behavior is owned by `default-aaaa.7`. The current
 scaffold provides the release/package contract used by `default-aaaa.17` so the

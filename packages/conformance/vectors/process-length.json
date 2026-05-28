@@ -1,0 +1,19 @@
+[
+  {
+    "name": "content-opaque insert delete replace length math",
+    "events": [
+      { "seq": 0, "t": 0, "op": "insert", "pos": 0, "del_len": 0, "ins_len": 3, "source": "typing" },
+      { "seq": 1, "t": 10, "op": "delete", "pos": 1, "del_len": 1, "ins_len": 0, "source": "typing" },
+      { "seq": 2, "t": 20, "op": "replace", "pos": 1, "del_len": 1, "ins_len": 2, "source": "unknown" }
+    ],
+    "observed_final_length": 3
+  },
+  {
+    "name": "unknown process measurements make observed final length unknown",
+    "events": [
+      { "seq": 0, "t": 0, "op": "insert", "pos": 0, "del_len": 0, "ins_len": 3, "source": "typing" },
+      { "seq": 1, "t": 10, "op": "insert", "pos": null, "del_len": null, "ins_len": null, "source": "unknown" }
+    ],
+    "observed_final_length": null
+  }
+]

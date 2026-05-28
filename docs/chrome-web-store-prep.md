@@ -108,8 +108,8 @@ PossiblyMadeByAHuman Writing Records
 
 ### Draft short description
 
-Create content-blind records of selected browser writing sessions and share a
-hash-addressed editing-process replay.
+Create content-opaque records of selected browser writing sessions and share a
+hash-addressed editing-process view.
 
 ### Draft detailed description
 
@@ -122,17 +122,17 @@ source information when the browser makes that available. Nothing is uploaded
 while you write.
 
 When you choose to sign and upload a session, the extension builds a public
-content-blind writing record: event positions and lengths, timing, metadata you
-review, final text length, and cryptographic hashes. The public service stores
-that record and returns a short URL you can share.
+content-opaque writing record: event positions and lengths, timing, metadata you
+review, and cryptographic hashes over the public process record. The public
+service stores that record and returns a short URL you can share.
 
 Public records do not contain your document plaintext or per-event inserted text.
 Capture context such as page title or URL is shown before upload so you can omit
 or redact identifying metadata.
 
 This is not a human/AI detector. It does not decide who wrote something, assign a
-confidence score, or certify authorship. It gives readers a replayable record of
-an editing session's structure and makes large pastes or atomic insertions
+confidence score, or certify authorship. It gives readers a content-opaque view
+of an editing session's structure and makes large pastes or atomic insertions
 visible as process facts.
 
 ### Draft support text
@@ -157,19 +157,16 @@ and final extension behavior.
 
 ### Data stored or processed locally before upload
 
-- Unsigned session event logs and local replay material needed to compute final
-  hashes and preview the record.
-- Document plaintext exists in the browser's editable field and may be processed
-  transiently in memory for hashing/reconstruction before upload. Persistent
-  unsigned extension storage should remain content-blind unless `default-aaaa.7`
-  explicitly documents and justifies a different local-only behavior.
+- Unsigned session event logs containing process metadata only.
+- Document plaintext exists in the browser's editable field and may be inspected
+  transiently in memory only to derive numeric process metadata such as offsets
+  and lengths. Persistent unsigned extension storage must remain content-opaque.
 - Local retention/TTL: `TBD by default-aaaa.7`; expected intent is short-lived
   unsigned capture storage with user-visible discard/clear behavior.
 
 ### Data transmitted on explicit sign/upload
 
-- Content-blind PMBAH record manifest and event log.
-- Final text hash and final text length.
+- Content-opaque PMBAH record manifest and event log.
 - Record hash-chain data derived from mutation events.
 - Capture context that the user reviews and accepts, for example sanitized page
   URL/title or field kind.
@@ -179,6 +176,7 @@ and final extension behavior.
 
 - Document plaintext.
 - Per-event inserted plaintext.
+- Text-derived hashes or fingerprints such as final text hashes or insertion hashes.
 - Absolute local file paths.
 - A human/AI verdict, confidence score, or authorship certification.
 
@@ -209,7 +207,7 @@ TBDs with exact behavior.
 | `scripting` | TBD by `.7` | If used, injects the content capturer into user-selected pages or supported editable surfaces. Explain why static content scripts are insufficient if this remains. |
 | Content scripts / `host_permissions` | TBD by `.7` | Needed only on pages where the extension can observe supported editable fields/contenteditable surfaces. Use the narrowest feasible match pattern and describe user controls. |
 | `clipboardWrite` | TBD by `.7` | If used, copies the returned PMBAH short URL after explicit sign/upload. Do not request if the implementation uses another copy flow. |
-| Network access to PMBAH API | TBD by `.7` | Used only when the user explicitly signs/uploads a content-blind record to the configured ingest API. Document the exact endpoint/origin. |
+| Network access to PMBAH API | TBD by `.7` | Used only when the user explicitly signs/uploads a content-opaque record to the configured ingest API. Document the exact endpoint/origin. |
 | `alarms` or background scheduling | TBD by `.7` | If used, enforces local unsigned-capture TTL or cleanup. State retention interval and user-visible behavior. |
 | `tabs` | TBD by `.7` | Avoid unless final implementation needs tab URL/title beyond what narrower APIs provide. If used, explain capture-context preview/redaction. |
 
@@ -220,7 +218,7 @@ Use these notes to keep the submission aligned with PMBAH's product promise:
 - The extension is a writing-record producer, not an AI detector.
 - The extension must not claim to verify, certify, or score human authorship.
 - The privacy policy and listing must state that public uploads are
-  content-blind by default.
+  content-opaque by default.
 - The final listing must describe when capture is active and what user action
   triggers upload.
 - Permission justifications must be concrete and match the final manifest.

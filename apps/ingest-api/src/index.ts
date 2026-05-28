@@ -6,6 +6,7 @@ import {
 } from "../../../packages/analyzers/src/index.ts";
 import {
   b3HashToBytes,
+  computeObservedLength,
   isB3Hash,
   verifyRecord,
   type B3Hash,
@@ -171,7 +172,7 @@ export function computeRecordStats(record: WritingRecord, idleThresholdMs = DEFA
     record_hash: record.manifest.record_hash,
     event_count: events.length,
     duration_ms: record.manifest.duration_ms,
-    final_text_length: record.manifest.final_text_length,
+    observed_final_length: computeObservedLength(events),
     insert_op_count: events.filter((event) => event.op === "insert").length,
     delete_op_count: events.filter((event) => event.op === "delete").length,
     replace_op_count: events.filter((event) => event.op === "replace").length,
@@ -183,9 +184,9 @@ export function computeRecordStats(record: WritingRecord, idleThresholdMs = DEFA
     autocomplete_event_count: events.filter((event) => event.source === "autocomplete").length,
     programmatic_event_count: events.filter((event) => event.source === "programmatic").length,
     unknown_source_count: events.filter((event) => event.source === "unknown").length,
-    inserted_codepoints_total: events.reduce((total, event) => total + event.ins_len, 0),
-    deleted_codepoints_total: events.reduce((total, event) => total + event.del_len, 0),
-    largest_atomic_insert_codepoints: events.reduce((largest, event) => Math.max(largest, event.ins_len), 0),
+    inserted_codepoints_total: events.reduce((total, event) => total + (event.ins_len ?? 0), 0),
+    deleted_codepoints_total: events.reduce((total, event) => total + (event.del_len ?? 0), 0),
+    largest_atomic_insert_codepoints: events.reduce((largest, event) => Math.max(largest, event.ins_len ?? 0), 0),
     inter_event_delay_min_ms: sortedDelays[0] ?? null,
     inter_event_delay_p50_ms: percentile(sortedDelays, 0.5),
     inter_event_delay_p90_ms: percentile(sortedDelays, 0.9),
@@ -249,8 +250,6 @@ const PUBLIC_MANIFEST_FIELDS = new Set([
   "capture_context",
   "event_count",
   "duration_ms",
-  "final_text_hash",
-  "final_text_length",
   "created_client_t",
   "ingested_server_t",
   "parent_record",
@@ -267,8 +266,8 @@ function validatePublicManifestFields(manifest: unknown): string[] {
 function findContentBearingFields(input: unknown): string[] {
   const errors: string[] = [];
   visit(input, "$", (path, key) => {
-    if (["text", "plaintext", "content", "ins_text", "final_text"].includes(key)) {
-      errors.push(`${path} is not allowed in public content-blind records`);
+    if (["text", "plaintext", "content", "ins_text", "ins_hash", "final_text", "final_text_hash", "final_text_length"].includes(key)) {
+      errors.push(`${path} is not allowed in public content-opaque records`);
     }
   });
   return errors;

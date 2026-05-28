@@ -1,22 +1,27 @@
 ---
-title: "Content-blind privacy model"
+title: "Content-opaque privacy model"
 summary: "What public records store, what they deliberately do not, and what the signer controls before upload."
 ---
 
-The default mode of `possiblymadebyahuman` is **content-blind**. Public records describe the shape of an editing process without containing the document's plaintext.
+The default mode of `possiblymadebyahuman` is **content-opaque**. Public records describe the shape of an editing process without containing, hashing, replaying, or storing the document's plaintext.
 
 ## What public records contain
 
 - A canonical event log of buffer mutations: `seq`, `t`, `op`, `pos`, `del_len`, `ins_len`, and `source`.
-- A manifest with the BLAKE3 record hash, producer identity and version, declared capabilities, capture context (when provided), event count, duration, and final text length.
-- Precomputed statistics: typing/paste/cut/drop/IME/autocomplete/programmatic/unknown counts, codepoints inserted/deleted, largest atomic insert, inter-event delay percentiles, active/idle time, and a delay histogram.
+- A manifest with the BLAKE3 record hash, producer identity and version, declared capabilities, capture context (when provided), event count, and duration.
+- Precomputed statistics: typing/paste/cut/drop/IME/autocomplete/programmatic/unknown counts, codepoints inserted/deleted, largest atomic insert, observed process length, inter-event delay percentiles, active/idle time, and a delay histogram.
 - Analyzer signals, each with explicit measures and an explanation.
 
 ## What public records do not contain
 
-- The plaintext of the document. Lengths and positions are in Unicode codepoints, not text.
-- Per-event inserted text. Producers may compute optional `ins_hash` values for local verification, but those are omitted from public uploads.
+- The plaintext of the document. Lengths and positions are Unicode codepoint counts, not text.
+- Per-event inserted text.
+- Hashes or fingerprints of document text, including `ins_hash`, `final_text_hash`, or document-content length/hash fields.
 - Any account, email, or directly identifying user field. There is no user system in v0.
+
+## What producers may do transiently
+
+A producer may inspect editor text synchronously when an editor/browser API makes that necessary to derive process metadata such as position, inserted length, deleted length, or selection range. The string must then be discarded. It must not be stored in session state, browser storage, Emacs variables, logs, helper payloads, uploaded JSON, or content hashes.
 
 ## What the signer controls
 
@@ -38,5 +43,5 @@ Producers (the browser extension and the Emacs minor mode) show every record to 
 ## What we cannot offer
 
 - Deletion of uploaded records. There is no public deletion API in v0. Permanence is the price of not asking for an account.
-- Confidentiality against an attacker who already has the plaintext: the system is about *not* uploading text, not about protecting text the signer chose to publish elsewhere.
+- Confidentiality against an attacker who already has the plaintext: the system is about *not* uploading, hashing, or storing text, not about protecting text the signer chose to publish elsewhere.
 - A guarantee that a third party did not separately keep a copy of the writing. We can only describe what *this* service stores.

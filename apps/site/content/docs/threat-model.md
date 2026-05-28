@@ -3,7 +3,7 @@ title: "Threat model"
 summary: "Who and what this product can and cannot defend against."
 ---
 
-A threat model is what keeps a system honest. This is ours, deliberately short.
+A threat model states what a system does and does not defend against. This is ours, deliberately short.
 
 ## Who we are trying to be useful to
 
@@ -22,7 +22,7 @@ A threat model is what keeps a system honest. This is ours, deliberately short.
 
 - **Silent tampering with stored events.** The hash chain detects any change. A reader can recompute it locally.
 - **Backend silently editing a record.** Same defence: anyone with the URL can verify the chain.
-- **A producer claiming a capability it does not have.** Conformance vectors and capability-honesty checks fail closed if a producer advertises `timing` or `source_attribution` without actually supplying them.
+- **A producer claiming a capability it does not have.** Conformance vectors and capability-accuracy checks fail closed if a producer advertises `timing` or `source_attribution` without actually supplying them.
 - **A "humanness score" creeping into the UI.** It is a product-level invariant that no aggregate verdict is rendered. Analyzer signals are facts with explanations, never combined into a single score.
 - **Plaintext leaking into public storage.** Producers strip plaintext before upload; the ingest API rejects content-bearing fields on public submissions; the record app renders structure only.
 

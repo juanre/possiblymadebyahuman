@@ -34,7 +34,7 @@ const stats = {
   record_hash: record.manifest.record_hash,
   event_count: 4,
   duration_ms: 240,
-  final_text_length: 8,
+  observed_final_length: 8,
   insert_op_count: 3,
   delete_op_count: 1,
   replace_op_count: 0,

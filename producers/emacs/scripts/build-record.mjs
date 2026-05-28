@@ -3,7 +3,6 @@ import { stdin, stdout, stderr, exit } from "node:process";
 
 import {
   FORMAT_VERSION,
-  computeFinalTextMetadata,
   computeRecordHash,
   verifyRecord,
 } from "../../../packages/format/src/index.ts";
@@ -24,12 +23,9 @@ try {
   const input = JSON.parse(raw);
 
   if (!Array.isArray(input.events)) fail("events must be an array");
-  if (typeof input.final_text !== "string") fail("final_text must be a local string");
   if (typeof input.session_id !== "string") fail("session_id must be a string");
 
   const events = input.events;
-  const finalText = input.final_text;
-  const metadata = computeFinalTextMetadata(finalText);
   const recordHash = computeRecordHash(events, input.session_id, input.format_version ?? FORMAT_VERSION);
 
   const record = {
@@ -45,8 +41,6 @@ try {
       capture_context: input.capture_context ?? null,
       event_count: events.length,
       duration_ms: Math.max(0, Number(input.duration_ms ?? events.at(-1)?.t ?? 0)),
-      final_text_hash: metadata.finalTextHash,
-      final_text_length: metadata.finalTextLength,
       created_client_t: input.created_client_t ?? new Date().toISOString(),
       ingested_server_t: null,
       parent_record: null,
@@ -55,14 +49,7 @@ try {
     events,
   };
 
-  const replayInsertions = input.replay_insertions_by_seq;
-  const verification = verifyRecord(
-    record,
-    replayInsertions && typeof replayInsertions === "object"
-      ? { getInsertedText: (event) => replayInsertions[String(event.seq)] ?? "" }
-      : undefined,
-  );
-
+  const verification = verifyRecord(record);
   if (!verification.valid) fail("generated record failed verification", verification.errors);
 
   stdout.write(JSON.stringify({ record, verification }) + "\n");

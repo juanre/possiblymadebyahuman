@@ -6,9 +6,9 @@ Layer 2 ingestion service package.
 
 - `POST /api/records`, `GET /api/records/:short_signature_or_hash`, and `GET /api/health` endpoint handlers.
 - Schema validation through `packages/format`.
-- Public content-blind enforcement: plaintext/content-bearing fields are rejected.
+- Public content-opaque enforcement: plaintext/content-bearing fields are rejected.
 - Hash-chain verification, content addressing, `ingested_server_t` stamping, short-signature generation, immutable storage, and record stats computation.
-- Returning the content-blind `{ manifest, events, stats, signals }` record shape for the web app.
+- Returning the content-opaque `{ manifest, events, stats, signals }` record shape for the web app.
 
 ## Non-responsibility
 

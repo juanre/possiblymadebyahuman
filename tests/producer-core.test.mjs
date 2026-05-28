@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  b3HashText,
   canonicalizeEvent,
   computeRecordHash,
   validateManifest,
@@ -167,7 +166,7 @@ test("3. parallel sessions across two origins isolate sign() to one field", () =
   clock.set(240);
   registry.appendMutation(b1.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 4, source: "typing" });
 
-  const draft = registry.sign(a1.session_id, { length: 5, hash: b3HashText("hello") });
+  const draft = registry.sign(a1.session_id);
   assert.equal(draft.events.length, 1);
 
   const liveA2 = registry.get(a2.session_id);
@@ -247,8 +246,7 @@ test("7. sign chain matches packages/format computeRecordHash", () => {
   clock.set(240);
   registry.appendMutation(session.session_id, { op: "insert", pos: 7, del_len: 0, ins_len: 1, source: "typing" });
 
-  const finalHash = b3HashText("Hi ther!");
-  const draft = registry.sign(session.session_id, { length: 8, hash: finalHash });
+  const draft = registry.sign(session.session_id);
   const recomputed = computeRecordHash(draft.events, session.session_id, "0.1");
   assert.equal(draft.manifest.record_hash, recomputed);
   assert.deepEqual(validateManifest(draft.manifest), []);
@@ -280,7 +278,7 @@ test("9. signing flips state and blocks further appendMutation until upload comp
   const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
   registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" });
 
-  registry.sign(session.session_id, { length: 3, hash: b3HashText("yes") });
+  registry.sign(session.session_id);
   assert.equal(registry.get(session.session_id).state, "signing");
 
   registry.markUploading(session.session_id);
@@ -306,7 +304,7 @@ test("10. failed upload retains events and reason; retry clears the reason on su
   const desc = descriptor();
   const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
   registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 4, source: "typing" });
-  registry.sign(session.session_id, { length: 4, hash: b3HashText("nope") });
+  registry.sign(session.session_id);
   registry.markUploading(session.session_id);
   registry.markFailedUpload(session.session_id, "http 500 backend");
   const failed = registry.get(session.session_id);
@@ -336,7 +334,7 @@ test("11. signing one session leaves siblings active and writable", () => {
   registry.appendMutation(sessionA.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 2, source: "typing" });
   registry.appendMutation(sessionB.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" });
 
-  registry.sign(sessionA.session_id, { length: 2, hash: b3HashText("hi") });
+  registry.sign(sessionA.session_id);
   registry.markUploading(sessionA.session_id);
 
   registry.appendMutation(sessionB.session_id, { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" });
@@ -352,7 +350,7 @@ test("12. canonicalizeEvent round-trip matches the bytes feeding computeRecordHa
   clock.set(50);
   registry.appendMutation(session.session_id, { op: "insert", pos: 1, del_len: 0, ins_len: 1, source: "paste" });
 
-  const draft = registry.sign(session.session_id, { length: 2, hash: b3HashText("ab") });
+  const draft = registry.sign(session.session_id);
   const canonicalLines = draft.events.map((event) => canonicalizeEvent(event));
   for (const line of canonicalLines) {
     assert.ok(line.startsWith("{") && line.endsWith("}"));
@@ -385,8 +383,8 @@ test("13. same kernel + different upload adapters produce identical manifests", 
   r2.appendMutation(session2.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 2, source: "typing" });
 
   assert.equal(session1.session_id, session2.session_id);
-  const draft1 = r1.sign(session1.session_id, { length: 2, hash: b3HashText("ab") });
-  const draft2 = r2.sign(session2.session_id, { length: 2, hash: b3HashText("ab") });
+  const draft1 = r1.sign(session1.session_id);
+  const draft2 = r2.sign(session2.session_id);
   assert.equal(draft1.manifest.record_hash, draft2.manifest.record_hash);
   assert.deepEqual(draft1.events, draft2.events);
 
@@ -421,9 +419,9 @@ test("public ingest shape never contains plaintext keys", () => {
   const desc = descriptor();
   const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
   registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 5, source: "typing" });
-  const draft = registry.sign(session.session_id, { length: 5, hash: b3HashText("hello") });
+  const draft = registry.sign(session.session_id);
   const json = JSON.stringify(draft);
-  for (const banned of ['"text"', '"plaintext"', '"content"', '"ins_text"', '"final_text"']) {
+  for (const banned of ['"text"', '"plaintext"', '"content"', '"ins_text"', '"ins_hash"', '"final_text"']) {
     assert.ok(!json.includes(banned), `draft includes banned plaintext key ${banned}`);
   }
 });

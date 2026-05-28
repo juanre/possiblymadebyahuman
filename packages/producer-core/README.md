@@ -1,6 +1,6 @@
 # producer-core
 
-`@possiblymadebyahuman/producer-core` is the shared, content-blind producer kernel consumed by both the browser extension (`apps/browser-extension`, default-aaaa.7) and the first-party drafting page (`apps/web` `/write`, default-aaaa.28). It owns the non-UI logic — session identity, per-field session state, wall-clock-anchored event timelines, content-blind manifest construction, and adapter boundaries — without depending on the DOM, `chrome.*`, or any platform-specific storage / clipboard / fetch primitive.
+`@possiblymadebyahuman/producer-core` is the shared, content-opaque producer kernel consumed by both the browser extension (`apps/browser-extension`, default-aaaa.7) and the first-party drafting page (`apps/web` `/write`, default-aaaa.28). It owns the non-UI logic — session identity, per-field session state, wall-clock-anchored event timelines, content-opaque manifest construction, and adapter boundaries — without depending on the DOM, `chrome.*`, or any platform-specific storage / clipboard / fetch primitive.
 
 ## What lives here
 
@@ -15,15 +15,14 @@
 
 - Read or write `chrome.*` / `window.*` / `document.*`.
 - Observe DOM events. Consumers translate `beforeinput` / `input` / `MutationObserver` deltas into `PendingMutation`.
-- See plaintext. `sign(id, final_text)` takes `{length, hash}` from the caller. The caller computes the BLAKE3 hash of the final text locally; the kernel never stores it as a string.
-- Full final-text replay verification. The kernel's `sign()` self-check uses `verifyEventHashChain` (chain only). Full replay (`verifyRecord` with a `getInsertedText` provider) is a consumer concern, available via `@possiblymadebyahuman/format` directly.
+- Store, hash, replay, upload, or require document text. Consumers may transiently inspect editor text only when necessary to derive numeric process metadata, then discard it.
+- Compute document-content metadata. Public v0 records intentionally do not contain `final_text_hash`, `final_text_length`, `ins_hash`, inserted text, final text, or text reconstruction fixtures.
 - Decide which `Capability` to declare. The kernel records source labels in events; consumers decide whether their evidence supports declaring `source_attribution`.
 
 ## How consumers wire in
 
 ```ts
 import { SessionRegistry } from "@possiblymadebyahuman/producer-core";
-import { b3HashText } from "@possiblymadebyahuman/format";
 
 const registry = new SessionRegistry({
   clock:    { now: () => Date.now() },
@@ -43,10 +42,7 @@ registry.appendMutation(session.session_id, {
   source: "typing",
 });
 
-const draft = registry.sign(session.session_id, {
-  length: codepointLength(currentText),
-  hash:   b3HashText(currentText),
-});
+const draft = registry.sign(session.session_id);
 registry.markUploading(session.session_id);
 try {
   const resp = await myUploadAdapter.postRecord(draft);
@@ -77,21 +73,21 @@ When in doubt, prefer creating a new session with `degraded` certainty over sile
 
 `base_wall_ms` is set from the `ClockAdapter` at session creation. Each `appendMutation` stamps `t = clock.now() - base_wall_ms`. If the consumer drives the registry from a backgrounded tab and the user idles for five minutes, the next event's `t` jumps by exactly the wall-clock gap. There is no compression. This is the SOT contract; the kernel honours it by construction.
 
-## What you can verify without plaintext
+## What you can verify without text
 
 `registry.sign()` runs `verifyEventHashChain({manifest, events})` before returning. That check validates the manifest fields, the canonical event log, and `manifest.record_hash === BLAKE3(format_version || session_id || events…)`.
 
-What it does **not** verify: that the produced event log, replayed against the original plaintext, yields the same `final_text_hash`. That requires the original text. Consumers with the text (the content script while the field is alive, or a test fixture) can call `verifyRecord(record, { getInsertedText })` from `@possiblymadebyahuman/format` for that round-trip.
+It does not verify document content, because PMBAH v0 does not inspect, hash, replay, or store document content.
 
 ## Capabilities
 
-`producer.capabilities` is the consumer's claim about what the producer can deliver. The kernel does not inspect or enforce it. The honest convention:
+`producer.capabilities` is the consumer's claim about what the producer can deliver. The kernel does not inspect or enforce it. The required convention:
 
 - `timing` — declare it whenever you can stamp events with a real clock (i.e. always, in a browser).
 - `source_attribution` — declare it only if the consumer's mapping from input intent to `Source` is reliable across the cases it handles. When unsure, omit; downstream analyzers will treat the relevant signals as not-applicable.
 - `selection`, `pause_fidelity`, `keystroke_level` — see SOT § 4. Don't declare these unless the implementation actually delivers them.
 
-If a capability becomes unsupported mid-session (e.g. the source attribution heuristic degrades), the honest move is to start a new session with the lower capability set rather than retroactively un-declaring.
+If a capability becomes unsupported mid-session (e.g. the source attribution heuristic degrades), start a new session with the lower capability set rather than retroactively un-declaring.
 
 ## Errors
 
@@ -100,6 +96,6 @@ If a capability becomes unsupported mid-session (e.g. the source attribution heu
 
 ## Testing
 
-`tests/producer-core.test.mjs` covers the 14 acceptance scenarios from default-aaaa.29 plus invariants (no plaintext keys in the public draft, identity helpers exposed independently, capture-context redaction). Tests inject a mutable clock, a deterministic UUID factory, and an in-memory storage adapter — no real time, no real browser.
+`tests/producer-core.test.mjs` covers the acceptance scenarios from default-aaaa.29 plus invariants (no plaintext keys in the public draft, identity helpers exposed independently, capture-context redaction). Tests inject a mutable clock, a deterministic UUID factory, and an in-memory storage adapter — no real time, no real browser.
 
 Run `make check` to exercise the full project test suite including these tests.

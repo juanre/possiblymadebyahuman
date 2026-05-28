@@ -1,6 +1,6 @@
 [
   {
-    "name": "insert event without optional ins_hash",
+    "name": "insert event content-opaque canonical shape",
     "event": {
       "seq": 0,
       "t": 0,
@@ -13,7 +13,7 @@
     "canonical": "{\"del_len\":0,\"ins_len\":1,\"op\":\"insert\",\"pos\":0,\"seq\":0,\"source\":\"typing\",\"t\":0}"
   },
   {
-    "name": "insert event with optional ins_hash",
+    "name": "paste event content-opaque canonical shape",
     "event": {
       "seq": 1,
       "t": 25,
@@ -21,9 +21,21 @@
       "pos": 1,
       "del_len": 0,
       "ins_len": 2,
-      "source": "paste",
-      "ins_hash": "b3:6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+      "source": "paste"
     },
-    "canonical": "{\"del_len\":0,\"ins_hash\":\"b3:6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85\",\"ins_len\":2,\"op\":\"insert\",\"pos\":1,\"seq\":1,\"source\":\"paste\",\"t\":25}"
+    "canonical": "{\"del_len\":0,\"ins_len\":2,\"op\":\"insert\",\"pos\":1,\"seq\":1,\"source\":\"paste\",\"t\":25}"
+  },
+  {
+    "name": "unknown process fields use explicit null",
+    "event": {
+      "seq": 2,
+      "t": 30,
+      "op": "insert",
+      "pos": null,
+      "del_len": null,
+      "ins_len": null,
+      "source": "unknown"
+    },
+    "canonical": "{\"del_len\":null,\"ins_len\":null,\"op\":\"insert\",\"pos\":null,\"seq\":2,\"source\":\"unknown\",\"t\":30}"
   }
 ]

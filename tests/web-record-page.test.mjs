@@ -17,7 +17,7 @@ async function recordFixture() {
       record_hash: record.manifest.record_hash,
       event_count: 4,
       duration_ms: 240,
-      final_text_length: 8,
+      observed_final_length: 8,
       insert_op_count: 3,
       delete_op_count: 1,
       replace_op_count: 0,
@@ -59,7 +59,7 @@ test("RecordPage source defines required public record sections without verdict 
     "VerificationPanel",
     "ChainVerificationButton",
     "ManifestDetails",
-    "Content-blind replay",
+    "Content-opaque timeline",
     "Analyzer signals as facts",
   ]) {
     assert.match(source, new RegExp(snippet));
@@ -90,7 +90,7 @@ test("browser-side verification helper reports tampering", async () => {
   assert.ok(verification.messages.some((message) => message.includes("record_hash mismatch") || message.includes("insert op")));
 });
 
-test("content-blind replay points track document length and markers", async () => {
+test("content-opaque timeline points track document length and markers", async () => {
   const record = await recordFixture();
   const points = buildReplayPoints(record.events);
   assert.deepEqual(points.map((point) => point.documentLength), [2, 8, 7, 8]);

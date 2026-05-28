@@ -17,7 +17,7 @@
     "note": "A coarse importer can emit unknown, but should not declare source_attribution if every event is unknown."
   },
   {
-    "name": "unknown-only importer without source attribution is honest",
+    "name": "unknown-only importer without source attribution is explicit",
     "capabilities": ["timing"],
     "events": [
       {

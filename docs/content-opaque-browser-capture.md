@@ -6,7 +6,7 @@ Task: `default-aaaa.37`. Investigates which `PendingMutation` fields can be deri
 
 > Producers may **transiently** inspect editor/browser/Emacs text only when necessary to derive process metadata (numeric position, inserted/deleted length, selection range, operation classification). Transient means: read it synchronously in-memory, derive the number, **discard the string in the same statement / event handler**.
 >
-> Producers must never **retain** text: no putting it into session state, storage, logs, helper payloads, public records, debug output, local fixtures, or uploaded JSON. No content hashes (`final_text_hash`, `ins_hash`). No local plaintext replay as a correctness requirement. No initial baseline snapshot of pre-existing buffer content.
+> Producers must never **retain** text: no putting it into session state, storage, logs, helper payloads, public records, debug output, local fixtures, or uploaded JSON. No content hashes (`final_text_hash`, `ins_hash`). No local text reconstruction as a correctness requirement. No initial baseline snapshot of pre-existing buffer content.
 
 This makes the spike less about *can we count* (we can) and more about *can we prove we don't keep* (we can, via a small set of structural rules + an audit).
 
@@ -34,7 +34,7 @@ These remain forbidden in v0, regardless of how briefly text was held:
 - Uploading text in `POST /api/records` or any other producer-to-backend channel.
 - Passing whole-buffer, final-text, or inserted-text strings to helper subprocesses or external tools.
 - Computing or storing content hashes/fingerprints of actual text content: `final_text_hash`, `ins_hash`, BLAKE3/SHA over `value`/`innerText`/`event.data`, etc. The chain hash over canonical public events is fine (it hashes process events, not text).
-- Local plaintext replay as a correctness requirement (i.e. requiring `verifyRecord` to round-trip through the text).
+- Local text reconstruction as a correctness requirement (i.e. requiring `verifyRecord` to round-trip through the text).
 - Initial baseline / snapshot of pre-existing buffer content as a stored fixture.
 - Debug console statements that include the inserted text string. Logging `event.inputType` is fine; logging `event.data` is not.
 - Test helpers in production source paths that take a `text` argument.
@@ -58,7 +58,7 @@ Legend: ✓ direct (numeric only) · ✓† transient string read, immediately d
 | `deleteContent*` family | typing | ✓ | ✓ via target range | `0` | |
 | `deleteByCut` | cut | ✓ | ✓ | `0` | |
 | `deleteByDrag` | drop | ✓ | ✓ | `0` | |
-| programmatic `el.value = "…"` | programmatic | ✓† compare `value.length` before/after (transient counts only) | ✓† via diff of before/after `value.length` (lower bound only — net delta) | ✓† via diff of before/after `value.length` (net delta) | best-effort. The producer captures only net length deltas, never strings. If the change is a replace, `del_len`/`ins_len` are not individually distinguishable from net delta; the format should accept this honestly. |
+| programmatic `el.value = "…"` | programmatic | ✓† compare `value.length` before/after (transient counts only) | ✓† via diff of before/after `value.length` (lower bound only — net delta) | ✓† via diff of before/after `value.length` (net delta) | best-effort. The producer captures only net length deltas, never strings. If the change is a replace, `del_len`/`ins_len` are not individually distinguishable from net delta; the format should accept this explicitly. |
 
 ### `[contenteditable=true]`
 
@@ -71,7 +71,7 @@ Legend: ✓ direct (numeric only) · ✓† transient string read, immediately d
 | `insertFromDrop` | drop | ✓† | ✓† | ✓† if data is a string; otherwise nullable | |
 | programmatic (DOM mutation w/o `input` event) | programmatic | unknown unless inferred via `MutationObserver` | nullable | nullable | `MutationObserver(characterDataOldValue:true)` exposes `oldValue` as a transient string; counting only is allowed, but reconstructing every mutation is fragile. The format should accept `null`. |
 
-**Bottom line**: every user-driven case in the matrices above is capturable content-opaquely. The narrow remainder — multi-node HTML paste / rich drag-drop into contenteditable, and programmatic mutations that rewrite the DOM — is honestly handled by allowing explicit `null` in `pos`/`del_len`/`ins_len`. Producers must not pretend to know a length they cannot derive content-opaquely.
+**Bottom line**: every user-driven case in the matrices above is capturable content-opaquely. The narrow remainder — multi-node HTML paste / rich drag-drop into contenteditable, and programmatic mutations that rewrite the DOM — is represented by allowing explicit `null` in `pos`/`del_len`/`ins_len`. Producers must not pretend to know a length they cannot derive content-opaquely.
 
 ## Codepoints vs UTF-16 units
 
@@ -82,7 +82,7 @@ Both are reachable now:
 
 The spike's previous recommendation to switch the spec to UTF-16 is no longer necessary. **Stay with codepoint semantics** as the original spec already says; producers compute codepoint counts via transient `Array.from(str).length` and discard.
 
-Producers that *cannot* produce codepoint counts (Emacs's `after-change-functions` reports lengths in characters which in modern Emacs are typically codepoints, but old multibyte buffers might differ) declare honestly via a producer capability or emit nulls.
+Producers that *cannot* produce codepoint counts (Emacs's `after-change-functions` reports lengths in characters which in modern Emacs are typically codepoints, but old multibyte buffers might differ) declare that limit via a producer capability or emit nulls.
 
 ## Recommendations for the format (`.35`) and producer-core (`.36`)
 
@@ -109,7 +109,7 @@ Unchanged from the previous version, but with the rationale corrected:
   // FORBIDDEN — retains the inserted text on the session
   session.lastInsertedText = event.data;
   ```
-- **IME**: buffer between `compositionstart` and `compositionend`. **Cancellation honesty**: when `compositionend.data === ''` (or some browsers fire `compositionend` with no `data` after a cancel), the composition produced nothing — emit no mutation rather than a zero-length one. Otherwise emit a single mutation on `compositionend` using cursor-displacement, with the transient-`event.data.length` fallback only if displacement is unreliable.
+- **IME**: buffer between `compositionstart` and `compositionend`. **Cancellation handling**: when `compositionend.data === ''` (or some browsers fire `compositionend` with no `data` after a cancel), the composition produced nothing — emit no mutation rather than a zero-length one. Otherwise emit a single mutation on `compositionend` using cursor-displacement, with the transient-`event.data.length` fallback only if displacement is unreliable.
 - **No persistence of any text-derived string**. The `SessionRecord` written to `chrome.storage.local` has only numeric event fields plus `capture_context` (signer-approved provenance metadata). The `chrome.runtime.sendMessage` envelope between content script and service worker has no text fields.
 - **No console.log of `event.data` or field values** in production source. Diagnostic logs may report `inputType` and numeric lengths.
 - **Programmatic capture**: best-effort via `MutationObserver`. When the only knowable length is "net delta" or genuinely unknown, **emit explicit `null`** for the unknown subfield rather than guessing.
@@ -182,7 +182,7 @@ The canary check fails the run if `RETENTION-CANARY-9F4A2B` is found anywhere. T
 
 ## Copy invariant (cross-reference)
 
-The content-opaque rule also has a user-facing copy consequence, owned by `.35`'s docs cleanup (or a routed follow-up): the README, the SOT, the Hugo site docs, and the M4 record-app UI must drop "replayable", "deterministic replay", "reconstructs the buffer", "final text" wording wherever it could suggest the system stores or reconstructs text. Preferred replacements: "inspectable, hash-addressed process record"; "content-opaque timeline of edit operations"; "shows operation shape/timing, not words"; "does not store, upload, or reconstruct your text". `apps/web`'s `ReplayScrubber` heading and its surrounding paragraph are the most visible user-facing instance and need rewording — that is frontend-owned and will land alongside `.36` if not split off earlier.
+The content-opaque rule also has a user-facing copy consequence: the README, the SOT, the Hugo site docs, and the M4 record-app UI must drop legacy replay/final-document wording wherever it could suggest the system stores or reconstructs text. Preferred replacements: "inspectable, hash-addressed process record"; "content-opaque timeline of edit operations"; "shows operation shape/timing, not words"; "does not store, upload, or reconstruct your text". Broad user-facing wording cleanup is owned by `.38`; `.35` owns the technical schema/storage/API wording required by the migration.
 
 ## What is NOT proposed
 

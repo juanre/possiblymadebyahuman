@@ -2,21 +2,25 @@
 
 Compatibility gate for producers and format implementations.
 
-A producer is conformant for format `0.1` iff it passes the canonicalization, hash-chain, deterministic replay/codepoint, golden-record, and capability-honesty checks that apply to its declared capabilities.
+A producer is conformant for format `0.1` iff it passes canonicalization,
+hash-chain, content-opaque process-length, golden-record, and capability-accuracy
+checks that apply to its declared capabilities.
 
 ## Responsibility
 
-- Canonicalization vectors.
-- Hash-chain vectors.
-- Deterministic replay and Unicode codepoint vectors.
-- Golden sample records.
-- Capability-honesty notes/checks.
+- Canonicalization vectors for public process events.
+- Hash-chain vectors over public manifest/event data.
+- Content-opaque process-length vectors that use operation positions and lengths,
+  not document text; unknown process measurements are explicit JSON `null`.
+- Golden sample records without text-derived manifest fields.
+- Capability-accuracy notes/checks.
 - A vector runner that compares implementation output with the checked-in vectors.
 
 ## Non-responsibility
 
 - Producer-specific capture code.
 - Backend ingestion or storage.
+- Plaintext replay, final text hashing, or inserted-text fixtures.
 - Analyzer judgment, humanness scoring, or detector language.
 
 ## Vectors
@@ -25,8 +29,9 @@ Vector files live in `packages/conformance/vectors/`:
 
 - `canonicalization.json`
 - `hash-chain.json`
-- `replay-codepoint.json`
+- `process-length.json`
 - `golden-records.json`
-- `capability-honesty.json`
+- `capability-accuracy.json`
 
-Replay and golden-record vectors may include local-only plaintext fixtures such as `ins_text` or `replay_insertions_by_seq`. Those fields are not valid public record fields and exist only to verify deterministic replay.
+Public v0 vectors are content-opaque. They do not contain `ins_text`,
+`ins_hash`, `final_text`, `final_text_hash`, or `final_text_length`.

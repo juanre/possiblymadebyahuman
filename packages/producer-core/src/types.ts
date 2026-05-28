@@ -40,15 +40,10 @@ export type FieldDescriptor = {
 
 export type PendingMutation = {
   op: Operation;
-  pos: number;
-  del_len: number;
-  ins_len: number;
+  pos: number | null;
+  del_len: number | null;
+  ins_len: number | null;
   source: Source;
-};
-
-export type FinalTextMetadata = {
-  length: number;
-  hash: B3Hash;
 };
 
 export type IngestRecordResponse = {

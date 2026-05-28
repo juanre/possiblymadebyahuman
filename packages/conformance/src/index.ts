@@ -1,12 +1,11 @@
 import {
   canonicalizeEvent,
   computeEventHashChain,
+  computeObservedLength,
   computeRecordHash,
-  replayEventsWithText,
   verifyRecord,
   type BufferMutation,
   type Capability,
-  type ReplayMutation,
   type WritingRecord,
 } from "../../format/src/index.ts";
 
@@ -27,21 +26,18 @@ export type HashChainVector = {
   record_hash: string;
 };
 
-export type ReplayVector = {
+export type ProcessLengthVector = {
   name: string;
-  events: ReplayMutation[];
-  final_text: string;
-  final_text_length: number;
-  final_text_hash: string;
+  events: BufferMutation[];
+  observed_final_length: number | null;
 };
 
 export type GoldenRecordVector = {
   name: string;
   record: WritingRecord;
-  replay_insertions_by_seq?: Record<string, string>;
 };
 
-export type CapabilityHonestyVector = {
+export type CapabilityAccuracyVector = {
   name: string;
   capabilities: Capability[];
   events: BufferMutation[];
@@ -52,9 +48,9 @@ export type CapabilityHonestyVector = {
 export type ConformanceVectors = {
   canonicalization?: CanonicalizationVector[];
   hashChains?: HashChainVector[];
-  replays?: ReplayVector[];
+  processLengths?: ProcessLengthVector[];
   goldenRecords?: GoldenRecordVector[];
-  capabilityHonesty?: CapabilityHonestyVector[];
+  capabilityAccuracy?: CapabilityAccuracyVector[];
 };
 
 export type ConformanceCheckResult = {
@@ -93,43 +89,26 @@ export function runConformanceVectors(vectors: ConformanceVectors): ConformanceR
     }));
   }
 
-  for (const vector of vectors.replays ?? []) {
+  for (const vector of vectors.processLengths ?? []) {
     results.push(check(vector.name, () => {
-      const replay = replayEventsWithText(vector.events);
-      const errors: string[] = [];
-      if (replay.finalText !== vector.final_text) errors.push("final_text mismatch");
-      if (replay.finalTextLength !== vector.final_text_length) {
-        errors.push(`final_text_length mismatch: expected ${vector.final_text_length}, got ${replay.finalTextLength}`);
-      }
-      if (replay.finalTextHash !== vector.final_text_hash) {
-        errors.push(`final_text_hash mismatch: expected ${vector.final_text_hash}, got ${replay.finalTextHash}`);
-      }
-      return errors;
+      const observed = computeObservedLength(vector.events);
+      return observed === vector.observed_final_length
+        ? []
+        : [`observed_final_length mismatch: expected ${vector.observed_final_length}, got ${observed}`];
     }));
   }
 
   for (const vector of vectors.goldenRecords ?? []) {
-    results.push(check(vector.name, () => {
-      const insertions = vector.replay_insertions_by_seq;
-      const verification = verifyRecord(
-        vector.record,
-        insertions
-          ? {
-              getInsertedText: (event) => insertions[String(event.seq)] ?? "",
-            }
-          : undefined,
-      );
-      return verification.errors;
-    }));
+    results.push(check(vector.name, () => verifyRecord(vector.record).errors));
   }
 
-  for (const vector of vectors.capabilityHonesty ?? []) {
+  for (const vector of vectors.capabilityAccuracy ?? []) {
     results.push(check(vector.name, () => {
-      const errors = checkCapabilityHonesty(vector.capabilities, vector.events);
+      const errors = checkCapabilityAccuracy(vector.capabilities, vector.events);
       const actualValid = errors.length === 0;
       return actualValid === vector.valid
         ? []
-        : [`capability honesty mismatch: expected valid=${vector.valid}, errors=${errors.join("; ")}`];
+        : [`capability accuracy mismatch: expected valid=${vector.valid}, errors=${errors.join("; ")}`];
     }));
   }
 
@@ -139,7 +118,7 @@ export function runConformanceVectors(vectors: ConformanceVectors): ConformanceR
   };
 }
 
-export function checkCapabilityHonesty(capabilities: Capability[], events: BufferMutation[]): string[] {
+export function checkCapabilityAccuracy(capabilities: Capability[], events: BufferMutation[]): string[] {
   const errors: string[] = [];
   const hasSourceAttribution = capabilities.includes("source_attribution");
   const hasKeystrokeLevel = capabilities.includes("keystroke_level");
@@ -150,8 +129,8 @@ export function checkCapabilityHonesty(capabilities: Capability[], events: Buffe
 
   if (hasKeystrokeLevel) {
     for (const event of events) {
-      if (event.source === "typing" && event.ins_len > 1) {
-        errors.push(`event ${event.seq} is typing with ins_len ${event.ins_len} despite keystroke_level capability`);
+      if (event.source === "typing" && (event.ins_len ?? 0) > 1) {
+        errors.push(`event ${event.seq} is typing with ins_len ${event.ins_len ?? "unknown"} despite keystroke_level capability`);
       }
     }
   }

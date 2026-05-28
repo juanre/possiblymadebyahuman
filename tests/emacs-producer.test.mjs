@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { verifyRecord } from "../packages/format/src/index.ts";
-import { checkCapabilityHonesty } from "../packages/conformance/src/index.ts";
+import { checkCapabilityAccuracy } from "../packages/conformance/src/index.ts";
 
 const emacs = spawnSync("bash", ["-lc", "command -v emacs"], { encoding: "utf8" }).stdout.trim();
 
@@ -18,7 +18,7 @@ function runEmacs(scriptPath) {
   });
 }
 
-test("Emacs producer captures Unicode codepoint mutations and builds a conformant content-blind record", { skip: emacs ? false : "emacs binary not available" }, async () => {
+test("Emacs producer captures Unicode codepoint mutations and builds a conformant content-opaque record", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-test-"));
   const outputPath = join(temp, "record.json");
   const scriptPath = join(temp, "scenario.el");
@@ -43,7 +43,7 @@ test("Emacs producer captures Unicode codepoint mutations and builds a conforman
   (let* ((context (list :surface "emacs" :emacs (list :buffer_name "scratch-test" :major_mode "text-mode")))
          (record (pmbah-build-record-for-current-buffer context))
          (default-context (pmbah--capture-context nil nil))
-         (output (list :record record :default_context default-context :replay_insertions_by_seq pmbah--insertions)))
+         (output (list :record record :default_context default-context)))
     (with-temp-file ${JSON.stringify(outputPath)}
       (insert (pmbah--json-encode output)))))
 `);
@@ -53,7 +53,7 @@ test("Emacs producer captures Unicode codepoint mutations and builds a conforman
     assert.equal(result.status, 0, result.stderr || result.stdout);
 
     const fixture = JSON.parse(await readFile(outputPath, "utf8"));
-    const { record, default_context: defaultContext, replay_insertions_by_seq: replayInsertions } = fixture;
+    const { record, default_context: defaultContext } = fixture;
 
     assert.deepEqual(defaultContext, { surface: "emacs" });
     assert.equal(JSON.stringify(defaultContext).includes(resolve(".")), false);
@@ -80,13 +80,11 @@ test("Emacs producer captures Unicode codepoint mutations and builds a conforman
     assert.equal(JSON.stringify(record).includes("é"), false);
     assert.equal(JSON.stringify(record).includes("zz"), false);
 
-    const verification = verifyRecord(record, {
-      getInsertedText: (event) => replayInsertions[String(event.seq)] ?? "",
-    });
+    const verification = verifyRecord(record);
     assert.equal(verification.valid, true, verification.errors.join("; "));
-    assert.equal(verification.computedFinalTextLength, 4);
-    assert.equal(record.manifest.final_text_length, 4);
-    assert.deepEqual(checkCapabilityHonesty(record.manifest.producer.capabilities, record.events), []);
+    assert.equal("final_text_hash" in record.manifest, false);
+    assert.equal("final_text_length" in record.manifest, false);
+    assert.deepEqual(checkCapabilityAccuracy(record.manifest.producer.capabilities, record.events), []);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

@@ -4,7 +4,7 @@ export type RecordStats = {
   record_hash: B3Hash;
   event_count: number;
   duration_ms: number;
-  final_text_length: number;
+  observed_final_length: number | null;
   insert_op_count: number;
   delete_op_count: number;
   replace_op_count: number;
@@ -162,9 +162,9 @@ export class PostgresRecordStore implements RecordStore {
           `insert into records (
             record_hash, short_signature, format_version, session_id,
             producer_id, producer_version, producer_capabilities, capture_context,
-            event_count, duration_ms, final_text_hash, final_text_length,
+            event_count, duration_ms,
             created_client_t, ingested_server_t, parent_record_hash, attestations, events, created_at
-          ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17::jsonb,$18)`,
+          ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16)`,
           [
             manifest.record_hash,
             input.short_signature,
@@ -176,8 +176,6 @@ export class PostgresRecordStore implements RecordStore {
             JSON.stringify(manifest.capture_context ?? null),
             manifest.event_count,
             manifest.duration_ms,
-            manifest.final_text_hash,
-            manifest.final_text_length,
             manifest.created_client_t ?? null,
             manifest.ingested_server_t ?? new Date().toISOString(),
             manifest.parent_record ?? null,
@@ -189,16 +187,17 @@ export class PostgresRecordStore implements RecordStore {
 
         await client.query(
           `insert into record_stats (
-            record_hash, insert_op_count, delete_op_count, replace_op_count,
+            record_hash, observed_final_length, insert_op_count, delete_op_count, replace_op_count,
             typed_event_count, paste_event_count, cut_event_count, drop_event_count,
             ime_event_count, autocomplete_event_count, programmatic_event_count, unknown_source_count,
             inserted_codepoints_total, deleted_codepoints_total, largest_atomic_insert_codepoints,
             inter_event_delay_min_ms, inter_event_delay_p50_ms, inter_event_delay_p90_ms,
             inter_event_delay_p95_ms, inter_event_delay_p99_ms, inter_event_delay_max_ms,
             active_time_ms, idle_time_ms, long_pause_count, delay_histogram
-          ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::jsonb)`,
+          ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb)`,
           [
             input.stats.record_hash,
+            input.stats.observed_final_length,
             input.stats.insert_op_count,
             input.stats.delete_op_count,
             input.stats.replace_op_count,
@@ -300,8 +299,6 @@ export class PostgresRecordStore implements RecordStore {
          r.capture_context,
          r.event_count,
          r.duration_ms,
-         r.final_text_hash,
-         r.final_text_length,
          r.created_client_t,
          r.ingested_server_t,
          r.parent_record_hash,
@@ -322,6 +319,7 @@ export class PostgresRecordStore implements RecordStore {
          s.inserted_codepoints_total,
          s.deleted_codepoints_total,
          s.largest_atomic_insert_codepoints,
+         s.observed_final_length,
          s.inter_event_delay_min_ms,
          s.inter_event_delay_p50_ms,
          s.inter_event_delay_p90_ms,
@@ -378,14 +376,13 @@ type RecordRow = Record<string, unknown> & {
   capture_context: Record<string, JsonValue> | null;
   event_count: number;
   duration_ms: number;
-  final_text_hash: B3Hash;
-  final_text_length: number;
   created_client_t: string | null;
   ingested_server_t: string;
   parent_record_hash: B3Hash | null;
   attestations: Array<{ type: string; [key: string]: JsonValue | undefined }>;
   events: EventLog;
   created_at: string;
+  observed_final_length: number | null;
   delay_histogram: Array<{ bucket: string; count: number }>;
   signals: AnalysisResult[];
 };
@@ -403,8 +400,6 @@ function rowToStoredRecord(row: RecordRow): StoredRecord {
     capture_context: row.capture_context,
     event_count: row.event_count,
     duration_ms: row.duration_ms,
-    final_text_hash: row.final_text_hash,
-    final_text_length: row.final_text_length,
     created_client_t: row.created_client_t,
     ingested_server_t: row.ingested_server_t,
     parent_record: row.parent_record_hash,
@@ -419,7 +414,7 @@ function rowToStoredRecord(row: RecordRow): StoredRecord {
       record_hash: row.record_hash,
       event_count: row.event_count,
       duration_ms: row.duration_ms,
-      final_text_length: row.final_text_length,
+      observed_final_length: nullableNumberFromRow(row.observed_final_length),
       insert_op_count: numberFromRow(row.insert_op_count),
       delete_op_count: numberFromRow(row.delete_op_count),
       replace_op_count: numberFromRow(row.replace_op_count),

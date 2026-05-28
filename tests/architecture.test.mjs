@@ -26,7 +26,7 @@ test("M0 scaffold paths exist", async () => {
 
 test("architecture records product boundaries", async () => {
   const architecture = await readFile("docs/architecture.md", "utf8");
-  assert.match(architecture, /content-blind/i);
+  assert.match(architecture, /content-opaque/i);
   assert.match(architecture, /not a detector/i);
   assert.match(architecture, /Out of scope for M0/);
 });
@@ -35,5 +35,5 @@ test("canonicalization spec home defines stable JSON rules", async () => {
   const canonicalization = await readFile("docs/spec/canonicalization.md", "utf8");
   assert.match(canonicalization, /keys are sorted lexicographically/i);
   assert.match(canonicalization, /No insignificant whitespace/i);
-  assert.match(canonicalization, /ins_hash.*omitted/i);
+  assert.match(canonicalization, /content-opaque mutation shapes/i);
 });

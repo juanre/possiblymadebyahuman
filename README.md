@@ -1,16 +1,16 @@
 # possiblymadebyahuman
 
-`possiblymadebyahuman` records the shape of a writing process and presents it as a replayable, hash-addressed writing record.
+`possiblymadebyahuman` records the shape of a writing process and presents it as an inspectable, hash-addressed process record.
 
 It is **not** a human/AI detector. It does not emit humanness verdicts, confidence percentages, or certification-style badges. The allowed claim is just: this record shows the shape of an editing process.
 
-The public service is content-blind: uploaded records store mutation structure, metadata, statistics, and analyzer facts, not plaintext writing. Plaintext belongs only in local replay flows or test fixtures.
+The public service is content-opaque by default: uploaded records store mutation structure, metadata, statistics, and analyzer facts, not plaintext writing. Producers may transiently inspect editor text only to derive numeric process metadata, then must discard it; they do not store, hash, reconstruct, or upload document text.
 
 `possiblymadebyahuman` is most certainly _not_ made by a human. It is instead made by a team of agents coordinating with [https://aweb.ai](aweb.ai). The human is only the instigator, and also somehow responsible for the result even though he has not actually looked at the code. His only real contribution has been the line drawing in the home page. He also plans to document how long it took from the first idea to the release of the site, as a note for posterity.
 
 ## Current milestone
 
-Release-readiness work is in progress. Implemented pieces include the content-blind record format, ingest API, immutable Postgres storage, analyzer facts, Docker/local Postgres stack, and Vite public record page. Remaining release work is tracked in aweb tasks; do not treat a local feature demo as release-ready until the release-readiness task is reviewed.
+Release-readiness work is in progress. Implemented pieces include the content-opaque record format, ingest API, immutable Postgres storage, analyzer facts, Docker/local Postgres stack, and Vite public record page. Remaining release work is tracked in aweb tasks; do not treat a local feature demo as release-ready until the release-readiness task is reviewed.
 
 ## Browser extension distribution prep
 

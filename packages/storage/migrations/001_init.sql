@@ -13,8 +13,6 @@ create table if not exists records (
 
   event_count integer not null,
   duration_ms integer not null,
-  final_text_hash text not null,
-  final_text_length integer not null,
 
   created_client_t timestamptz null,
   ingested_server_t timestamptz not null,
@@ -26,14 +24,15 @@ create table if not exists records (
 
   created_at timestamptz not null default now(),
 
-  constraint records_hash_prefix check (record_hash like 'b3:%'),
-  constraint records_final_text_hash_prefix check (final_text_hash like 'b3:%')
+  constraint records_hash_prefix check (record_hash like 'b3:%')
 );
 
 create index if not exists records_parent_record_hash_idx on records(parent_record_hash);
 
 create table if not exists record_stats (
   record_hash text primary key references records(record_hash) on delete cascade,
+
+  observed_final_length integer null,
 
   insert_op_count integer not null,
   delete_op_count integer not null,

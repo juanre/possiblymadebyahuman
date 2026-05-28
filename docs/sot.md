@@ -8,7 +8,7 @@ Spec reference: `docs/spec.md` remains the product/format thesis; this document 
 
 ## 1. Product promise
 
-`possiblymadebyahuman` records the shape of a writing process and gives someone a replayable, hash-addressed record they can inspect.
+`possiblymadebyahuman` records the shape of a writing process and gives someone an inspectable, hash-addressed process record.
 
 The product is **not** a detector and must not become one.
 
@@ -19,7 +19,7 @@ Allowed claim:
 Hard rules:
 
 1. **No verdicts.** No human/AI label, no confidence percentage, no badge implying certification of humanity.
-2. **Process, not content.** The public service stores edit structure, metadata, and statistics; it does not store plaintext text.
+2. **Process, not content.** The public service stores edit structure, metadata, and statistics; it does not store, hash, replay, upload, or reconstruct plaintext text.
 3. **Hash-addressed records.** The record URL is a short signature that resolves to a record whose full hash is always visible and browser-verifiable.
 4. **Tone matters.** The UI should be candid, lightweight, and self-aware: “we cannot prove it, but here is us caring enough to show the work.”
 
@@ -85,8 +85,7 @@ Owns:
 - BLAKE3-prefixed `b3:` hashing
 - event hash-chain computation
 - record-hash verification
-- deterministic replay using Unicode codepoint offsets
-- final-text hash computation for local verification/test fixtures
+- content-opaque process-length validation using Unicode codepoint offsets, with explicit JSON `null` for unknown process measurements
 
 Does not own:
 
@@ -104,12 +103,12 @@ Owns:
 
 - canonicalization vectors
 - hash-chain vectors
-- deterministic replay/codepoint vectors
+- content-opaque process-length/codepoint vectors
 - golden sample records
 - conformance runner
 - documentation for what “conformant producer” means
 
-A producer is conformant iff it passes canonicalization, hash-chain, replay, and capability-honesty checks.
+A producer is conformant iff it passes canonicalization, hash-chain, process-length, and capability-accuracy checks.
 
 ### 3.3 `packages/analyzers`
 
@@ -142,7 +141,7 @@ Owns:
 
 - per-field session identity, certainty (`fresh` / `resumed` / `degraded` / `collision`) and registry
 - wall-clock-anchored event timeline (idle gaps preserved)
-- content-blind manifest construction via `packages/format`
+- content-opaque manifest construction via `packages/format`
 - session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
 - capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
 - TTL sweep
@@ -151,8 +150,8 @@ Owns:
 Does not own:
 
 - DOM observation, `chrome.*`, `window.*`, `document.*`
-- Plaintext (callers compute `final_text_hash` locally and hand `{length, hash}` to `sign`)
-- Full replay verification (consumer concern via `packages/format.verifyRecord` with a `getInsertedText` provider)
+- Plaintext storage, hashing, replay, upload, or helper payloads
+- Text-based verification; `packages/format.verifyRecord` verifies public structure and hash chain only
 - Listing/store copy or browser packaging
 
 ### 3.4 `packages/storage`
@@ -207,7 +206,7 @@ Vite React app for record pages.
 Owns:
 
 - `/<short_signature>` record page
-- replay scrubber
+- content-opaque process timeline
 - quick stats panel
 - analyzer signal cards
 - verification panel
@@ -281,8 +280,7 @@ Mutation fields:
   "pos": 1043,
   "del_len": 12,
   "ins_len": 47,
-  "source": "paste",
-  "ins_hash": "b3:..." // optional; omitted in public/default content-blind mode
+  "source": "paste"
 }
 ```
 
@@ -290,7 +288,7 @@ Requirements:
 
 - `seq` is monotonic, gap-free, and starts at 0.
 - `t` is integer milliseconds since session start.
-- `pos`, `del_len`, and `ins_len` are Unicode codepoint offsets/lengths, not UTF-16 units and not bytes.
+- `pos`, `del_len`, and `ins_len` are Unicode codepoint offsets/lengths, not UTF-16 units and not bytes; when unknown, they are explicit JSON `null`, not omitted.
 - `op` is one of `insert`, `delete`, `replace`.
 - `source` is one of `typing`, `paste`, `cut`, `drop`, `ime`, `autocomplete`, `programmatic`, `unknown`.
 - Producers must not label uncertain input as `typing`; use `unknown` when attribution is degraded.
@@ -310,8 +308,6 @@ Manifest includes:
   "capture_context": {},
   "event_count": 1429,
   "duration_ms": 1384502,
-  "final_text_hash": "b3:...",
-  "final_text_length": 5821,
   "created_client_t": "client-claimed timestamp, untrusted",
   "ingested_server_t": "server-stamped timestamp, trusted if present",
   "parent_record": null,
@@ -382,7 +378,7 @@ Recommended stats:
 ```text
 event_count
 duration_ms
-final_text_length
+observed_final_length
 
 insert_op_count
 delete_op_count
@@ -418,7 +414,7 @@ Delay distribution guidance:
 
 - Compute inter-event delays from consecutive event `t` values.
 - Define an idle threshold in code/config, e.g. 30 seconds, for active-vs-idle summaries.
-- Keep raw events available for exact replay; stats are a render/cache optimization, not the source of truth.
+- Keep raw events available for exact process-timeline rendering; stats are a render/cache optimization, not the source of truth.
 
 ---
 
@@ -455,9 +451,6 @@ capture_context          jsonb null
 
 event_count              integer not null
 duration_ms              integer not null
-final_text_hash          text not null
-final_text_length        integer not null
-
 created_client_t         timestamptz null
 ingested_server_t        timestamptz not null
 
@@ -608,11 +601,11 @@ Input:
 Backend behavior:
 
 1. Validate schema.
-2. Verify events are content-blind by default; no plaintext field is accepted in public mode.
+2. Verify events are content-opaque by default; no plaintext or text-derived hash field is accepted in public mode.
 3. Recompute canonical event bytes.
 4. Recompute BLAKE3 hash chain.
 5. Verify manifest `record_hash` equals final chain hash.
-6. Verify `event_count`, `duration_ms`, `final_text_length`, and other manifest fields are structurally consistent where possible.
+6. Verify `event_count`, `duration_ms`, and other manifest fields are structurally consistent where possible.
 7. Stamp `ingested_server_t`.
 8. Generate collision-checked `short_signature`.
 9. Store immutable record row.
@@ -645,7 +638,7 @@ Returns:
 }
 ```
 
-Still content-blind.
+Still content-opaque.
 
 ### 10.3 `GET /api/health`
 
@@ -670,7 +663,7 @@ RecordPage
   DisclaimerBanner
   CaptureContextSummary
   QuickStatsPanel
-  ReplayScrubber
+  ProcessTimeline
   SignalList
     SignalCard
   VerificationPanel
@@ -687,20 +680,20 @@ The page should show:
 3. Quick stats:
    - event count
    - duration
-   - final text length
+   - observed process length, or unknown when process measurements contain nulls
    - typing events / typed codepoints
    - insertions / deletions / replacements
    - paste/unknown counts
    - largest atomic insert
    - active vs idle time
    - delay distribution summary
-4. Replay scrubber.
+4. Process timeline.
 5. Analyzer signals as facts.
 6. Verification panel.
 
-### 11.2 Replay scrubber in content-blind mode
+### 11.2 Process timeline in content-opaque mode
 
-The public service should not render text. Instead, replay visualizes structure:
+The public service should not render or reconstruct text. Instead, the timeline visualizes structure:
 
 - document length over time
 - insertion/deletion position on a horizontal document bar
@@ -732,7 +725,7 @@ Landing page goals:
 
 - Explain the gesture: “we can’t prove it, but here’s us caring enough to show the work.”
 - Show a simple example of a writing record.
-- Explain content-blind storage.
+- Explain content-opaque storage.
 - Link to browser extension and Emacs producer when available.
 - Link to docs and threat model.
 
@@ -773,7 +766,7 @@ Behavior:
 1. Capture passively and locally.
 2. User signs when they want a link.
 3. Signing freezes the session.
-4. Extension computes final text hash locally.
+4. Extension computes the public process hash chain locally.
 5. Extension uploads content-free manifest/events.
 6. Backend returns short URL.
 7. Extension copies URL to clipboard.
@@ -930,7 +923,7 @@ Rules:
 - Implement canonicalization.
 - Implement BLAKE3 `b3:` hashing.
 - Implement hash-chain computation and verification.
-- Implement deterministic replay with Unicode codepoint offsets.
+- Implement content-opaque process-length validation with Unicode codepoint offsets and explicit nulls for unknown process measurements.
 - Add conformance vectors.
 - Wire CI/test command.
 
@@ -962,7 +955,7 @@ Rules:
 
 - Implement public record page.
 - Implement quick stats panel.
-- Implement content-blind replay scrubber.
+- Implement content-opaque process timeline.
 - Implement signal cards.
 - Implement verification panel with browser-side chain verification.
 

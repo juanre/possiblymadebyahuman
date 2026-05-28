@@ -137,14 +137,18 @@ export function editTopologyAnalyzer(
       }
 
       const sourceAttribution = manifest.producer.capabilities.includes("source_attribution");
-      const smallEditCount = events.filter((event) => event.ins_len + event.del_len <= smallThreshold).length;
-      const largeAtomicInserts = events.filter((event) => event.ins_len >= largeThreshold);
-      const deletionEvents = events.filter((event) => event.del_len > 0);
-      const insertedCodepoints = sum(events.map((event) => event.ins_len));
-      const deletedCodepoints = sum(events.map((event) => event.del_len));
-      const largestAtomicInsert = Math.max(0, ...events.map((event) => event.ins_len));
+      const sizeKnownEvents = events.filter(hasKnownSizes);
+      const unknownProcessMeasurementCount = events.filter(
+        (event) => event.pos === null || event.del_len === null || event.ins_len === null,
+      ).length;
+      const smallEditCount = sizeKnownEvents.filter((event) => event.ins_len + event.del_len <= smallThreshold).length;
+      const largeAtomicInserts = sizeKnownEvents.filter((event) => event.ins_len >= largeThreshold);
+      const deletionEvents = sizeKnownEvents.filter((event) => event.del_len > 0);
+      const insertedCodepoints = sum(sizeKnownEvents.map((event) => event.ins_len));
+      const deletedCodepoints = sum(sizeKnownEvents.map((event) => event.del_len));
+      const largestAtomicInsert = Math.max(0, ...sizeKnownEvents.map((event) => event.ins_len));
       const replaceCount = events.filter((event) => event.op === "replace").length;
-      const interleaveRatio = round(smallEditCount / events.length, 4);
+      const interleaveRatio = sizeKnownEvents.length === 0 ? 0 : round(smallEditCount / sizeKnownEvents.length, 4);
       const deletedCodepointRatio = insertedCodepoints === 0 ? 0 : round(deletedCodepoints / insertedCodepoints, 4);
       const deletionClusters = countDeletionClusters(events);
 
@@ -152,6 +156,7 @@ export function editTopologyAnalyzer(
         measure("event_count", events.length),
         measure("small_edit_count", smallEditCount),
         measure("small_edit_ratio", interleaveRatio),
+        measure("unknown_process_measurement_count", unknownProcessMeasurementCount),
         measure("large_atomic_insert_count", largeAtomicInserts.length),
         measure("atomic_insert_max_len", largestAtomicInsert, "codepoints"),
         measure("deletion_count", deletionEvents.length),
@@ -164,17 +169,21 @@ export function editTopologyAnalyzer(
 
       const sourceExplanation = sourceAttribution
         ? ` Source attribution is present: ${sourceSummary(events)}.`
-        : " Source attribution was not declared, so this signal only uses event sizes, positions, and operations.";
+        : " Source attribution was not declared, so this signal only uses known event sizes, positions, and operations.";
 
       return {
         analyzer_id: EDIT_TOPOLOGY_ANALYZER_ID,
         analyzer_version: ANALYZER_VERSION,
         applicable: true,
         measures,
-        explanation: `Measured edit topology over ${events.length} mutation event(s): ${smallEditCount} small edit(s), ${largeAtomicInserts.length} large atomic insert(s), largest insert ${largestAtomicInsert} codepoint(s), and ${deletionEvents.length} deletion event(s) across ${deletionClusters} deletion cluster(s). deletion_count counts every mutation that removes codepoints, including replacement events; replacement_count separately counts op=replace events. Deleted codepoints are reported as a revision/dead-end indicator, not a verdict.${sourceExplanation}`,
+        explanation: `Measured edit topology over ${events.length} mutation event(s), using ${sizeKnownEvents.length} event(s) with known sizes and marking ${unknownProcessMeasurementCount} event(s) with unknown process measurements: ${smallEditCount} small edit(s), ${largeAtomicInserts.length} large atomic insert(s), largest insert ${largestAtomicInsert} codepoint(s), and ${deletionEvents.length} deletion event(s) across ${deletionClusters} deletion cluster(s). deletion_count counts every mutation that removes codepoints, including replacement events; events with unknown measurements are counted in unknown_process_measurement_count. replacement_count separately counts op=replace events. Deleted codepoints are reported as a revision/dead-end indicator, not a verdict.${sourceExplanation}`,
       };
     },
   };
+}
+
+function hasKnownSizes(event: EventLog[number]): event is EventLog[number] & { del_len: number; ins_len: number } {
+  return event.del_len !== null && event.ins_len !== null;
 }
 
 function cloneAnalyzerInput(input: AnalyzerInput): AnalyzerInput {
@@ -218,7 +227,7 @@ function countDeletionClusters(events: EventLog): number {
   let clusters = 0;
   let previousWasDeletion = false;
   for (const event of events) {
-    const isDeletion = event.del_len > 0;
+    const isDeletion = (event.del_len ?? 0) > 0;
     if (isDeletion && !previousWasDeletion) clusters += 1;
     previousWasDeletion = isDeletion;
   }

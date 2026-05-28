@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "possiblymadebyahuman",
   "version": "__VERSION__",
-  "description": "Content-blind writing record. Not a detector.",
+  "description": "Content-opaque writing record. Not a detector.",
   "action": {
     "default_popup": "popup.html",
     "default_title": "possiblymadebyahuman"

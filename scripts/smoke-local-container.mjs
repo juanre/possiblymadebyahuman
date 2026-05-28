@@ -16,7 +16,7 @@ await checkJson('/ready', (body) => {
   assertEqual(body.migrations, true, '/ready migrations');
 });
 
-await checkHtml('/', ['possiblymadebyahuman', 'content-blind']);
+await checkHtml('/', ['possiblymadebyahuman', 'content-opaque']);
 await checkHtml('/docs/', ['Docs']);
 
 await checkBinary('/images/pmbah-figure-600.webp', 'image/webp');
@@ -40,7 +40,7 @@ const fetched = await checkJson(`/api/records/${created.short_signature}`, (body
   assertEqual(Array.isArray(body.events), true, 'GET events array');
   assertEqual(body.events.length, record.events.length, 'GET events length');
   assertEqual(body.stats?.event_count, record.events.length, 'GET stats event_count');
-  assertEqual(body.stats?.final_text_length, record.manifest.final_text_length, 'GET stats final_text_length');
+  assertEqual(body.stats?.observed_final_length, 8, 'GET stats observed_final_length');
   assertEqual(body.stats?.paste_event_count, 1, 'GET stats paste_event_count');
   assertEqual(Array.isArray(body.signals), true, 'GET signals array');
   assertEqual(body.signals.length, 2, 'GET signals length');

@@ -15,7 +15,6 @@ import { DEFAULT_TTL_MS, DEFAULT_UPLOADED_GRACE_MS, sweepExpired } from "./ttl.t
 import type {
   FieldDescriptor,
   FieldOrigin,
-  FinalTextMetadata,
   IdentityCertainty,
   IngestRecordResponse,
   PendingMutation,
@@ -143,7 +142,7 @@ export class SessionRegistry {
     return cloneSession(record);
   }
 
-  sign(session_id: SessionId, final_text: FinalTextMetadata): SignedRecordDraft {
+  sign(session_id: SessionId): SignedRecordDraft {
     const record = this.#requireSignable(session_id);
     if (record.events.length === 0) {
       throw new Error(`cannot sign session ${session_id} with no events`);
@@ -159,8 +158,6 @@ export class SessionRegistry {
       capture_context: record.capture_context,
       event_count: events.length,
       duration_ms: durationMs(events),
-      final_text_hash: final_text.hash,
-      final_text_length: final_text.length,
       created_client_t: new Date(record.base_wall_ms).toISOString(),
       ingested_server_t: null,
       parent_record: null,
