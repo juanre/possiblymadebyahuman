@@ -1,4 +1,4 @@
-import { codepointCount, buildTextFieldMutation, sourceFromInputType } from "../lib/codepoint.ts";
+import { buildTextFieldMutation, insertedCodepointsForInput, sourceFromInputType } from "../lib/codepoint.ts";
 import { extractDescriptor, isEligibleTag } from "../lib/descriptor.ts";
 import type { BackgroundResponse, ContentToBackground } from "../lib/messages.ts";
 import type { PendingMutation } from "../../../../packages/producer-core/src/index.ts";
@@ -198,11 +198,12 @@ function handleBeforeInput(event: InputEvent): void {
   if (!entry || entry.state !== "recording" || !entry.session_id) return;
   const inputType = event.inputType ?? null;
   const insertedText = event.data ?? "";
+  const insertedCodepoints = insertedCodepointsForInput(inputType, insertedText);
 
   if (isTextField(target)) {
     const start = target.selectionStart ?? 0;
     const end = target.selectionEnd ?? 0;
-    if (insertedText.length === 0 && start === end && !inputType) {
+    if (insertedCodepoints === 0 && start === end && !inputType) {
       sendMutation(entry, ambiguousMutation(insertedText, inputType));
       return;
     }
@@ -217,24 +218,26 @@ function handleBeforeInput(event: InputEvent): void {
     return;
   }
 
-  // ContentEditable: degraded. Emit codepoint-counted ins_len from event.data
-  // (the only reliable numeric we have without walking the DOM tree), and
-  // leave pos and del_len as null rather than fabricate an offset.
+  // ContentEditable: degraded. Emit codepoint-counted ins_len from event.data,
+  // with the DOM's structural Enter inputTypes counted as one line-break
+  // codepoint even when event.data is null. Leave pos and del_len as null
+  // rather than fabricate an offset.
   sendMutation(entry, {
-    op: insertedText.length > 0 ? "insert" : "delete",
+    op: insertedCodepoints > 0 ? "insert" : "delete",
     pos: null,
     del_len: null,
-    ins_len: codepointCount(insertedText),
+    ins_len: insertedCodepoints,
     source: sourceFromInputType(inputType),
   });
 }
 
 function ambiguousMutation(insertedText: string, inputType: string | null): PendingMutation {
+  const insertedCodepoints = insertedCodepointsForInput(inputType, insertedText);
   return {
-    op: insertedText.length > 0 ? "insert" : "delete",
+    op: insertedCodepoints > 0 ? "insert" : "delete",
     pos: null,
     del_len: null,
-    ins_len: codepointCount(insertedText),
+    ins_len: insertedCodepoints,
     source: sourceFromInputType(inputType),
   };
 }

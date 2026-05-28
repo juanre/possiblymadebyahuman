@@ -20,10 +20,15 @@ export function sourceFromInputType(inputType: string): Source {
   return "unknown";
 }
 
+export function lineBreakInsertedCodepoints(inputType: string, dataCodepoints = 0): number | null {
+  return inputType === "insertParagraph" || inputType === "insertLineBreak" ? Math.max(1, dataCodepoints) : null;
+}
+
 export function deriveMutationFromMeasuredInput(intent: MeasuredInputIntent): PendingMutation | null {
   const source = sourceFromInputType(intent.inputType);
   const selected = Math.max(0, intent.selectedCodepoints);
-  const inserted = Math.max(0, intent.dataCodepoints);
+  const structuralInsert = lineBreakInsertedCodepoints(intent.inputType, intent.dataCodepoints);
+  const inserted = structuralInsert ?? Math.max(0, intent.dataCodepoints);
   const start = Math.max(0, intent.selectionStartCodepoints);
 
   if (intent.inputType.startsWith("delete")) {

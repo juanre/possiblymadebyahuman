@@ -6,6 +6,7 @@ import {
   buildTextFieldMutation,
   codepointCount,
   codepointOffsetOf,
+  insertedCodepointsForInput,
   operationFor,
   sourceFromInputType,
 } from "../apps/browser-extension/src/lib/codepoint.ts";
@@ -117,6 +118,8 @@ test("codepoint: operationFor classifies insert/delete/replace", () => {
 
 test("codepoint: sourceFromInputType maps to format enum, unknown when ambiguous", () => {
   assert.equal(sourceFromInputType("insertText"), "typing");
+  assert.equal(sourceFromInputType("insertLineBreak"), "typing");
+  assert.equal(sourceFromInputType("insertParagraph"), "typing");
   assert.equal(sourceFromInputType("insertFromPaste"), "paste");
   assert.equal(sourceFromInputType("insertFromDrop"), "drop");
   assert.equal(sourceFromInputType("insertCompositionText"), "ime");
@@ -157,6 +160,25 @@ test("codepoint: buildTextFieldMutation computes codepoint pos/del/ins from sele
   assert.deepEqual(m, { op: "delete", pos: 2, del_len: 1, ins_len: 0, source: "typing" });
 });
 
+test("codepoint: line break inputTypes count as one inserted codepoint", () => {
+  assert.equal(insertedCodepointsForInput("insertParagraph", ""), 1);
+  assert.equal(insertedCodepointsForInput("insertLineBreak", ""), 1);
+  assert.equal(insertedCodepointsForInput("insertLineBreak", "\n\n"), 2);
+  assert.equal(insertedCodepointsForInput("insertText", ""), 0);
+  assert.equal(insertedCodepointsForInput("insertText", "🙂"), 1);
+
+  for (const inputType of ["insertParagraph", "insertLineBreak"]) {
+    const m = buildTextFieldMutation({
+      text: "alpha",
+      selectionStartUtf16: 2,
+      selectionEndUtf16: 2,
+      insertedText: "",
+      inputType,
+    });
+    assert.deepEqual(m, { op: "insert", pos: 2, del_len: 0, ins_len: 1, source: "typing" });
+  }
+});
+
 test("codepoint: buildTextFieldMutation handles surrogate-pair text without retaining the snapshot", () => {
   // Insert "a" after "🙂" in "🙂xyz". UTF-16 caret index 2 (after the emoji),
   // which is codepoint 1. The pre-change text is passed as a parameter and
@@ -187,6 +209,13 @@ test("content-script ambiguous fallback emits null pos/del_len rather than retai
     del_len: null,
     ins_len: 10,
     source: "unknown",
+  });
+  assert.deepEqual(ambiguousMutation("", "insertParagraph"), {
+    op: "insert",
+    pos: null,
+    del_len: null,
+    ins_len: 1,
+    source: "typing",
   });
 });
 
@@ -375,6 +404,34 @@ test("dispatcher: signed manifest passes packages/format.verifyRecord", async ()
   await dispatcher.registry.awaitObservationIdle(sid);
   await dispatcher.handle({ kind: "sign_session", session_id: sid });
   const payload = upload.calls[0];
+  const result = verifyRecord({ manifest: payload.manifest, events: payload.events });
+  assert.equal(result.valid, true, result.errors?.join("; "));
+});
+
+test("dispatcher: line break event keeps extension record verifiable", async () => {
+  const { dispatcher, upload } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  for (const mutation of [
+    { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" },
+    buildTextFieldMutation({ text: "a", selectionStartUtf16: 1, selectionEndUtf16: 1, insertedText: "", inputType: "insertParagraph" }),
+    { op: "insert", pos: 2, del_len: 0, ins_len: 1, source: "typing" },
+  ]) {
+    await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation });
+  }
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  const payload = upload.calls[0];
+  assert.deepEqual(payload.events.map(({ op, pos, del_len, ins_len }) => ({ op, pos, del_len, ins_len })), [
+    { op: "insert", pos: 0, del_len: 0, ins_len: 1 },
+    { op: "insert", pos: 1, del_len: 0, ins_len: 1 },
+    { op: "insert", pos: 2, del_len: 0, ins_len: 1 },
+  ]);
   const result = verifyRecord({ manifest: payload.manifest, events: payload.events });
   assert.equal(result.valid, true, result.errors?.join("; "));
 });
