@@ -2,9 +2,11 @@
 
 `possiblymadebyahuman` records the shape of a writing process and presents it as a replayable, hash-addressed writing record.
 
-It is **not** a human/AI detector. It must not emit humanness verdicts, confidence percentages, or certification-style badges. The allowed claim is narrower and more honest: this record shows the shape of an editing process; it does not prove who originated the ideas.
+It is **not** a human/AI detector. It does not emit humanness verdicts, confidence percentages, or certification-style badges. The allowed claim is just: this record shows the shape of an editing process.
 
-The public service is content-blind by default: uploaded records store mutation structure, metadata, statistics, and analyzer facts, not plaintext writing. Plaintext belongs only in local replay flows or test fixtures.
+The public service is content-blind: uploaded records store mutation structure, metadata, statistics, and analyzer facts, not plaintext writing. Plaintext belongs only in local replay flows or test fixtures.
+
+`possiblymadebyahuman` is most certainly _not_ made by a human. It is instead made by a team of agents coordinating with [https://aweb.ai](aweb.ai). The human is only the instigator, and also somehow responsible for the result even though he has not actually looked at the code. His only real contribution has been the line drawing in the home page. He also plans to document how long it took from the first idea to the release of the site, as a note for posterity.
 
 ## Current milestone
 
