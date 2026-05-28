@@ -16,7 +16,7 @@ All of these may be read transiently in a `beforeinput` / `input` handler, used 
 
 - `InputEvent.inputType` (always closed-enum string; trivial).
 - `InputEvent.timeStamp`, `InputEvent.isComposing`, `InputEvent.detail`.
-- `InputEvent.data` — the inserted text, when present. Read its `.length` (UTF-16) or pass it through `Array.from(str).length` (codepoints), then discard. **Do not assign** it to a `SessionRecord`, `PendingMutation`, persistence record, log, popup state, or message envelope.
+- `InputEvent.data` — the inserted text, when present. Read its `.length` (UTF-16) or iterate it transiently for codepoint count (`for (const _ of str) count++` — preferred over `Array.from(str).length` when the string can be large, because it avoids materialising an intermediate array). Discard the string in the same statement. **Do not assign** it to a `SessionRecord`, `PendingMutation`, persistence record, log, popup state, or message envelope.
 - `InputEvent.getTargetRanges()` — `StaticRange` array. `startContainer` / `endContainer` are nodes; their `nodeType`, `nodeName`, parent references are fine. `Range.startContainer.data` (the text node string) may be read transiently for character counting and then discarded.
 - `Selection.getRangeAt(0)` — same rules as above.
 - `HTMLInputElement.selectionStart`, `selectionEnd` — pure numbers.
@@ -71,7 +71,7 @@ Legend: ✓ direct (numeric only) · ✓† transient string read, immediately d
 | `insertFromDrop` | drop | ✓† | ✓† | ✓† if data is a string; otherwise nullable | |
 | programmatic (DOM mutation w/o `input` event) | programmatic | unknown unless inferred via `MutationObserver` | nullable | nullable | `MutationObserver(characterDataOldValue:true)` exposes `oldValue` as a transient string; counting only is allowed, but reconstructing every mutation is fragile. The format should accept `null`. |
 
-**Bottom line**: every user-driven case is capturable content-opaquely. The narrow remainder — multi-node HTML paste into contenteditable, programmatic mutations — is honestly handled by allowing `null` in the public event schema.
+**Bottom line**: every user-driven case in the matrices above is capturable content-opaquely. The narrow remainder — multi-node HTML paste / rich drag-drop into contenteditable, and programmatic mutations that rewrite the DOM — is honestly handled by allowing explicit `null` in `pos`/`del_len`/`ins_len`. Producers must not pretend to know a length they cannot derive content-opaquely.
 
 ## Codepoints vs UTF-16 units
 
@@ -92,25 +92,27 @@ Unchanged from the previous version, but with the rationale corrected:
 2. **Drop `BufferMutation.ins_hash`**. Same reason.
 3. **No `getInsertedText` or replay-with-text mode** in `verifyRecord`. Replay is a retention vector (the consumer would have to keep the original text to replay it).
 4. **Producer-core's `sign(id)`** has no content parameter. Self-checks chain only.
-5. **Format admits `pos`/`del_len`/`ins_len` as `number | null`.** Producers emit `null` only for cases where even transient inspection cannot derive a sensible value (multi-node HTML paste into contenteditable, programmatic mutations). The chain hash and validation handle nulls.
-6. **Codepoint units stay** per the original spec; producers count via transient `Array.from(s).length` and discard.
+5. **Format admits `pos`/`del_len`/`ins_len` as `number | null`, with explicit `null` for unknowns.** Producers emit `null` for the narrow cases where even transient inspection cannot derive a sensible value (multi-node HTML paste into contenteditable, certain programmatic mutations). Rationale: these three fields are semantically part of every mutation's shape, just sometimes unknowable content-opaquely; an explicit `null` is clearer in stored/public records and in the record-page UI than a silently absent field, and pre-release schemas can lock the null branch cleanly. `canonicalizeEvent` serialises `null` consistently; `validateEvent` accepts `null` and relaxes op-specific numeric constraints when any required numeric is `null`. Producers should not omit these fields for new v0 events.
+6. **Codepoint units stay** per the original spec; producers count via transient iteration over the string (`for (const _ of s) count++`) and discard. For long pastes, the for-of form avoids materialising a large intermediate array — use it in preference to `Array.from(s).length` whenever the transient string is unbounded (paste, drop, autocomplete commit).
 
 ## Recommendations for `.7` (browser extension)
 
-- **Capture `<input type="text|search|email|url|tel">`, `<textarea>`, and `[contenteditable=true]` in v0.** Contenteditable is back in scope thanks to transient reads being allowed.
-- **Compute `ins_len` via cursor displacement** where possible (cleanest, never instantiates a string); fall back to `Array.from(event.data ?? "").length` transient read for cases where displacement is ambiguous (composition, autocomplete). The transient pattern is:
+- **Capture `<input type="text|search|email|url|tel">`, `<textarea>`, and the common `[contenteditable=true]` cases in v0.** Common = single text node typing, single-element IME, simple paste/cut/delete with a single `data` string. Multi-node HTML paste, drag-drop of rich content, and DOM-rewriting programmatic mutations fall back to explicit `null` for the unknown subfield (see §"Recommendations for the format"). The popup should mark sessions whose events include any `null` length entry as "partial capture" so the signer knows.
+- **Capture timing**: read pre-mutation selection/range state in the **`beforeinput`** handler (`selectionStart`/`selectionEnd`, `Selection.getRangeAt(0)`, `getTargetRanges()`), then confirm or apply in the **`input`** handler (post-mutation `selectionStart`, post-mutation field length). The `beforeinput` handler is the only place where the *pre*-state is reachable; the `input` handler is the only place where the *post*-state is reachable. Cursor-displacement length derivation needs both.
+- **Compute `ins_len` via cursor displacement** where possible (cleanest, never instantiates a string). Fall back to transient iteration over `event.data` for cases where displacement is ambiguous (composition, autocomplete). The transient pattern, with the for-of form for long pastes:
 
   ```ts
-  // ALLOWED — transient, discarded same statement
-  const ins_len = event.data ? Array.from(event.data).length : 0;
+  // ALLOWED — transient, discarded same statement, no intermediate array
+  let ins_len = 0;
+  for (const _ of event.data ?? "") ins_len += 1;
 
   // FORBIDDEN — retains the inserted text on the session
   session.lastInsertedText = event.data;
   ```
+- **IME**: buffer between `compositionstart` and `compositionend`. **Cancellation honesty**: when `compositionend.data === ''` (or some browsers fire `compositionend` with no `data` after a cancel), the composition produced nothing — emit no mutation rather than a zero-length one. Otherwise emit a single mutation on `compositionend` using cursor-displacement, with the transient-`event.data.length` fallback only if displacement is unreliable.
 - **No persistence of any text-derived string**. The `SessionRecord` written to `chrome.storage.local` has only numeric event fields plus `capture_context` (signer-approved provenance metadata). The `chrome.runtime.sendMessage` envelope between content script and service worker has no text fields.
 - **No console.log of `event.data` or field values** in production source. Diagnostic logs may report `inputType` and numeric lengths.
-- **IME**: buffer between `compositionstart`/`compositionend`, emit a single mutation on end, transient read for `ins_len` if cursor displacement is unreliable.
-- **Programmatic capture**: best-effort via `MutationObserver`. When the only knowable length is "net delta" or "unknown", emit `null` rather than guess.
+- **Programmatic capture**: best-effort via `MutationObserver`. When the only knowable length is "net delta" or genuinely unknown, **emit explicit `null`** for the unknown subfield rather than guessing.
 - **Source attribution**: declare `source_attribution` only if the manual evidence shows `inputType → Source` is reliable across the supported cases.
 
 ## No-retention audit (the new load-bearing test)
@@ -158,24 +160,29 @@ Hits in `.md` / `tests/**.test.mjs` are allowed if the reviewer ACKs them; produ
 
 Producer-core message envelopes (`apps/browser-extension/src/lib/messages.ts`) have no fields typed as the inserted-text string. A typecheck pass guarantees that nothing flows from `event.data` into the service worker.
 
-### Layer 3 — Runtime probe (optional, for `.7` Playwright smoke)
+### Layer 3 — Runtime canary probe (REQUIRED for `.7` acceptance)
 
-Drive the loaded extension through a Playwright fixture, type the literal string `RETENTION-CANARY-9F4A2B`, then inspect:
+Drive the loaded extension through a Playwright fixture, type / paste / IME-compose the literal string `RETENTION-CANARY-9F4A2B`, then assert it does not appear in any of:
 
-- `chrome.storage.local`: scan all values, fail if `RETENTION-CANARY-9F4A2B` appears anywhere.
-- Every message intercepted via `chrome.runtime.onMessage` during the run: fail if the canary string appears.
-- The mock backend's received payload: fail if the canary string appears.
-- Any console log captured during the run: fail if the canary string appears.
+- `chrome.storage.local` and `chrome.storage.session` — scan every value.
+- Every message intercepted via `chrome.runtime.onMessage` during the run (both content-script→service-worker and popup→service-worker channels).
+- The mock backend's received payload (HTTP body bytes + parsed JSON).
+- **Console output across all extension contexts**: the page's `console` (content-script logs surface here), the popup's `console`, and the service worker's `console`. Attach a separate `console` listener to each — Playwright's `page.on('console')` only covers the main world.
+- `FormData`, `Blob`, `File`, `ReadableStream`, and any other upload-shaped payload constructed in extension code. The test's `chrome.runtime.onMessage` mock and the mock-backend HTTP capture cover the obvious paths; if `.7` introduces a new upload path (e.g. service-worker `fetch` with a body), the canary check extends to it.
 
-This is the strongest evidence and the one the reviewer should ask for at `.7` handoff.
+The canary check fails the run if `RETENTION-CANARY-9F4A2B` is found anywhere. This is the strongest evidence and is a hard requirement for `.7` review/acceptance — not an optional nice-to-have.
 
 ## Answers to the five open questions from the previous draft
 
-1. **Tier 1 boundary**: moot. Transient text reads are explicitly allowed. The rule is no-retention.
-2. **Length unit**: stay with codepoints per the original spec, computed via transient `Array.from(str).length`.
-3. **Contenteditable in v0**: in scope. Captured via transient DOM walks for position/length; multi-node HTML paste cases that don't have a clean `ins_len` emit `null`.
-4. **`KeyboardEvent.key`**: allowed transiently (just classification). No retention.
-5. **Programmatic capture**: best-effort via `MutationObserver`. Net deltas only when individual lengths aren't knowable. Emit `null` rather than guess.
+1. **Tier 1 boundary**: moot. Transient text reads are explicitly allowed; the rule is no-retention.
+2. **Length unit**: stay with codepoints per the original spec, computed via transient iteration (`for (const _ of s) count++`) and discarded.
+3. **Contenteditable in v0**: common cases are in scope (single-text-node typing, simple paste with a `data` string, IME, single-element delete). Multi-node HTML paste, rich drag-drop, and DOM-rewriting programmatic mutations fall back to explicit `null` in `pos`/`del_len`/`ins_len`. The popup surfaces sessions with any null-length events as "partial capture" so the signer knows.
+4. **`KeyboardEvent.key`**: allowed transiently for classification only (e.g. Backspace counts). No retention.
+5. **Programmatic capture**: best-effort via `MutationObserver`. When the only knowable length is "net delta" or genuinely unknown, emit explicit `null` for the unknown subfield rather than guessing.
+
+## Copy invariant (cross-reference)
+
+The content-opaque rule also has a user-facing copy consequence, owned by `.35`'s docs cleanup (or a routed follow-up): the README, the SOT, the Hugo site docs, and the M4 record-app UI must drop "replayable", "deterministic replay", "reconstructs the buffer", "final text" wording wherever it could suggest the system stores or reconstructs text. Preferred replacements: "inspectable, hash-addressed process record"; "content-opaque timeline of edit operations"; "shows operation shape/timing, not words"; "does not store, upload, or reconstruct your text". `apps/web`'s `ReplayScrubber` heading and its surrounding paragraph are the most visible user-facing instance and need rewording — that is frontend-owned and will land alongside `.36` if not split off earlier.
 
 ## What is NOT proposed
 
