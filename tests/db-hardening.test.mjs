@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { createIngestApi } from "../apps/ingest-api/src/index.ts";
-import { createPoolConfig, createRuntimeServer, readiness } from "../apps/ingest-api/src/server.ts";
+import { DEFAULT_RECORD_BODY_LIMIT_BYTES, createPoolConfig, createRuntimeServer, readiness } from "../apps/ingest-api/src/server.ts";
 import { computeRecordStats } from "../apps/ingest-api/src/index.ts";
 import { InMemoryRecordStore, PostgresRecordStore } from "../packages/storage/src/index.ts";
 import { applyMigrations, MigrationChecksumMismatchError } from "../packages/storage/src/migrations.ts";
@@ -171,12 +171,29 @@ test("runtime POST body limit returns 413 before API handling", async () => {
 
 test("readiness reports migration and database failures", async () => {
   const missingMigration = await readiness({
-    async query(sql) {
-      assert.match(sql, /to_regclass/);
-      return { rows: [{ records_ready: "records", stats_ready: "record_stats", analysis_ready: "analysis_results", migrations_ready: null }] };
+    async query(sql, params) {
+      assert.match(sql, /with required_migrations/);
+      assert.deepEqual(params, [["001"]]);
+      return { rows: [{
+        records_ready: "records",
+        stats_ready: "record_stats",
+        analysis_ready: "analysis_results",
+        migrations_ready: "schema_migrations",
+        required_migration_count: 1,
+        applied_required_migration_count: 0,
+      }] };
     },
   });
   assert.deepEqual(missingMigration, { ok: false, database: true, migrations: false });
+
+  const missingSchemaMigrations = await readiness({
+    async query() {
+      const error = new Error("relation schema_migrations does not exist");
+      error.code = "42P01";
+      throw error;
+    },
+  });
+  assert.deepEqual(missingSchemaMigrations, { ok: false, database: true, migrations: false });
 
   const dbFailure = await readiness({
     async query() { throw new Error("connection refused"); },
@@ -184,22 +201,29 @@ test("readiness reports migration and database failures", async () => {
   assert.deepEqual(dbFailure, { ok: false, database: false, migrations: false });
 });
 
-test("readiness reports ready only after schema_migrations includes 001", async () => {
+test("readiness checks all required migration versions in one query", async () => {
   const queries = [];
   const ready = await readiness({
-    async query(sql) {
-      queries.push(sql);
-      if (/to_regclass/i.test(sql)) {
-        return { rows: [{ records_ready: "records", stats_ready: "record_stats", analysis_ready: "analysis_results", migrations_ready: "schema_migrations" }] };
-      }
-      return { rows: [{ version: "001" }] };
+    async query(sql, params) {
+      queries.push({ sql, params });
+      assert.match(sql, /join schema_migrations applied using \(version\)/);
+      return { rows: [{
+        records_ready: "records",
+        stats_ready: "record_stats",
+        analysis_ready: "analysis_results",
+        migrations_ready: "schema_migrations",
+        required_migration_count: 2,
+        applied_required_migration_count: 2,
+      }] };
     },
-  });
+  }, ["001", "002"]);
   assert.deepEqual(ready, { ok: true, database: true, migrations: true });
-  assert.equal(queries.length, 2);
+  assert.equal(queries.length, 1);
+  assert.deepEqual(queries[0].params, [["001", "002"]]);
 });
 
-test("pool config uses conservative Neon-friendly defaults and env overrides", () => {
+test("pool config and body-limit defaults are conservative release defaults", () => {
+  assert.equal(DEFAULT_RECORD_BODY_LIMIT_BYTES, 10_000_000);
   assert.deepEqual(createPoolConfig({}), {
     max: 5,
     idleTimeoutMillis: 30_000,

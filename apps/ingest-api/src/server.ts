@@ -7,11 +7,13 @@ import pg from "pg";
 
 import { createIngestApi } from "./index.ts";
 import { PostgresRecordStore, type PostgresDatabase } from "../../../packages/storage/src/index.ts";
+import { loadSqlMigrations } from "../../../packages/storage/src/migrations.ts";
 
-export const DEFAULT_RECORD_BODY_LIMIT_BYTES = 1_000_000;
+export const DEFAULT_RECORD_BODY_LIMIT_BYTES = 10_000_000;
 export const DEFAULT_POOL_MAX = 5;
 export const DEFAULT_POOL_IDLE_TIMEOUT_MS = 30_000;
 export const DEFAULT_POOL_CONNECTION_TIMEOUT_MS = 5_000;
+export const DEFAULT_REQUIRED_MIGRATION_VERSIONS = ["001"] as const;
 
 const PORT = Number(process.env.PORT ?? 8000);
 const DATABASE_URL = process.env.DATABASE_URL;
@@ -56,6 +58,7 @@ export function createRuntimeServer(options: {
   webDistDir?: string;
   siteDistDir?: string;
   recordBodyLimitBytes?: number;
+  requiredMigrationVersions?: readonly string[];
 }): Server {
   const server = createServer(async (req, res) => {
     try {
@@ -92,29 +95,42 @@ export function installGracefulShutdown(server: Server, pool: { end: () => Promi
   for (const signal of signals) process.once(signal, shutdown);
 }
 
-export async function readiness(db: PostgresDatabase): Promise<Readiness> {
+export async function readiness(
+  db: PostgresDatabase,
+  requiredMigrationVersions: readonly string[] = DEFAULT_REQUIRED_MIGRATION_VERSIONS,
+): Promise<Readiness> {
   try {
     const result = await db.query<{
       records_ready: string | null;
       stats_ready: string | null;
       analysis_ready: string | null;
       migrations_ready: string | null;
+      required_migration_count: number | string;
+      applied_required_migration_count: number | string;
     }>(
-      `select
-        to_regclass('public.records')::text as records_ready,
-        to_regclass('public.record_stats')::text as stats_ready,
-        to_regclass('public.analysis_results')::text as analysis_ready,
-        to_regclass('public.schema_migrations')::text as migrations_ready`,
+      `with required_migrations(version) as (select unnest($1::text[]))
+       select
+         to_regclass('public.records')::text as records_ready,
+         to_regclass('public.record_stats')::text as stats_ready,
+         to_regclass('public.analysis_results')::text as analysis_ready,
+         to_regclass('public.schema_migrations')::text as migrations_ready,
+         (select count(*) from required_migrations) as required_migration_count,
+         (select count(*) from required_migrations required join schema_migrations applied using (version)) as applied_required_migration_count`,
+      [[...requiredMigrationVersions]],
     );
     const row = result.rows[0];
-    let migration001 = false;
-    if (row?.migrations_ready) {
-      const applied = await db.query<{ version: string }>("select version from schema_migrations where version = '001'");
-      migration001 = applied.rows.length > 0;
-    }
-    const migrations = Boolean(row?.records_ready && row.stats_ready && row.analysis_ready && row.migrations_ready && migration001);
+    const requiredCount = Number(row?.required_migration_count ?? 0);
+    const appliedCount = Number(row?.applied_required_migration_count ?? -1);
+    const migrations = Boolean(
+      row?.records_ready
+        && row.stats_ready
+        && row.analysis_ready
+        && row.migrations_ready
+        && appliedCount === requiredCount,
+    );
     return { ok: migrations, database: true, migrations };
-  } catch {
+  } catch (error) {
+    if (isUndefinedTableError(error)) return { ok: false, database: true, migrations: false };
     return { ok: false, database: false, migrations: false };
   }
 }
@@ -128,6 +144,7 @@ async function route(
     webDistDir?: string;
     siteDistDir?: string;
     recordBodyLimitBytes?: number;
+    requiredMigrationVersions?: readonly string[];
   },
 ): Promise<void> {
   const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -144,7 +161,7 @@ async function route(
   }
 
   if (req.method === "GET" && requestUrl.pathname === "/ready") {
-    const ready = await readiness(options.db);
+    const ready = await readiness(options.db, options.requiredMigrationVersions);
     json(res, ready.ok ? 200 : 503, ready);
     return;
   }
@@ -225,6 +242,10 @@ function contentType(path: string): string {
   }
 }
 
+function isUndefinedTableError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "42P01";
+}
+
 function parsePositiveInteger(value: string | undefined, fallback: number): number {
   return parseOptionalPositiveInteger(value) ?? fallback;
 }
@@ -242,7 +263,13 @@ async function main(): Promise<void> {
   const pool = new Pool({ connectionString: DATABASE_URL, ...createPoolConfig() });
   const store = new PostgresRecordStore(pool as PostgresDatabase);
   const api = createIngestApi({ store, baseUrl: PUBLIC_BASE_URL });
-  const server = createRuntimeServer({ api, db: pool as PostgresDatabase, recordBodyLimitBytes: RECORD_BODY_LIMIT_BYTES });
+  const requiredMigrationVersions = (await loadSqlMigrations()).map((migration) => migration.version);
+  const server = createRuntimeServer({
+    api,
+    db: pool as PostgresDatabase,
+    recordBodyLimitBytes: RECORD_BODY_LIMIT_BYTES,
+    requiredMigrationVersions,
+  });
   installGracefulShutdown(server, pool);
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`possiblymadebyahuman listening on 0.0.0.0:${PORT}`);

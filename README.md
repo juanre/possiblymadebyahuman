@@ -41,7 +41,7 @@ Runtime uses one shared `pg.Pool` per Node process rather than one shared client
 - `PG_POOL_IDLE_TIMEOUT_MS` default `30000`
 - `PG_POOL_CONNECTION_TIMEOUT_MS` default `5000`
 - `PG_STATEMENT_TIMEOUT_MS`/`PG_QUERY_TIMEOUT_MS` optional statement/query timeout
-- `RECORD_BODY_LIMIT_BYTES` default `1000000`; oversized `POST /api/records` requests return `413`
+- `RECORD_BODY_LIMIT_BYTES` default `10000000` (10 MB); oversized `POST /api/records` requests return `413`. Operators can raise this for unusually long capture sessions after checking reverse-proxy and Postgres limits.
 
 Run migrations before starting a production container:
 

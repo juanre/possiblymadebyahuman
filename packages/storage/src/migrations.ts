@@ -1,4 +1,9 @@
 import { createHash } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+export const DEFAULT_MIGRATIONS_DIR = new URL("../migrations/", import.meta.url);
 
 export type Migration = {
   version: string;
@@ -41,6 +46,20 @@ export class MigrationOrderingError extends Error {
     super(message);
     this.name = "MigrationOrderingError";
   }
+}
+
+export async function loadSqlMigrations(migrationsDir: URL | string = DEFAULT_MIGRATIONS_DIR): Promise<Migration[]> {
+  const directory = migrationsDir instanceof URL ? fileURLToPath(migrationsDir) : migrationsDir;
+  const entries = await readdir(directory);
+  return Promise.all(entries
+    .filter((entry) => /^\d{3,}_.*\.sql$/.test(entry))
+    .sort()
+    .map(async (entry) => {
+      const sql = await readFile(join(directory, entry), "utf8");
+      const [version] = entry.split("_");
+      if (!version) throw new MigrationOrderingError(`migration file ${entry} is missing a version prefix`);
+      return { version, name: basename(entry, ".sql"), sql };
+    }));
 }
 
 export async function applyMigrations(db: MigrationDatabase, migrations: Migration[]): Promise<MigrationApplyResult> {
