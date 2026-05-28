@@ -8,7 +8,7 @@ The public service is content-blind by default: uploaded records store mutation 
 
 ## Current milestone
 
-M1: core event-log format and conformance suite. Producers, backend, UI, and analyzers are intentionally not implemented yet.
+M2: ingestion API, immutable storage abstractions, Postgres schema, record stats, and short URLs. Producers, frontend UI, and analyzers are intentionally not implemented yet.
 
 ## Commands
 

@@ -1,7 +1,7 @@
 {
   "name": "possiblymadebyahuman",
   "version": "0.1.0",
-  "description": "Content-blind writing-record format and conformance suite.",
+  "description": "Content-blind writing-record format, conformance suite, and ingest foundation.",
   "private": true,
   "type": "module",
   "workspaces": [

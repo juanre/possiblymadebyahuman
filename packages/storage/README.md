@@ -4,12 +4,13 @@ Backend storage abstraction package.
 
 ## Responsibility
 
-- Future immutable record-store interface.
-- Future lookup by full `record_hash` and `short_signature`.
-- Future stats and analysis-result persistence interfaces.
-- Postgres implementation later in M2.
+- Immutable record-store interface.
+- Lookup by full `record_hash` and by `short_signature`.
+- Record stats and analysis-result persistence shapes.
+- Postgres v0 schema in `migrations/001_init.sql`.
+- A minimal Postgres adapter plus in-memory implementation for API/unit tests.
 
-Uploaded records are permanent by default in v0. Owner-delete is a future option and is not implemented in M0.
+Uploaded records are permanent by default in v0. Owner-delete is a future option and is not implemented in M2.
 
 ## Non-responsibility
 
@@ -19,4 +20,4 @@ Uploaded records are permanent by default in v0. Owner-delete is a future option
 - Plaintext storage for public records.
 - User management or public deletion API in v0.
 
-M0 contains only scaffold placeholders. Storage implementation begins in M2.
+The public manifest field is `parent_record`; the Postgres/storage column is `parent_record_hash`.
