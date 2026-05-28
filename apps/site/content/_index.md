@@ -7,7 +7,7 @@ title: "possiblymadebyahuman"
 <section class="home-hero">
   <div class="home-hero-copy">
     <h1 class="home-headline">We cannot prove a human wrote it.</h1>
-    <h2 class="home-counter">But we can record how you wrote it, and sign it for you.</h2>
+    <h2 class="home-counter">But we can record the writing process, and sign it for you.</h2>
   </div>
   <figure class="home-figure">
     <picture>
@@ -21,7 +21,7 @@ title: "possiblymadebyahuman"
 
 You wrote something. Actually wrote it.
 
-But some know-it-all tired of wading through AI-generated slop decided that it was made by a machine. (Maybe you forgot to not use em-dashes!)
+But some know-it-all tired of wading through AI-generated slop decided that it was made by a machine — maybe you forgot to not use em-dashes!
 
 It's annoying but it's a fact of life. And another fact is that you cannot really prove that you wrote it, because you cannot come up with an actual verifiable proof that a sufficiently motivated AI will not be able to spoof.
 

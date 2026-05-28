@@ -21,7 +21,7 @@ const requiredDocPages = [
 ];
 
 const sectionsCoveringProductPromise = [
-  { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record how you wrote it", "reverse Turing test", "/write", "/emacs/"] },
+  { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/write", "/emacs/"] },
   { file: "emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open an **empty** writing buffer", "refuses to start in a non-empty buffer"] },
   { file: "docs/product-promise.md", needs: ["No verdicts", "Process, not content", "Hash-addressed records"] },
   { file: "docs/claims.md", needs: ["We claim", "We do not claim"] },
@@ -63,7 +63,7 @@ test("home content names the two producers, the not-a-detector framing, and no f
   const home = await read(join(contentRoot, "_index.md"));
   // Headline + counter + closer voice.
   assert.match(home, /We cannot prove a human wrote it/);
-  assert.match(home, /But we can record how you wrote it/);
+  assert.match(home, /But we can record the writing process/);
   assert.match(home, /reverse Turing test/);
   // The two producers the page invites the reader to try.
   assert.match(home, /\/write/, "home must link to /write");

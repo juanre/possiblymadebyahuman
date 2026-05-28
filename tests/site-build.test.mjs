@@ -54,7 +54,7 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
 
     const home = readFileSync(join(out, "index.html"), "utf8");
     assert.ok(home.includes("We cannot prove a human wrote it"), "home missing the headline");
-    assert.ok(home.includes("But we can record how you wrote it"), "home missing the H2 counter-claim");
+    assert.ok(home.includes("But we can record the writing process"), "home missing the H2 counter-claim");
     assert.ok(home.includes("home-figure"), "home missing the hand-drawn figure block");
     assert.ok(home.includes("/images/pmbah-figure"), "home missing the figure asset reference");
     assert.ok(home.includes("href=/write"), "home missing /write CTA");
