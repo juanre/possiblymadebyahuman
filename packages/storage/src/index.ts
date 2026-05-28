@@ -128,15 +128,23 @@ export type PostgresQueryable = {
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<{ rows: T[] }>;
 };
 
+export type PostgresClient = PostgresQueryable & {
+  release?: () => void;
+};
+
+export type PostgresDatabase = PostgresQueryable & {
+  connect?: () => Promise<PostgresClient>;
+};
+
 /**
  * Minimal Postgres-backed RecordStore adapter for the v0 schema in migrations/001_init.sql.
  * Tests use InMemoryRecordStore; this adapter keeps SQL mapping in the storage package without
  * making HTTP/API code depend on a specific Postgres client library.
  */
 export class PostgresRecordStore implements RecordStore {
-  readonly #db: PostgresQueryable;
+  readonly #db: PostgresDatabase;
 
-  constructor(db: PostgresQueryable) {
+  constructor(db: PostgresDatabase) {
     this.#db = db;
   }
 
@@ -148,103 +156,135 @@ export class PostgresRecordStore implements RecordStore {
     const existing = await this.findByRecordHash(manifest.record_hash);
     if (existing) return { stored: existing, created: false };
 
-    await this.#db.query("begin");
     try {
-      await this.#db.query(
-        `insert into records (
-          record_hash, short_signature, format_version, session_id,
-          producer_id, producer_version, producer_capabilities, capture_context,
-          event_count, duration_ms, final_text_hash, final_text_length,
-          created_client_t, ingested_server_t, parent_record_hash, attestations, events, created_at
-        ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17::jsonb,$18)`,
-        [
-          manifest.record_hash,
-          input.short_signature,
-          manifest.format_version,
-          manifest.session_id,
-          manifest.producer.id,
-          manifest.producer.version,
-          JSON.stringify(manifest.producer.capabilities),
-          JSON.stringify(manifest.capture_context ?? null),
-          manifest.event_count,
-          manifest.duration_ms,
-          manifest.final_text_hash,
-          manifest.final_text_length,
-          manifest.created_client_t ?? null,
-          manifest.ingested_server_t ?? new Date().toISOString(),
-          manifest.parent_record ?? null,
-          JSON.stringify(manifest.attestations),
-          JSON.stringify(input.record.events),
-          createdAt,
-        ],
-      );
-
-      await this.#db.query(
-        `insert into record_stats (
-          record_hash, insert_op_count, delete_op_count, replace_op_count,
-          typed_event_count, paste_event_count, cut_event_count, drop_event_count,
-          ime_event_count, autocomplete_event_count, programmatic_event_count, unknown_source_count,
-          inserted_codepoints_total, deleted_codepoints_total, largest_atomic_insert_codepoints,
-          inter_event_delay_min_ms, inter_event_delay_p50_ms, inter_event_delay_p90_ms,
-          inter_event_delay_p95_ms, inter_event_delay_p99_ms, inter_event_delay_max_ms,
-          active_time_ms, idle_time_ms, long_pause_count, delay_histogram
-        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::jsonb)`,
-        [
-          input.stats.record_hash,
-          input.stats.insert_op_count,
-          input.stats.delete_op_count,
-          input.stats.replace_op_count,
-          input.stats.typed_event_count,
-          input.stats.paste_event_count,
-          input.stats.cut_event_count,
-          input.stats.drop_event_count,
-          input.stats.ime_event_count,
-          input.stats.autocomplete_event_count,
-          input.stats.programmatic_event_count,
-          input.stats.unknown_source_count,
-          input.stats.inserted_codepoints_total,
-          input.stats.deleted_codepoints_total,
-          input.stats.largest_atomic_insert_codepoints,
-          input.stats.inter_event_delay_min_ms,
-          input.stats.inter_event_delay_p50_ms,
-          input.stats.inter_event_delay_p90_ms,
-          input.stats.inter_event_delay_p95_ms,
-          input.stats.inter_event_delay_p99_ms,
-          input.stats.inter_event_delay_max_ms,
-          input.stats.active_time_ms,
-          input.stats.idle_time_ms,
-          input.stats.long_pause_count,
-          JSON.stringify(input.stats.delay_histogram),
-        ],
-      );
-
-      for (const signal of signals) {
-        await this.#db.query(
-          `insert into analysis_results (
-            id, record_hash, analyzer_id, analyzer_version, applicable, measures, human_range, explanation
-          ) values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8)
-          on conflict (record_hash, analyzer_id, analyzer_version) do nothing`,
+      await this.#withTransaction(async (client) => {
+        await client.query(
+          `insert into records (
+            record_hash, short_signature, format_version, session_id,
+            producer_id, producer_version, producer_capabilities, capture_context,
+            event_count, duration_ms, final_text_hash, final_text_length,
+            created_client_t, ingested_server_t, parent_record_hash, attestations, events, created_at
+          ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16::jsonb,$17::jsonb,$18)`,
           [
-            signal.id ?? crypto.randomUUID(),
             manifest.record_hash,
-            signal.analyzer_id,
-            signal.analyzer_version,
-            signal.applicable,
-            JSON.stringify(signal.measures),
-            signal.human_range ? JSON.stringify(signal.human_range) : null,
-            signal.explanation,
+            input.short_signature,
+            manifest.format_version,
+            manifest.session_id,
+            manifest.producer.id,
+            manifest.producer.version,
+            JSON.stringify(manifest.producer.capabilities),
+            JSON.stringify(manifest.capture_context ?? null),
+            manifest.event_count,
+            manifest.duration_ms,
+            manifest.final_text_hash,
+            manifest.final_text_length,
+            manifest.created_client_t ?? null,
+            manifest.ingested_server_t ?? new Date().toISOString(),
+            manifest.parent_record ?? null,
+            JSON.stringify(manifest.attestations),
+            JSON.stringify(input.record.events),
+            createdAt,
           ],
         );
-      }
 
-      await this.#db.query("commit");
+        await client.query(
+          `insert into record_stats (
+            record_hash, insert_op_count, delete_op_count, replace_op_count,
+            typed_event_count, paste_event_count, cut_event_count, drop_event_count,
+            ime_event_count, autocomplete_event_count, programmatic_event_count, unknown_source_count,
+            inserted_codepoints_total, deleted_codepoints_total, largest_atomic_insert_codepoints,
+            inter_event_delay_min_ms, inter_event_delay_p50_ms, inter_event_delay_p90_ms,
+            inter_event_delay_p95_ms, inter_event_delay_p99_ms, inter_event_delay_max_ms,
+            active_time_ms, idle_time_ms, long_pause_count, delay_histogram
+          ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25::jsonb)`,
+          [
+            input.stats.record_hash,
+            input.stats.insert_op_count,
+            input.stats.delete_op_count,
+            input.stats.replace_op_count,
+            input.stats.typed_event_count,
+            input.stats.paste_event_count,
+            input.stats.cut_event_count,
+            input.stats.drop_event_count,
+            input.stats.ime_event_count,
+            input.stats.autocomplete_event_count,
+            input.stats.programmatic_event_count,
+            input.stats.unknown_source_count,
+            input.stats.inserted_codepoints_total,
+            input.stats.deleted_codepoints_total,
+            input.stats.largest_atomic_insert_codepoints,
+            input.stats.inter_event_delay_min_ms,
+            input.stats.inter_event_delay_p50_ms,
+            input.stats.inter_event_delay_p90_ms,
+            input.stats.inter_event_delay_p95_ms,
+            input.stats.inter_event_delay_p99_ms,
+            input.stats.inter_event_delay_max_ms,
+            input.stats.active_time_ms,
+            input.stats.idle_time_ms,
+            input.stats.long_pause_count,
+            JSON.stringify(input.stats.delay_histogram),
+          ],
+        );
+
+        for (const signal of signals) {
+          await client.query(
+            `insert into analysis_results (
+              id, record_hash, analyzer_id, analyzer_version, applicable, measures, human_range, explanation
+            ) values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8)
+            on conflict (record_hash, analyzer_id, analyzer_version) do nothing`,
+            [
+              signal.id ?? crypto.randomUUID(),
+              manifest.record_hash,
+              signal.analyzer_id,
+              signal.analyzer_version,
+              signal.applicable,
+              JSON.stringify(signal.measures),
+              signal.human_range ? JSON.stringify(signal.human_range) : null,
+              signal.explanation,
+            ],
+          );
+        }
+      });
       const stored = await this.findByRecordHash(manifest.record_hash);
       if (!stored) throw new Error("record was inserted but could not be read back");
       return { stored, created: true };
     } catch (error) {
-      await this.#db.query("rollback");
+      if (isPostgresUniqueViolation(error)) return this.#resolveUniqueViolation(input);
       throw error;
     }
+  }
+
+  async #withTransaction<T>(fn: (client: PostgresQueryable) => Promise<T>): Promise<T> {
+    const client = this.#db.connect ? await this.#db.connect() : this.#db;
+    try {
+      await client.query("begin");
+      const value = await fn(client);
+      await client.query("commit");
+      return value;
+    } catch (error) {
+      await client.query("rollback").catch(() => undefined);
+      throw error;
+    } finally {
+      if ("release" in client) client.release?.();
+    }
+  }
+
+  async #resolveUniqueViolation(input: SaveRecordInput): Promise<SaveRecordResult> {
+    const recordHash = input.record.manifest.record_hash;
+    const existingByHash = await this.findByRecordHash(recordHash);
+    if (existingByHash) {
+      if (existingByHash.short_signature !== input.short_signature) {
+        throw new DuplicateRecordConflictError("record_hash already exists with a different short_signature");
+      }
+      return { stored: existingByHash, created: false };
+    }
+
+    const existingByShortSignature = await this.findByShortSignature(input.short_signature);
+    if (existingByShortSignature && existingByShortSignature.manifest.record_hash !== recordHash) {
+      throw new DuplicateRecordConflictError("short_signature already belongs to another record");
+    }
+
+    throw new DuplicateRecordConflictError("unique constraint conflict while saving record");
   }
 
   async findByRecordHash(recordHash: B3Hash): Promise<StoredRecord | null> {
@@ -424,4 +464,8 @@ function numberFromRow(value: unknown): number {
 
 function nullableNumberFromRow(value: unknown): number | null {
   return value === null || value === undefined ? null : numberFromRow(value);
+}
+
+function isPostgresUniqueViolation(error: unknown): error is { code: string } {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "23505";
 }

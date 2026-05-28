@@ -17,6 +17,12 @@ Layer 2 ingestion service package.
 - Plaintext storage in public mode.
 - Human/AI verdicts, scores, or badges.
 - User management, auth, public DELETE endpoint, or owner-delete flow in v0.
-- Analyzer implementation; M2 only stores/returns the analysis-results shape.
+- Analyzer implementation; the API stores/returns analyzer signals but does not define detector-style verdicts.
 
-The implementation exposes a Fetch `Request` handler plus direct functions for tests and future server wiring.
+The implementation exposes a Fetch `Request` handler plus direct functions for tests and runtime server wiring.
+
+## Runtime database posture
+
+`src/server.ts` uses one shared `pg.Pool` per Node process. Configure it with `PG_POOL_MAX`/`DATABASE_POOL_MAX`, `PG_POOL_IDLE_TIMEOUT_MS`, `PG_POOL_CONNECTION_TIMEOUT_MS`, and optional `PG_STATEMENT_TIMEOUT_MS`. Keep pool sizes conservative for Neon and account for every deployed process. `POST /api/records` is protected by `RECORD_BODY_LIMIT_BYTES` and returns `413` for oversized bodies.
+
+`npm run migrate` applies ordered SQL migrations through the TypeScript migration manager. Applied migration versions/checksums are recorded in `schema_migrations`; reruns skip unchanged migrations and checksum drift fails before runtime readiness succeeds.

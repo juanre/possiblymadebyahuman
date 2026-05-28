@@ -23,7 +23,7 @@ help:
 	@echo "  make local-container-test  Run full local Docker+Postgres HTTP e2e journey"
 	@echo "  make local-container-logs  Tail local container logs"
 	@echo "  make local-container-down  Stop local stack"
-	@echo "  make migrate               Run migrations against DATABASE_URL"
+	@echo "  make migrate               Run checked, ordered migrations against DATABASE_URL"
 	@echo "  make prod-container        Run prod-like container against external Neon DATABASE_URL"
 	@echo "  make prod-container-migrate Run migrations against external Neon DATABASE_URL"
 	@echo "  make prod-container-down   Stop prod-like stack"

@@ -1,5 +1,8 @@
-import { readFile } from 'node:fs/promises';
+import { readdir, readFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import pg from 'pg';
+import { applyMigrations } from '../../../packages/storage/src/migrations.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -7,14 +10,23 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-const migrationPath = new URL('../../../packages/storage/migrations/001_init.sql', import.meta.url);
-const sql = await readFile(migrationPath, 'utf8');
-const { Client } = pg;
-const client = new Client({ connectionString: databaseUrl });
-await client.connect();
+const migrationsDir = fileURLToPath(new URL('../../../packages/storage/migrations/', import.meta.url));
+const entries = await readdir(migrationsDir);
+const migrations = await Promise.all(entries
+  .filter((entry) => /^\d{3,}_.*\.sql$/.test(entry))
+  .sort()
+  .map(async (entry) => {
+    const path = join(migrationsDir, entry);
+    const sql = await readFile(path, 'utf8');
+    const [version] = entry.split('_');
+    return { version, name: basename(entry, '.sql'), sql };
+  }));
+
+const { Pool } = pg;
+const pool = new Pool({ connectionString: databaseUrl, max: 1 });
 try {
-  await client.query(sql);
-  console.log('Migrations applied');
+  const result = await applyMigrations(pool, migrations);
+  console.log(`Migrations applied: ${result.applied.length}; skipped: ${result.skipped.length}`);
 } finally {
-  await client.end();
+  await pool.end();
 }
