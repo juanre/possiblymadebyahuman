@@ -8,7 +8,7 @@ The public service is content-blind by default: uploaded records store mutation 
 
 ## Current milestone
 
-M0: approved architecture and monorepo scaffold. Core format algorithms, producers, backend, UI, and analyzers are intentionally not implemented yet.
+M1: core event-log format and conformance suite. Producers, backend, UI, and analyzers are intentionally not implemented yet.
 
 ## Commands
 

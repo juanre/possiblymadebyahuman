@@ -1,11 +1,16 @@
 # `@possiblymadebyahuman/format`
 
-Core event-log contract package.
+Core event-log contract package for format version `0.1`.
 
 ## Responsibility
 
-- Event mutation, manifest, producer, capture-context, source, capability, and related shared types in M1.
-- Future canonical JSON serialization, `b3:` hashing, hash-chain verification, deterministic replay, and final-text hash helpers.
+- Event mutation, manifest, producer, capture-context, source, capability, and signal-adjacent shared types.
+- Canonical JSON serialization for event objects.
+- BLAKE3 `b3:` hashing helpers.
+- Event hash-chain computation and verification.
+- Deterministic replay helpers using Unicode codepoint offsets/lengths.
+- Final-text length/hash helpers for local verification and test fixtures.
+- Record verification helper for content-blind chain checks and optional local determinism checks.
 
 ## Non-responsibility
 
@@ -13,4 +18,4 @@ Core event-log contract package.
 - Plaintext storage for public records.
 - Human/AI verdicts, scores, or badges.
 
-M0 contains only scaffold placeholders; core algorithms are intentionally deferred to M1.
+Plaintext insertion text is accepted only through local replay fixture/provider APIs. It is not part of the public event schema.

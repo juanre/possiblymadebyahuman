@@ -1,0 +1,36 @@
+[
+  {
+    "name": "unknown-only importer must not claim source attribution",
+    "capabilities": ["timing", "source_attribution"],
+    "events": [
+      {
+        "seq": 0,
+        "t": 0,
+        "op": "insert",
+        "pos": 0,
+        "del_len": 0,
+        "ins_len": 4,
+        "source": "unknown"
+      }
+    ],
+    "valid": false,
+    "note": "A coarse importer can emit unknown, but should not declare source_attribution if every event is unknown."
+  },
+  {
+    "name": "unknown-only importer without source attribution is honest",
+    "capabilities": ["timing"],
+    "events": [
+      {
+        "seq": 0,
+        "t": 0,
+        "op": "insert",
+        "pos": 0,
+        "del_len": 0,
+        "ins_len": 4,
+        "source": "unknown"
+      }
+    ],
+    "valid": true,
+    "note": "Missing source attribution is absent by design, not suspicious."
+  }
+]

@@ -1,0 +1,43 @@
+[
+  {
+    "name": "three-event hash chain",
+    "session_id": "123e4567-e89b-42d3-a456-426614174000",
+    "format_version": "0.1",
+    "events": [
+      {
+        "seq": 0,
+        "t": 0,
+        "op": "insert",
+        "pos": 0,
+        "del_len": 0,
+        "ins_len": 1,
+        "source": "typing"
+      },
+      {
+        "seq": 1,
+        "t": 25,
+        "op": "insert",
+        "pos": 1,
+        "del_len": 0,
+        "ins_len": 2,
+        "source": "paste",
+        "ins_hash": "b3:6437b3ac38465133ffb63b75273a8db548c558465d79db03fd359c6cd5bd9d85"
+      },
+      {
+        "seq": 2,
+        "t": 40,
+        "op": "delete",
+        "pos": 2,
+        "del_len": 1,
+        "ins_len": 0,
+        "source": "cut"
+      }
+    ],
+    "chain": [
+      "b3:5e995fa7fb12582f9a9a94adc9d52975fc314b116f250b95d6fec01f4c2aca04",
+      "b3:e4e5535a7a482d267a92c4be91f6712823ecf103b6ffb5d84dd33cc576744aad",
+      "b3:7d7e6c992ac2567ff6a71331a0517f3384cfc61c6f73609befb6e21efe72f1b8"
+    ],
+    "record_hash": "b3:7d7e6c992ac2567ff6a71331a0517f3384cfc61c6f73609befb6e21efe72f1b8"
+  }
+]

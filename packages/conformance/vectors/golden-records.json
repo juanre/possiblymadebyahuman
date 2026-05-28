@@ -1,0 +1,72 @@
+[
+  {
+    "name": "short content-blind compose with paste and correction",
+    "record": {
+      "manifest": {
+        "format_version": "0.1",
+        "record_hash": "b3:e5138f131dc5a1fcd070741047d8ac278e27a29f301df9270f53737a16a4aa10",
+        "session_id": "123e4567-e89b-42d3-a456-426614174000",
+        "producer": {
+          "id": "fixture",
+          "version": "0.1.0",
+          "capabilities": ["timing", "source_attribution"]
+        },
+        "capture_context": {
+          "surface": "test",
+          "label": "golden fixture"
+        },
+        "event_count": 4,
+        "duration_ms": 240,
+        "final_text_hash": "b3:56c9f2be353685b6c938571a7c2360901f2bcbe6233e0ea132b939b1a8a69e59",
+        "final_text_length": 8,
+        "created_client_t": null,
+        "ingested_server_t": null,
+        "parent_record": null,
+        "attestations": []
+      },
+      "events": [
+        {
+          "seq": 0,
+          "t": 0,
+          "op": "insert",
+          "pos": 0,
+          "del_len": 0,
+          "ins_len": 2,
+          "source": "typing"
+        },
+        {
+          "seq": 1,
+          "t": 120,
+          "op": "insert",
+          "pos": 2,
+          "del_len": 0,
+          "ins_len": 6,
+          "source": "paste"
+        },
+        {
+          "seq": 2,
+          "t": 180,
+          "op": "delete",
+          "pos": 7,
+          "del_len": 1,
+          "ins_len": 0,
+          "source": "cut"
+        },
+        {
+          "seq": 3,
+          "t": 240,
+          "op": "insert",
+          "pos": 7,
+          "del_len": 0,
+          "ins_len": 1,
+          "source": "typing"
+        }
+      ]
+    },
+    "replay_insertions_by_seq": {
+      "0": "Hi",
+      "1": " there",
+      "3": "!"
+    }
+  }
+]

@@ -1,7 +1,7 @@
 {
   "name": "possiblymadebyahuman",
   "version": "0.1.0",
-  "description": "Content-blind writing-record format and v0 architecture scaffold.",
+  "description": "Content-blind writing-record format and conformance suite.",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -15,5 +15,8 @@
   },
   "devDependencies": {
     "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.2.0"
   }
 }

@@ -1,0 +1,49 @@
+[
+  {
+    "name": "unicode codepoint offsets are not UTF-16 indexes",
+    "events": [
+      {
+        "seq": 0,
+        "t": 0,
+        "op": "insert",
+        "pos": 0,
+        "del_len": 0,
+        "ins_len": 3,
+        "source": "typing",
+        "ins_text": "A🙂B"
+      },
+      {
+        "seq": 1,
+        "t": 10,
+        "op": "delete",
+        "pos": 2,
+        "del_len": 1,
+        "ins_len": 0,
+        "source": "cut"
+      },
+      {
+        "seq": 2,
+        "t": 20,
+        "op": "insert",
+        "pos": 2,
+        "del_len": 0,
+        "ins_len": 1,
+        "source": "typing",
+        "ins_text": "é"
+      },
+      {
+        "seq": 3,
+        "t": 30,
+        "op": "replace",
+        "pos": 1,
+        "del_len": 1,
+        "ins_len": 2,
+        "source": "typing",
+        "ins_text": "中x"
+      }
+    ],
+    "final_text": "A中xé",
+    "final_text_length": 4,
+    "final_text_hash": "b3:649c4eeb8d985d65a7d717dbaa6f5bf6d9e8b0f1648ea0012bd4548d23c92528"
+  }
+]
