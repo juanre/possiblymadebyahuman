@@ -64,6 +64,45 @@ export type ProducerIdentity = {
   capabilities: Capability[];
 };
 
+export type ObservedSessionToken = string;
+
+export type ObservationLocalState =
+  | "disabled"
+  | "unknown"
+  | "known"
+  | "partial"
+  | "diverged";
+
+export type ObservedCommitment = {
+  checkpoint_id: string;
+  event_count: number;
+  chain_tip: B3Hash;
+  observed_at: string;
+};
+
+export type ObservationFailure = {
+  reason: string;
+  status_or_kind: string;
+};
+
+export type SessionObservation = {
+  state: ObservationLocalState;
+  commitments: ObservedCommitment[];
+  observed_session_id: string | null;
+  last_observed_token: ObservedSessionToken | null;
+  last_committed_event_count: number;
+  last_attempt_at_wall_ms: number | null;
+  last_failure: ObservationFailure | null;
+  in_flight: boolean;
+  queued: boolean;
+  next_backoff_ms: number;
+};
+
+export type ObservationEnvelope = {
+  observed_session_id: string;
+  token: ObservedSessionToken;
+};
+
 export type SessionRecord = {
   session_id: SessionId;
   format_version: FormatVersion;
@@ -75,9 +114,11 @@ export type SessionRecord = {
   producer: ProducerIdentity;
   capture_context: CaptureContext;
   events: BufferMutation[];
+  last_event_chain_tip: B3Hash | null;
   state: SessionState;
   uploaded_response?: IngestRecordResponse;
   last_failure_reason?: string;
+  observation: SessionObservation;
 };
 
 export type SignedRecordDraft = {

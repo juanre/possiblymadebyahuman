@@ -145,13 +145,16 @@ Owns:
 - session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
 - capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
 - TTL sweep
-- adapter interfaces (`StorageAdapter`, `UploadAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`)
+- server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before sign+upload, and a `getObservationEnvelope()` accessor for binding `(observed_session_id, token)` onto `POST /api/records`
+- local observation state vocabulary (`disabled` / `unknown` / `known` / `partial` / `diverged`) distinct from the public wire vocabulary on records (`observed` / `partial` / `unobserved` / `not_requested`)
+- adapter interfaces (`StorageAdapter`, `UploadAdapter`, `CheckpointAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`)
 
 Does not own:
 
 - DOM observation, `chrome.*`, `window.*`, `document.*`
 - Plaintext storage, hashing, replay, upload, or helper payloads
 - Text-based verification; `packages/format.verifyRecord` verifies public structure and hash chain only
+- Token persistence beyond the in-memory `SessionRecord`; consumers persist `observation` only via `StorageAdapter.write(snapshot)` and tokens never leave `SessionRecord.observation.last_observed_token`
 - Listing/store copy or browser packaging
 
 ### 3.4 `packages/storage`

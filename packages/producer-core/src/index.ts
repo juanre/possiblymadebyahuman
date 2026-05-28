@@ -1,6 +1,11 @@
 export const PRODUCER_CORE_PACKAGE = "@possiblymadebyahuman/producer-core";
 
 export type {
+  CheckpointAdapter,
+  CheckpointFailureKind,
+  CheckpointRequest,
+  CheckpointResponse,
+  CheckpointResult,
   ClipboardAdapter,
   ClockAdapter,
   StorageAdapter,
@@ -14,16 +19,22 @@ export type {
   IdentityCertainty,
   IngestRecordInput,
   IngestRecordResponse,
+  ObservationEnvelope,
+  ObservationFailure,
+  ObservationLocalState,
+  ObservedCommitment,
+  ObservedSessionToken,
   PendingMutation,
   ProducerIdentity,
   SessionId,
+  SessionObservation,
   SessionRecord,
   SessionState,
   SignedRecordDraft,
 } from "./types.ts";
 
 export { buildCaptureContext, redactCaptureContext, stripQueryAndHash } from "./capture-context.ts";
-export { appendBufferMutation, durationMs } from "./timeline.ts";
+export { advanceChain, appendBufferMutation, durationMs } from "./timeline.ts";
 export {
   DEFAULT_TTL_MS,
   DEFAULT_UPLOADED_GRACE_MS,
@@ -37,8 +48,13 @@ export {
 } from "./session-id.ts";
 export type { IdentityResolution } from "./session-id.ts";
 export {
+  DEFAULT_CADENCE_EVERY_MS,
+  DEFAULT_CADENCE_EVERY_N_EVENTS,
+  DEFAULT_CHECKPOINT_BACKOFF_INITIAL_MS,
+  DEFAULT_CHECKPOINT_BACKOFF_MAX_MS,
+  DEFAULT_COMMITMENT_RETENTION,
   SessionFrozenError,
   SessionRegistry,
   UnknownSessionError,
 } from "./registry.ts";
-export type { SessionRegistryOptions } from "./registry.ts";
+export type { CadenceOptions, SessionRegistryOptions } from "./registry.ts";
