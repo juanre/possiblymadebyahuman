@@ -1,9 +1,10 @@
 # Browser extension release packaging and store plan
 
-Status: packaging/release scaffold for `default-aaaa.17`. Shared browser
-producer core is owned by `default-aaaa.29`; extension behavior is owned by
-`default-aaaa.7`; final store submission and the real Chrome Web Store URL are
-owned by `default-aaaa.26`.
+Status: deterministic packaging contract owned by `default-aaaa.17`. The shared
+browser producer core (`default-aaaa.29`) and the extension behaviour
+(`default-aaaa.7`) have landed; final Chrome Web Store submission and the real
+listing URL are owned by `default-aaaa.26`. The reconciled store-facing
+listing prep lives in `docs/chrome-web-store-prep.md`.
 
 Do not publish install links until Chrome Web Store approval produces a real URL.
 Do not commit store credentials, OAuth tokens, refresh tokens, real publisher
@@ -28,7 +29,8 @@ The package command rebuilds the extension and writes a deterministic ZIP with
 fixed ZIP entry timestamps. The v0 package must not include source maps,
 TypeScript source files, local env files, secrets, or remote executable code.
 
-Current scaffold entries are intentionally minimal until `default-aaaa.7` lands:
+The final zip contains exactly the following entries (enforced by
+`tests/browser-extension-package.test.mjs`):
 
 ```text
 manifest.json
@@ -41,9 +43,10 @@ icons/48.png
 icons/128.png
 ```
 
-The icon files are generated build placeholders for package-shape validation.
-Human-approved pencil-figure-derived icons must replace or supersede them before
-Chrome Web Store submission.
+The icon files are generated build placeholders for package-shape validation
+(solid-colour PNGs produced by `scripts/build.mjs`). Human-approved
+pencil-figure-derived icons must replace them before Chrome Web Store
+submission — see `docs/chrome-web-store-prep.md` item 3.
 
 ## Local build and package
 
@@ -168,17 +171,29 @@ AMO automation, if ever approved, would require human-owned AMO access plus
 Safari/App Store distribution is out of scope for v0 unless explicitly approved
 later.
 
-## Reconciliation required after `default-aaaa.7`
+## Final reconciliation (post-`.7`)
 
-Before store submission or release blessing, revisit this document and the
-package scripts against the final shared browser producer core and browser
-extension implementation:
+The final shipped values are recorded in `docs/chrome-web-store-prep.md`
+under "Release-readiness summary" and "Permission justification". The cross-
+references are:
 
-- final shared producer-core package/module entry points from `default-aaaa.29`;
-- final manifest permissions and host permissions;
-- final ZIP contents and entry names;
-- final local retention/TTL behavior;
-- final source-attribution and capability claims;
-- final icons/screenshots and listing assets;
-- final support matrix for Chrome, Brave, Edge, and Firefox;
-- final privacy/data-use answers.
+- Shared producer-core package and adapter wiring: `packages/producer-core/`
+  and `apps/browser-extension/src/lib/{adapters,dispatcher,messages,policy,
+  descriptor,codepoint}.ts`.
+- Manifest permissions and host permissions: see the permission justification
+  table in `docs/chrome-web-store-prep.md`. Shipped: `["storage",
+  "clipboardWrite", "alarms"]` + `host_permissions: ["<all_urls>"]`.
+- Zip contents and entry names: see the bullet list above and
+  `tests/browser-extension-package.test.mjs`.
+- Local retention/TTL: 3 days from last edit, swept hourly by
+  `chrome.alarms`. Producer-core `DEFAULT_TTL_MS`.
+- Source-attribution and capability claims: producer identity declares
+  `["timing", "source_attribution"]` because the InputEvent → Source map in
+  `apps/browser-extension/src/lib/codepoint.ts` returns `unknown` on any
+  ambiguous inputType rather than guessing.
+- Support matrix: see `apps/browser-extension/README.md#support-matrix`.
+  Chrome required; Chromium-family best-effort; Firefox documented incompat;
+  Safari out of scope for v0.
+- Privacy/data-use answers: see "Data observed locally / Data stored or
+  processed locally before upload / Data transmitted on explicit sign/upload
+  / Data not transmitted by the public/default extension" in the prep doc.
