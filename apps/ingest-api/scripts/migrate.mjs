@@ -1,8 +1,5 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import pg from 'pg';
-import { applyMigrations } from '../../../packages/storage/src/migrations.ts';
+import { applyMigrations, loadSqlMigrations } from '../../../packages/storage/src/migrations.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
@@ -10,18 +7,7 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-const migrationsDir = fileURLToPath(new URL('../../../packages/storage/migrations/', import.meta.url));
-const entries = await readdir(migrationsDir);
-const migrations = await Promise.all(entries
-  .filter((entry) => /^\d{3,}_.*\.sql$/.test(entry))
-  .sort()
-  .map(async (entry) => {
-    const path = join(migrationsDir, entry);
-    const sql = await readFile(path, 'utf8');
-    const [version] = entry.split('_');
-    return { version, name: basename(entry, '.sql'), sql };
-  }));
-
+const migrations = await loadSqlMigrations();
 const { Pool } = pg;
 const pool = new Pool({ connectionString: databaseUrl, max: 1 });
 try {

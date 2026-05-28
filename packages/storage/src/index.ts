@@ -336,7 +336,7 @@ export class PostgresRecordStore implements RecordStore {
        from records r
        join record_stats s using (record_hash)
        left join (
-         select record_hash, jsonb_agg(to_jsonb(analysis_results) order by created_at) as signals
+         select record_hash, jsonb_agg(to_jsonb(analysis_results) order by created_at, analyzer_id, analyzer_version, id) as signals
          from analysis_results group by record_hash
        ) a using (record_hash)
        where r.record_hash = $1`,

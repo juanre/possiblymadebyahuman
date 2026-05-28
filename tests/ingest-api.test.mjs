@@ -253,5 +253,6 @@ test("Postgres read SQL uses explicit columns so created_at is the record timest
 
   assert.equal(stored.created_at, "2026-05-28T10:00:01.000Z");
   assert.ok(queries[0].sql.includes("r.created_at"));
+  assert.match(queries[0].sql, /jsonb_agg\(to_jsonb\(analysis_results\) order by created_at, analyzer_id, analyzer_version, id\)/i);
   assert.doesNotMatch(queries[0].sql, /select\s+r\.\*,\s*s\.\*/i);
 });
