@@ -11,6 +11,7 @@ import {
   computeRecordHash,
   replayEventsWithText,
   validateEvent,
+  validateManifest,
   verifyRecord,
 } from "../packages/format/src/index.ts";
 import { runConformanceVectors } from "../packages/conformance/src/index.ts";
@@ -48,12 +49,16 @@ test("hash-chain helpers reproduce the hash-chain vector", async () => {
 });
 
 test("deterministic replay uses Unicode codepoint offsets", async () => {
-  const [vector] = await readJson("packages/conformance/vectors/replay-codepoint.json");
-  const replay = replayEventsWithText(vector.events);
-  assert.equal(replay.finalText, vector.final_text);
-  assert.equal(replay.finalTextLength, vector.final_text_length);
-  assert.equal(replay.finalTextHash, vector.final_text_hash);
+  const vectors = await readJson("packages/conformance/vectors/replay-codepoint.json");
+  for (const vector of vectors) {
+    const replay = replayEventsWithText(vector.events);
+    assert.equal(replay.finalText, vector.final_text, vector.name);
+    assert.equal(replay.finalTextLength, vector.final_text_length, vector.name);
+    assert.equal(replay.finalTextHash, vector.final_text_hash, vector.name);
+  }
   assert.equal(codepointLength("A🙂B"), 3);
+  assert.equal(codepointLength("👩‍💻"), 3);
+  assert.equal(codepointLength("e\u0301"), 2);
 });
 
 test("record verification checks chain and optional local final-text determinism", async () => {
@@ -86,4 +91,23 @@ test("final text metadata counts codepoints and hashes UTF-8 text", () => {
     finalTextLength: 2,
     finalTextHash: b3HashText("🙂a"),
   });
+});
+
+test("public manifest validation rejects storage-only parent_record_hash", async () => {
+  const [golden] = await readJson("packages/conformance/vectors/golden-records.json");
+  const errors = validateManifest({
+    ...golden.record.manifest,
+    parent_record_hash: golden.record.manifest.record_hash,
+  });
+  assert.ok(errors.some((error) => error.includes("parent_record_hash is not a public manifest field")));
+});
+
+test("manifest validation requires UUIDv4 session ids", async () => {
+  const [golden] = await readJson("packages/conformance/vectors/golden-records.json");
+  assert.deepEqual(validateManifest(golden.record.manifest), []);
+  const errors = validateManifest({
+    ...golden.record.manifest,
+    session_id: "123e4567-e89b-12d3-a456-426614174000",
+  });
+  assert.ok(errors.some((error) => error.includes("session_id must be a UUIDv4 string")));
 });

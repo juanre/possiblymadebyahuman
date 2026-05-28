@@ -89,7 +89,6 @@ export type RecordManifest = {
   created_client_t?: string | null;
   ingested_server_t?: string | null;
   parent_record?: B3Hash | null;
-  parent_record_hash?: B3Hash | null;
   attestations: Attestation[];
 };
 
@@ -444,7 +443,7 @@ export function validateManifest(manifest: unknown): string[] {
   if (candidate.format_version !== FORMAT_VERSION) errors.push(`format_version must be ${FORMAT_VERSION}`);
   if (!isB3Hash(candidate.record_hash)) errors.push(`record_hash must be a ${HASH_PREFIX} hash`);
   if (typeof candidate.session_id !== "string" || !isUuid(candidate.session_id)) {
-    errors.push("session_id must be a UUID string");
+    errors.push("session_id must be a UUIDv4 string");
   }
   if (!isPlainObject(candidate.producer)) {
     errors.push("producer must be an object");
@@ -478,8 +477,10 @@ export function validateManifest(manifest: unknown): string[] {
   validateNonNegativeInteger(candidate.final_text_length, "final_text_length", errors);
   validateNullableString(candidate.created_client_t, "created_client_t", errors);
   validateNullableString(candidate.ingested_server_t, "ingested_server_t", errors);
+  if ("parent_record_hash" in candidate) {
+    errors.push("parent_record_hash is not a public manifest field; use parent_record");
+  }
   validateNullableB3(candidate.parent_record, "parent_record", errors);
-  validateNullableB3(candidate.parent_record_hash, "parent_record_hash", errors);
   if (!Array.isArray(candidate.attestations)) errors.push("attestations must be an array");
 
   return errors;
@@ -552,7 +553,7 @@ function validateNullableB3(value: unknown, name: string, errors: string[]): voi
 }
 
 function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 function last<T>(items: T[]): T {

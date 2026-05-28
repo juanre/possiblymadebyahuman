@@ -185,7 +185,7 @@ Chaining gives tamper-*evidence*, not tamper-*proofing*: a producer can still fa
 
 ### 3.6 Sessions, pauses, and merging
 
-- A **session** is one continuous capture with one `session_id` (UUanv4). `t=0` is session start.
+- A **session** is one continuous capture with one `session_id` (UUIDv4). `t=0` is session start.
 - Producers should record genuine pauses as genuine gaps in `t`; they must not silently compress idle time, because pause structure is signal (§6).
 - Multiple sessions composing one document (you wrote over three days) are stored as separate event logs and stitched at the record level via a `parent_record` link on the manifest. Analyzers may operate per-session or across the linked set; each declares which.
 

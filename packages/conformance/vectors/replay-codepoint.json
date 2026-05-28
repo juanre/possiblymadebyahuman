@@ -45,5 +45,80 @@
     "final_text": "A中xé",
     "final_text_length": 4,
     "final_text_hash": "b3:649c4eeb8d985d65a7d717dbaa6f5bf6d9e8b0f1648ea0012bd4548d23c92528"
+  },
+  {
+    "name": "ZWJ emoji sequence counts constituent codepoints",
+    "events": [
+      {
+        "seq": 0,
+        "t": 0,
+        "op": "insert",
+        "pos": 0,
+        "del_len": 0,
+        "ins_len": 3,
+        "source": "typing",
+        "ins_text": "👩‍💻"
+      },
+      {
+        "seq": 1,
+        "t": 1,
+        "op": "insert",
+        "pos": 3,
+        "del_len": 0,
+        "ins_len": 1,
+        "source": "typing",
+        "ins_text": "!"
+      },
+      {
+        "seq": 2,
+        "t": 2,
+        "op": "delete",
+        "pos": 0,
+        "del_len": 3,
+        "ins_len": 0,
+        "source": "cut"
+      }
+    ],
+    "final_text": "!",
+    "final_text_length": 1,
+    "final_text_hash": "b3:c8d11b9f7237e4034adbcd2005735f9bc4c597c75ad89f4492bec8f77d15f7eb"
+  },
+  {
+    "name": "NFD decomposed character is not normalized during replay",
+    "events": [
+      {
+        "seq": 0,
+        "t": 0,
+        "op": "insert",
+        "pos": 0,
+        "del_len": 0,
+        "ins_len": 2,
+        "source": "typing",
+        "ins_text": "e\u0301"
+      },
+      {
+        "seq": 1,
+        "t": 1,
+        "op": "insert",
+        "pos": 1,
+        "del_len": 0,
+        "ins_len": 1,
+        "source": "typing",
+        "ins_text": "x"
+      },
+      {
+        "seq": 2,
+        "t": 2,
+        "op": "replace",
+        "pos": 0,
+        "del_len": 1,
+        "ins_len": 1,
+        "source": "typing",
+        "ins_text": "E"
+      }
+    ],
+    "final_text": "Ex\u0301",
+    "final_text_length": 3,
+    "final_text_hash": "b3:8893f28b111c410b7f2d11c91b1436f252a4bfc330459c2780d494f995b1c7a3"
   }
 ]

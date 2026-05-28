@@ -296,7 +296,7 @@ Manifest includes:
 }
 ```
 
-`parent_record` / `parent_record_hash` is kept because it supports multi-session documents. It may be null for v0 records. It lets a record say “this session continues from that earlier signed record” without pretending one capture covers all writing.
+`parent_record` is the public manifest field for multi-session documents. It may be null for v0 records. It lets a record say “this session continues from that earlier signed record” without pretending one capture covers all writing. `parent_record_hash` is reserved for future storage/database column naming and is not part of public manifest input.
 
 ---
 
