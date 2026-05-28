@@ -1,1 +1,6 @@
-{{ define "main" }}{{ .Content }}{{ end }}
+{{ define "main" }}
+  <p class="eyebrow">{{ .Section | humanize }}</p>
+  <h1>{{ .Title }}</h1>
+  {{ with .Params.summary }}<p class="standing-claim">{{ . }}</p>{{ end }}
+  {{ .Content }}
+{{ end }}

@@ -40,6 +40,7 @@ test("Makefile is the primary management surface", async () => {
     "prod-container",
     "prod-container-migrate",
     "prod-container-down",
+    "build-site",
     "clean",
   ]) {
     assert.match(makefile, new RegExp(`^${target}:`, "m"));

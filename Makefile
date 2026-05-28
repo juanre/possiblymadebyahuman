@@ -1,4 +1,4 @@
-.PHONY: help install check test typecheck dev-api dev-web dev-site docker-build local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-migrate prod-container-down clean test-web-browser
+.PHONY: help install check test typecheck dev-api dev-web dev-site docker-build local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-migrate prod-container-down clean test-web-browser build-site
 
 ENV_FILE ?= .env.local-container
 PROD_ENV_FILE ?= .env.localprod
@@ -28,6 +28,7 @@ help:
 	@echo "  make prod-container-migrate Run migrations against external Neon DATABASE_URL"
 	@echo "  make prod-container-down   Stop prod-like stack"
 	@echo "  make test-web-browser      Build web app and run Playwright smoke for the record page"
+	@echo "  make build-site            Build the Hugo landing/docs/blog into apps/site/public"
 	@echo "  make clean                 Remove safe local build/test output"
 	@echo ""
 	@echo "Ports: app=$${PMBAH_PORT:-$(PMBAH_PORT)} postgres=$${POSTGRES_PORT:-5432}"
@@ -107,6 +108,10 @@ prod-container-down:
 test-web-browser:
 	npm run build:web
 	npm run test:web-browser
+
+build-site:
+	command -v hugo >/dev/null || (echo "hugo is required for build-site" && exit 1)
+	hugo --source apps/site --destination public --minify
 
 clean:
 	rm -rf apps/web/dist apps/site/public coverage
