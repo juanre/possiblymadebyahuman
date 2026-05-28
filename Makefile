@@ -1,4 +1,4 @@
-.PHONY: help install check test typecheck dev-api dev-web dev-site docker-build release-build-image release-build-image-nocache local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser build-site release-ready ship-tag
+.PHONY: help install check test typecheck dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser build-site release-ready ship-tag
 
 ENV_FILE ?= .env.local-container
 PROD_ENV_FILE ?= .env.localprod
@@ -21,6 +21,8 @@ help:
 	@echo "  make dev-api               Run API locally against DATABASE_URL"
 	@echo "  make dev-web               Run Vite record app dev server"
 	@echo "  make dev-site              Run Hugo site dev server"
+	@echo "  make extension-build       Build the Chrome/Chromium extension into apps/browser-extension/dist"
+	@echo "  make extension-package     Build deterministic extension zip artifact"
 	@echo "  make docker-build          Build single production image ($(IMAGE))"
 	@echo "  make release-build-image   Build production release image ($(RELEASE_IMAGE):latest)"
 	@echo "  make release-build-image-nocache Build production release image without Docker cache"
@@ -63,6 +65,12 @@ dev-web:
 dev-site:
 	command -v hugo >/dev/null || (echo "hugo is required for dev-site" && exit 1)
 	hugo server --source apps/site --bind 0.0.0.0 --port $${SITE_PORT:-1313}
+
+extension-build:
+	npm --workspace @possiblymadebyahuman/browser-extension run build
+
+extension-package:
+	npm --workspace @possiblymadebyahuman/browser-extension run package
 
 docker-build:
 	docker build --platform $(DOCKER_PLATFORM) -t $(IMAGE) .
@@ -139,6 +147,7 @@ release-ready:
 	$(MAKE) check
 	$(MAKE) test-web-browser
 	$(MAKE) build-site
+	$(MAKE) extension-package
 	$(MAKE) release-build-image RELEASE_IMAGE=possiblymadebyahuman-release-ready
 	@echo "Release-ready checks passed. Next: make ship-tag VERSION=x.y.z after human approval."
 
@@ -152,4 +161,4 @@ ship-tag: release-ready
 		git push origin "$$tag"
 
 clean:
-	rm -rf apps/web/dist apps/site/public coverage
+	rm -rf apps/web/dist apps/site/public apps/browser-extension/dist coverage

@@ -9,6 +9,36 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  extension-package:
+    name: Build browser extension package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build deterministic extension zip
+        run: make extension-package
+
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: possiblymadebyahuman-extension-${{ github.ref_name }}
+          path: apps/browser-extension/dist/possiblymadebyahuman-extension-*.zip
+          if-no-files-found: error
+          retention-days: 90
+
   release-image:
     name: Build and publish production image
     runs-on: ubuntu-latest

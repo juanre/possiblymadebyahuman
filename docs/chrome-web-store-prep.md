@@ -8,8 +8,8 @@ approval.
 This checklist is intentionally human/store-facing. It prepares the Chrome Web
 Store publication path without touching browser-extension implementation details.
 Final text, permissions, screenshots, and privacy answers must be reconciled with
-the completed extension from `default-aaaa.7` and release packaging from
-`default-aaaa.17`.
+the completed extension from `default-aaaa.7` and the packaging/release plan in
+`docs/browser-extension-release.md` from `default-aaaa.17`.
 
 ## Release policy summary
 
@@ -59,7 +59,7 @@ close:
 
 5. **Manual upload flow for v0**
    - Build the store-ready zip from the committed command produced by
-     `default-aaaa.17`.
+     `default-aaaa.17`: `make extension-package`.
    - Human signs in to the Chrome Web Store Developer Dashboard.
    - Create or update the extension item.
    - Upload the generated zip.
