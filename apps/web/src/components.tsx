@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
-import { buildReplayPoints, formatDuration, sourceClass, verifyRecordChain } from "./record-utils.ts";
+import { buildTimelinePoints, formatDuration, sourceClass, verifyRecordChain } from "./record-utils.ts";
 import type { RecordApiResponse } from "./types.ts";
 
 export function DisclaimerBanner() {
@@ -55,15 +55,15 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
 }
 
-export function ReplayScrubber({ record }: { record: RecordApiResponse }) {
-  const points = useMemo(() => buildReplayPoints(record.events), [record.events]);
+export function EditTimeline({ record }: { record: RecordApiResponse }) {
+  const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
   const knownLengths = points.map((point) => point.documentLength).filter((length): length is number => length !== null);
   const maxLength = Math.max(1, ...knownLengths, record.stats.observed_final_length ?? 0);
   return (
     <section className="card">
-      <h2>Content-opaque timeline</h2>
-      <p className="muted">Structure only: observed length, edit position, operation size, source, large inserts, and long pauses. No text is reconstructed or rendered.</p>
-      <div className="timeline" role="img" aria-label="Content-opaque mutation timeline">
+      <h2>Edit timeline</h2>
+      <p className="muted">Operation shape only: observed length, edit position, operation size, source, large inserts, and long pauses. No text is stored, hashed, or reconstructed.</p>
+      <div className="timeline" role="img" aria-label="Content-opaque edit timeline">
         {points.map((point) => {
           const left = point.pos === null ? "0%" : `${Math.min(100, (point.pos / maxLength) * 100)}%`;
           const operationSize = (point.ins_len ?? 0) + (point.del_len ?? 0);
@@ -141,7 +141,7 @@ export function RecordPage({ record }: { record: RecordApiResponse }) {
       <DisclaimerBanner />
       <CaptureContextSummary record={record} />
       <QuickStatsPanel record={record} />
-      <ReplayScrubber record={record} />
+      <EditTimeline record={record} />
       <SignalList signals={record.signals} />
       <VerificationPanel record={record} />
     </main>

@@ -1,7 +1,7 @@
 import { verifyRecord, type BufferMutation } from "../../../packages/format/src/index.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
-export type ReplayPoint = {
+export type TimelinePoint = {
   seq: number;
   t: number;
   pos: number | null;
@@ -26,7 +26,7 @@ export function verifyRecordChain(record: RecordApiResponse): VerificationState 
   };
 }
 
-export function buildReplayPoints(events: BufferMutation[]): ReplayPoint[] {
+export function buildTimelinePoints(events: BufferMutation[]): TimelinePoint[] {
   let documentLength: number | null = 0;
   let previousT = 0;
   return events.map((event) => {

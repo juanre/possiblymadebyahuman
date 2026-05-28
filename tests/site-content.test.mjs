@@ -27,7 +27,7 @@ const sectionsCoveringProductPromise = [
   { file: "docs/records.md", needs: ["buffer mutation", "short_signature", "Hash chain", "Reserved route prefixes"] },
   { file: "docs/verification.md", needs: ["Re-verify chain", "hash chain", "What verification does and does not mean"] },
   { file: "docs/threat-model.md", needs: ["adversary", "Retype an AI draft", "hash chain detects any change"] },
-  { file: "docs/conformance.md", needs: ["Canonicalization vectors", "Capability accuracy", "Content-opaque public uploads", "Capture-context preview"] },
+  { file: "docs/conformance.md", needs: ["Canonicalization vectors", "Capability accuracy", "Content-opacity", "Capture-context preview"] },
   { file: "docs/routing.md", needs: ["/api/", "/docs/", "short_signature", "SITE_DIST_DIR"] },
 ];
 

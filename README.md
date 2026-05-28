@@ -1,6 +1,6 @@
 # possiblymadebyahuman
 
-`possiblymadebyahuman` records the shape of a writing process and presents it as an inspectable, hash-addressed process record.
+`possiblymadebyahuman` records the *shape* of a writing process — operation positions, lengths, timing, and source classification — and presents it as a content-opaque, hash-addressed process record. The record never contains, stores, or reconstructs the text that was written.
 
 It is **not** a human/AI detector. It does not emit humanness verdicts, confidence percentages, or certification-style badges. The allowed claim is just: this record shows the shape of an editing process.
 

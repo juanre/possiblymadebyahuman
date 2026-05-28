@@ -5,7 +5,7 @@ summary: "How a buffer mutation log becomes a hash-addressed record with a short
 
 ## The primitive: a buffer mutation
 
-Producers do not capture raw keystrokes. They capture *buffer mutations*: a single change to the underlying text buffer.
+Producers do not capture raw keystrokes. They capture *buffer mutations*: a single change to the underlying field, recorded as positions and lengths only — never as the content of the change.
 
 ```json
 {
@@ -21,9 +21,9 @@ Producers do not capture raw keystrokes. They capture *buffer mutations*: a sing
 
 - `seq` is monotonic and gap-free, starting at 0.
 - `t` is integer milliseconds since session start.
-- `pos`, `del_len`, `ins_len` are Unicode codepoint offsets and lengths — never UTF-16 units or bytes.
+- `pos`, `del_len`, `ins_len` are Unicode codepoint offsets and lengths — never UTF-16 units or bytes. Each is a number, or an explicit `null` when the producer cannot derive a value content-opaquely (e.g. multi-node HTML paste into a rich-text editor). Producers must not guess.
 - `op` is one of `insert`, `delete`, or `replace`.
-- `source` is one of `typing`, `paste`, `cut`, `drop`, `ime`, `autocomplete`, `programmatic`, or `unknown`. Producers must mark uncertain attribution as `unknown` rather than dressing it up as `typing`.
+- `source` is one of `typing`, `paste`, `cut`, `drop`, `ime`, `autocomplete`, `programmatic`, or `unknown`. Producers must mark uncertain attribution as `unknown` rather than overclaiming `typing`.
 
 ## The manifest
 

@@ -3,20 +3,20 @@ title: "Content-opaque privacy model"
 summary: "What public records store, what they deliberately do not, and what the signer controls before upload."
 ---
 
-The default mode of `possiblymadebyahuman` is **content-opaque**. Public records describe the shape of an editing process without containing, hashing, replaying, or storing the document's plaintext.
+The default mode of `possiblymadebyahuman` is **content-opaque**. Public records describe the shape of an editing process. They do not contain, store, hash, upload, or reconstruct the document's text.
 
 ## What public records contain
 
-- A canonical event log of buffer mutations: `seq`, `t`, `op`, `pos`, `del_len`, `ins_len`, and `source`.
-- A manifest with the BLAKE3 record hash, producer identity and version, declared capabilities, capture context (when provided), event count, and duration.
-- Precomputed statistics: typing/paste/cut/drop/IME/autocomplete/programmatic/unknown counts, codepoints inserted/deleted, largest atomic insert, observed process length, inter-event delay percentiles, active/idle time, and a delay histogram.
+- A canonical event log of buffer mutations: `seq`, `t`, `op`, `pos`, `del_len`, `ins_len`, and `source`. Each numeric field carries a content-opaquely derived number; when a producer cannot derive a value without retaining text, the field is explicit `null` rather than a guess.
+- A manifest with the BLAKE3 chain hash over the canonical events, producer identity and version, declared capabilities, capture context (when provided), event count, and duration.
+- Precomputed statistics: typing/paste/cut/drop/IME/autocomplete/programmatic/unknown counts, codepoints inserted/deleted when known, largest atomic insert, observed process length when known, inter-event delay percentiles, active/idle time, and a delay histogram.
 - Analyzer signals, each with explicit measures and an explanation.
 
 ## What public records do not contain
 
-- The plaintext of the document. Lengths and positions are Unicode codepoint counts, not text.
-- Per-event inserted text.
-- Hashes or fingerprints of document text, including `ins_hash`, `final_text_hash`, or document-content length/hash fields.
+- The text of the document. Producers may transiently inspect text in-memory to derive a numeric field (e.g. paste length), but the string is discarded in the same statement and never recorded.
+- Any text-content hash. The BLAKE3 chain hash is computed over the canonical *process events*, never over text.
+- Final-text hashes, full-buffer hashes, inserted-text hashes, or any other fingerprint of text content.
 - Any account, email, or directly identifying user field. There is no user system in v0.
 
 ## What producers may do transiently

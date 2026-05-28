@@ -14,7 +14,7 @@ Hugo static site for the public-facing landing page and docs.
 - The per-record standing disclaimer (rendered by the Vite record app's `DisclaimerBanner`, not by the Hugo home page).
 - Backend ingestion APIs.
 - Producer capture.
-- Detector/certificate language or humanness scoring.
+- Detector/certificate language or aggregate human/AI scoring.
 
 ## Content layout
 

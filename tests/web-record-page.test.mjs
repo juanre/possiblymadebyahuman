@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { buildReplayPoints, verifyRecordChain } from "../apps/web/src/record-utils.ts";
+import { buildTimelinePoints, verifyRecordChain } from "../apps/web/src/record-utils.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -53,18 +53,19 @@ test("RecordPage source defines required public record sections without verdict 
     "DisclaimerBanner",
     "CaptureContextSummary",
     "QuickStatsPanel",
-    "ReplayScrubber",
+    "EditTimeline",
     "SignalList",
     "SignalCard",
     "VerificationPanel",
     "ChainVerificationButton",
     "ManifestDetails",
-    "Content-opaque timeline",
+    "Edit timeline",
     "Analyzer signals as facts",
   ]) {
     assert.match(source, new RegExp(snippet));
   }
-  assert.doesNotMatch(source, /percentage-human|humanness score|certificate of humanity/i);
+  assert.doesNotMatch(source, /percentage-human|certificate of humanity|humanness/i);
+  assert.doesNotMatch(source, new RegExp(`\\b${["hon", "est"].join("")}(ly|y)?\\b`, "i"));
 });
 
 test("CaptureContextSummary renders browser.title and emacs.major_mode when present", async () => {
@@ -90,11 +91,21 @@ test("browser-side verification helper reports tampering", async () => {
   assert.ok(verification.messages.some((message) => message.includes("record_hash mismatch") || message.includes("insert op")));
 });
 
-test("content-opaque timeline points track document length and markers", async () => {
+test("edit timeline points track document length and markers", async () => {
   const record = await recordFixture();
-  const points = buildReplayPoints(record.events);
+  const points = buildTimelinePoints(record.events);
   assert.deepEqual(points.map((point) => point.documentLength), [2, 8, 7, 8]);
   assert.equal(points[1].source, "paste");
   assert.equal(points[1].ins_len, 6);
   assert.equal(points.some((point) => point.isLargeInsert), false);
+});
+
+test("edit timeline points preserve unknown process measurements", () => {
+  const points = buildTimelinePoints([
+    { seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" },
+    { seq: 1, t: 10, op: "insert", pos: null, del_len: null, ins_len: null, source: "unknown" },
+  ]);
+  assert.equal(points[1].pos, null);
+  assert.equal(points[1].documentLength, null);
+  assert.equal(points[1].isLargeInsert, false);
 });
