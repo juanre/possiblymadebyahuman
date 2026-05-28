@@ -14,6 +14,7 @@ COPY packages/storage/package.json packages/storage/package.json
 RUN npm ci
 
 FROM deps AS web-builder
+COPY packages packages
 COPY apps/web apps/web
 RUN npm run build:web
 

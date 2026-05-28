@@ -51,8 +51,9 @@ if (!assetMatch) throw new Error('record shell missing Vite JS asset');
 const assetResponse = await fetch(`${baseUrl}${assetMatch[1]}`);
 if (!assetResponse.ok) throw new Error(`Vite asset failed: ${assetResponse.status} ${await assetResponse.text()}`);
 const assetText = await assetResponse.text();
-if (!assetText.includes('Writing record')) throw new Error('Vite asset missing record shell copy');
-if (!assetText.includes('not a human/AI verdict')) throw new Error('Vite asset missing no-verdict copy');
+if (!assetText.includes('Writing record')) throw new Error('Vite asset missing record page copy');
+if (!assetText.includes('Content-blind replay')) throw new Error('Vite asset missing replay copy');
+if (!assetText.includes('not a verdict')) throw new Error('Vite asset missing no-verdict copy');
 assertNoPlaintext('Vite asset', assetText);
 
 console.log(JSON.stringify({ ok: true, short_signature: created.short_signature, record_hash: created.record_hash }));
