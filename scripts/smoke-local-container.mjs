@@ -67,6 +67,9 @@ const fetched = await checkJson(`/api/records/${created.short_signature}`, (body
 assertNoPlaintext('GET API response', JSON.stringify(fetched), true);
 if (JSON.stringify(fetched).includes(observed.token)) throw new Error('GET API response leaked token');
 
+const writeShell = await checkHtml('/write', ['possiblymadebyahuman record', 'id="root"', '/record-assets/']);
+if (!writeShell.includes('/record-assets/')) throw new Error('/write shell missing Vite assets');
+
 const recordShell = await checkHtml(`/${created.short_signature}`, ['possiblymadebyahuman record', 'id="root"', '/record-assets/']);
 const assetMatch = recordShell.match(/src="(\/record-assets\/[^\"]+\.js)"/);
 if (!assetMatch) throw new Error('record shell missing Vite JS asset');
@@ -74,6 +77,7 @@ const assetResponse = await fetch(`${baseUrl}${assetMatch[1]}`);
 if (!assetResponse.ok) throw new Error(`Vite asset failed: ${assetResponse.status} ${await assetResponse.text()}`);
 const assetText = await assetResponse.text();
 if (!assetText.includes('Writing record')) throw new Error('Vite asset missing record page copy');
+if (!assetText.includes('Write and sign')) throw new Error('Vite asset missing write page copy');
 if (!assetText.includes('Edit timeline')) throw new Error('Vite asset missing edit timeline copy');
 if (!assetText.includes('not a verdict')) throw new Error('Vite asset missing no-verdict copy');
 assertNoPlaintext('Vite asset', assetText);

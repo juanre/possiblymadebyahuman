@@ -554,7 +554,7 @@ Routing priority:
 4. Static assets for the Hugo site and Vite app -> static file serving
 5. `/<short_signature>` -> Vite React record app
 
-Reserved route prefixes/paths must not be emitted as short signatures: `api`, `docs`, `blog`, `assets`, `record-assets`, `health`, `ready`, `live`, `images`, and any future static/runtime prefix. `blog` stays reserved even though the public `/blog/*` route was dropped in `default-aaaa.25`, so the prefix stays safe to reintroduce. Implementations may use a deterministic leading-`X` rescue candidate for hashes whose base58 prefix collides with a reserved route; future routes must not reserve `x`/`X` unless the rescue strategy changes too.
+Reserved route prefixes/paths must not be emitted as short signatures: `api`, `docs`, `blog`, `write`, `assets`, `record-assets`, `health`, `ready`, `live`, `images`, and any future static/runtime prefix. `blog` stays reserved even though the public `/blog/*` route was dropped in `default-aaaa.25`, so the prefix stays safe to reintroduce. Implementations may use a deterministic leading-`X` rescue candidate for hashes whose base58 prefix collides with a reserved route; future routes must not reserve `x`/`X` unless the rescue strategy changes too.
 
 ---
 

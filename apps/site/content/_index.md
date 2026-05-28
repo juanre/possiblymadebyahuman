@@ -29,4 +29,4 @@ Oh well. It cannot be done but we are doing it anyway. You can at least assert t
 
 <p class="home-closer">Think of it as a reverse Turing test. This is where we've come to!</p>
 
-<p class="home-links"><a href="/docs/">Read the docs</a></p>
+<p class="home-links"><a href="/write">Write in the browser</a><span class="dot">·</span><a href="/docs/">Read the docs</a></p>
