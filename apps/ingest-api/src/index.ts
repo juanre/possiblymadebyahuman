@@ -63,6 +63,11 @@ export function createIngestApi(options: IngestApiOptions) {
     const parse = parseIngestInput(input);
     if (!parse.ok) return { status: 400, body: { error: "invalid_record", details: parse.errors } };
 
+    const manifestFieldErrors = validatePublicManifestFields(parse.record.manifest);
+    if (manifestFieldErrors.length > 0) {
+      return { status: 400, body: { error: "invalid_manifest", details: manifestFieldErrors } };
+    }
+
     const contentErrors = findContentBearingFields(input);
     if (contentErrors.length > 0) {
       return { status: 400, body: { error: "content_not_allowed", details: contentErrors } };
@@ -209,6 +214,29 @@ function parseIngestInput(input: unknown): ParseResult {
   const unexpected = keys.filter((key) => key !== "manifest" && key !== "events");
   if (unexpected.length > 0) return { ok: false, errors: unexpected.map((key) => `unexpected top-level field ${key}`) };
   return { ok: true, record: { manifest: input.manifest as RecordManifest, events: input.events as EventLog } };
+}
+
+const PUBLIC_MANIFEST_FIELDS = new Set([
+  "format_version",
+  "record_hash",
+  "session_id",
+  "producer",
+  "capture_context",
+  "event_count",
+  "duration_ms",
+  "final_text_hash",
+  "final_text_length",
+  "created_client_t",
+  "ingested_server_t",
+  "parent_record",
+  "attestations",
+]);
+
+function validatePublicManifestFields(manifest: unknown): string[] {
+  if (!isPlainObject(manifest)) return ["manifest must be an object"];
+  return Object.keys(manifest)
+    .filter((key) => !PUBLIC_MANIFEST_FIELDS.has(key))
+    .map((key) => `manifest contains unexpected public field ${key}`);
 }
 
 function findContentBearingFields(input: unknown): string[] {

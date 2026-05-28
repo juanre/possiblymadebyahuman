@@ -3,7 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { createIngestApi } from "../apps/ingest-api/src/index.ts";
-import { InMemoryRecordStore } from "../packages/storage/src/index.ts";
+import { InMemoryRecordStore, PostgresRecordStore } from "../packages/storage/src/index.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -30,6 +30,8 @@ test("Postgres migration defines records, stats, and analysis-results tables", a
   assert.match(migration, /create table if not exists record_stats/i);
   assert.match(migration, /create table if not exists analysis_results/i);
   assert.match(migration, /parent_record_hash\s+text null references records\(record_hash\)/i);
+  assert.match(migration, /record_hash\s+text not null references records\(record_hash\) on delete cascade/i);
+  assert.doesNotMatch(migration, /records_short_signature_idx/i);
   assert.doesNotMatch(migration, /plaintext|final_text\s+text/i);
 });
 
@@ -126,6 +128,17 @@ test("public ingest rejects plaintext/content-bearing fields", async () => {
   assert.ok(response.body.details.some((detail) => detail.includes("ins_text")));
 });
 
+test("public ingest rejects unexpected manifest fields", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  record.manifest.user_note = "this would be plaintext if accepted";
+
+  const response = await api.postRecord(record);
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, "invalid_manifest");
+  assert.ok(response.body.details.some((detail) => detail.includes("user_note")));
+});
+
 test("fetch handler exposes health, POST, and GET endpoint shapes", async () => {
   const { api } = makeApi();
   const health = await api.handleRequest(new Request("https://possiblymadebyahuman.test/api/health"));
@@ -153,4 +166,68 @@ test("fetch handler does not expose a public DELETE endpoint", async () => {
   }));
   assert.equal(response.status, 404);
   assert.deepEqual(await response.json(), { error: "not_found" });
+});
+
+test("Postgres read SQL uses explicit columns so created_at is the record timestamp", async () => {
+  const record = await fixtureRecord();
+  const queries = [];
+  const db = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return {
+        rows: [{
+          record_hash: record.manifest.record_hash,
+          short_signature: "abc123def4",
+          format_version: record.manifest.format_version,
+          session_id: record.manifest.session_id,
+          producer_id: record.manifest.producer.id,
+          producer_version: record.manifest.producer.version,
+          producer_capabilities: record.manifest.producer.capabilities,
+          capture_context: record.manifest.capture_context,
+          event_count: record.manifest.event_count,
+          duration_ms: record.manifest.duration_ms,
+          final_text_hash: record.manifest.final_text_hash,
+          final_text_length: record.manifest.final_text_length,
+          created_client_t: record.manifest.created_client_t,
+          ingested_server_t: "2026-05-28T10:00:00.000Z",
+          parent_record_hash: null,
+          attestations: record.manifest.attestations,
+          events: record.events,
+          created_at: "2026-05-28T10:00:01.000Z",
+          insert_op_count: 3,
+          delete_op_count: 1,
+          replace_op_count: 0,
+          typed_event_count: 2,
+          paste_event_count: 1,
+          cut_event_count: 1,
+          drop_event_count: 0,
+          ime_event_count: 0,
+          autocomplete_event_count: 0,
+          programmatic_event_count: 0,
+          unknown_source_count: 0,
+          inserted_codepoints_total: 9,
+          deleted_codepoints_total: 1,
+          largest_atomic_insert_codepoints: 6,
+          inter_event_delay_min_ms: 60,
+          inter_event_delay_p50_ms: 60,
+          inter_event_delay_p90_ms: 120,
+          inter_event_delay_p95_ms: 120,
+          inter_event_delay_p99_ms: 120,
+          inter_event_delay_max_ms: 120,
+          active_time_ms: 240,
+          idle_time_ms: 0,
+          long_pause_count: 0,
+          delay_histogram: [],
+          signals: [],
+        }],
+      };
+    },
+  };
+
+  const store = new PostgresRecordStore(db);
+  const stored = await store.findByRecordHash(record.manifest.record_hash);
+
+  assert.equal(stored.created_at, "2026-05-28T10:00:01.000Z");
+  assert.ok(queries[0].sql.includes("r.created_at"));
+  assert.doesNotMatch(queries[0].sql, /select\s+r\.\*,\s*s\.\*/i);
 });

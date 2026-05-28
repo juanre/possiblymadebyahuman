@@ -30,7 +30,6 @@ create table if not exists records (
   constraint records_final_text_hash_prefix check (final_text_hash like 'b3:%')
 );
 
-create index if not exists records_short_signature_idx on records(short_signature);
 create index if not exists records_parent_record_hash_idx on records(parent_record_hash);
 
 create table if not exists record_stats (
@@ -70,7 +69,7 @@ create table if not exists record_stats (
 
 create table if not exists analysis_results (
   id uuid primary key,
-  record_hash text references records(record_hash) on delete cascade,
+  record_hash text not null references records(record_hash) on delete cascade,
 
   analyzer_id text not null,
   analyzer_version text not null,

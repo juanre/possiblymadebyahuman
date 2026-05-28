@@ -249,7 +249,50 @@ export class PostgresRecordStore implements RecordStore {
 
   async findByRecordHash(recordHash: B3Hash): Promise<StoredRecord | null> {
     const result = await this.#db.query<RecordRow>(
-      `select r.*, s.*, coalesce(a.signals, '[]'::jsonb) as signals
+      `select
+         r.record_hash,
+         r.short_signature,
+         r.format_version,
+         r.session_id,
+         r.producer_id,
+         r.producer_version,
+         r.producer_capabilities,
+         r.capture_context,
+         r.event_count,
+         r.duration_ms,
+         r.final_text_hash,
+         r.final_text_length,
+         r.created_client_t,
+         r.ingested_server_t,
+         r.parent_record_hash,
+         r.attestations,
+         r.events,
+         r.created_at,
+         s.insert_op_count,
+         s.delete_op_count,
+         s.replace_op_count,
+         s.typed_event_count,
+         s.paste_event_count,
+         s.cut_event_count,
+         s.drop_event_count,
+         s.ime_event_count,
+         s.autocomplete_event_count,
+         s.programmatic_event_count,
+         s.unknown_source_count,
+         s.inserted_codepoints_total,
+         s.deleted_codepoints_total,
+         s.largest_atomic_insert_codepoints,
+         s.inter_event_delay_min_ms,
+         s.inter_event_delay_p50_ms,
+         s.inter_event_delay_p90_ms,
+         s.inter_event_delay_p95_ms,
+         s.inter_event_delay_p99_ms,
+         s.inter_event_delay_max_ms,
+         s.active_time_ms,
+         s.idle_time_ms,
+         s.long_pause_count,
+         s.delay_histogram,
+         coalesce(a.signals, '[]'::jsonb) as signals
        from records r
        join record_stats s using (record_hash)
        left join (
