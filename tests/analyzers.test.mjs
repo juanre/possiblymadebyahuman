@@ -7,11 +7,13 @@ import {
   TIMING_DISTRIBUTION_ANALYZER_ID,
   createDefaultAnalyzerRegistry,
   editTopologyAnalyzer,
+  runAnalyzers,
   runDefaultAnalyzers,
   timingDistributionAnalyzer,
 } from "../packages/analyzers/src/index.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
+const clone = (value) => JSON.parse(JSON.stringify(value));
 const measure = (signal, key) => signal.measures.find((item) => item.key === key)?.value;
 
 async function goldenRecord() {
@@ -95,6 +97,81 @@ test("edit-topology is not applicable for an empty log", async () => {
   const record = await goldenRecord();
   const signal = editTopologyAnalyzer().analyze({ events: [], manifest: record.manifest });
   assert.equal(signal.applicable, false);
+});
+
+test("edit-topology documents deletion_count and replacement_count semantics", async () => {
+  const record = await goldenRecord();
+  const events = [
+    { seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 4, source: "typing" },
+    { seq: 1, t: 10, op: "replace", pos: 1, del_len: 2, ins_len: 1, source: "typing" },
+    { seq: 2, t: 20, op: "delete", pos: 1, del_len: 1, ins_len: 0, source: "cut" },
+  ];
+  const manifest = { ...record.manifest, event_count: events.length, duration_ms: 20 };
+  const signal = editTopologyAnalyzer().analyze({ events, manifest });
+
+  assert.equal(measure(signal, "deletion_count"), 2);
+  assert.equal(measure(signal, "replacement_count"), 1);
+  assert.match(signal.explanation, /deletion_count counts every mutation that removes codepoints, including replacement events/);
+});
+
+test("runAnalyzers isolates thrown analyzer failures and keeps later analyzers running", async () => {
+  const record = await goldenRecord();
+  const signals = runAnalyzers({ events: record.events, manifest: record.manifest }, [
+    {
+      id: "buggy-analyzer",
+      version: "0.0.0",
+      analyze() {
+        throw new TypeError("boom");
+      },
+    },
+    timingDistributionAnalyzer(),
+  ]);
+
+  assert.equal(signals.length, 2);
+  assert.equal(signals[0].analyzer_id, "buggy-analyzer");
+  assert.equal(signals[0].applicable, false);
+  assert.equal(measure(signals[0], "analyzer_error"), true);
+  assert.equal(measure(signals[0], "error_type"), "TypeError");
+  assert.match(signals[0].explanation, /signal is unavailable/);
+  assert.doesNotMatch(signals[0].explanation, /likely|suspicious|AI-generated|score|verdict/i);
+  assert.equal(signals[1].analyzer_id, TIMING_DISTRIBUTION_ANALYZER_ID);
+  assert.equal(signals[1].applicable, true);
+});
+
+test("runAnalyzers gives each analyzer immutable isolated input", async () => {
+  const record = await goldenRecord();
+  const originalEvents = clone(record.events);
+  const originalManifest = clone(record.manifest);
+  const signals = runAnalyzers({ events: record.events, manifest: record.manifest }, [
+    {
+      id: "mutating-analyzer",
+      version: "0.0.0",
+      analyze(input) {
+        input.events[0].ins_len = 999;
+        return { analyzer_id: "mutating-analyzer", analyzer_version: "0.0.0", applicable: true, measures: [], explanation: "mutated" };
+      },
+    },
+    {
+      id: "observer-analyzer",
+      version: "0.0.0",
+      analyze(input) {
+        return {
+          analyzer_id: "observer-analyzer",
+          analyzer_version: "0.0.0",
+          applicable: true,
+          measures: [{ key: "first_insert_len", value: input.events[0].ins_len }],
+          explanation: "Observed input after earlier analyzer failure.",
+        };
+      },
+    },
+  ]);
+
+  assert.equal(signals[0].applicable, false);
+  assert.equal(measure(signals[0], "analyzer_error"), true);
+  assert.equal(signals[1].applicable, true);
+  assert.equal(measure(signals[1], "first_insert_len"), originalEvents[0].ins_len);
+  assert.deepEqual(record.events, originalEvents);
+  assert.deepEqual(record.manifest, originalManifest);
 });
 
 test("runDefaultAnalyzers returns descriptive signals only", async () => {

@@ -13,12 +13,13 @@ async function fixtureRecord() {
   return clone(golden.record);
 }
 
-function makeApi() {
+function makeApi(options = {}) {
   const store = new InMemoryRecordStore();
   const api = createIngestApi({
     store,
     baseUrl: "https://possiblymadebyahuman.test",
     now: () => new Date("2026-05-28T10:00:00.000Z"),
+    ...options,
   });
   return { api, store };
 }
@@ -129,6 +130,47 @@ test("stats are computed and persisted with meaningful fields", async () => {
   assert.equal(fetched.body.signals.length, 2);
   assert.equal(fetched.body.signals[0].analyzer_id, "timing-distribution");
   assert.equal(fetched.body.signals[1].analyzer_id, "edit-topology");
+});
+
+test("buggy analyzers do not block ingestion or mutate stored records", async () => {
+  const record = await fixtureRecord();
+  const originalEvents = clone(record.events);
+  const { api } = makeApi({
+    analyzers: [
+      {
+        id: "buggy-mutator",
+        version: "0.0.0",
+        analyze(input) {
+          input.events[0].ins_len = 999;
+          return { analyzer_id: "buggy-mutator", analyzer_version: "0.0.0", applicable: true, measures: [], explanation: "mutated" };
+        },
+      },
+      {
+        id: "storage-observer",
+        version: "0.0.0",
+        analyze(input) {
+          return {
+            analyzer_id: "storage-observer",
+            analyzer_version: "0.0.0",
+            applicable: true,
+            measures: [{ key: "first_insert_len", value: input.events[0].ins_len }],
+            explanation: "Observed the record shape after a failed analyzer.",
+          };
+        },
+      },
+    ],
+  });
+
+  const ingest = await api.postRecord(record);
+  assert.equal(ingest.status, 201);
+  const fetched = await api.getRecord(ingest.body.short_signature);
+  assert.equal(fetched.status, 200);
+  assert.deepEqual(fetched.body.events, originalEvents);
+  assert.deepEqual(fetched.body.signals.map((signal) => signal.analyzer_id), ["buggy-mutator", "storage-observer"]);
+  assert.equal(fetched.body.signals[0].applicable, false);
+  assert.equal(fetched.body.signals[0].measures.find((measure) => measure.key === "analyzer_error")?.value, true);
+  assert.equal(fetched.body.signals[1].measures.find((measure) => measure.key === "first_insert_len")?.value, originalEvents[0].ins_len);
+  assert.doesNotMatch(fetched.body.signals.map((signal) => signal.explanation).join(" "), /likely|suspicious|AI-generated|score|verdict/i);
 });
 
 test("duplicate ingest is immutable and idempotent", async () => {
