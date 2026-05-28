@@ -1,5 +1,6 @@
 {{ define "main" }}
-  <p class="eyebrow">{{ .Section | humanize }}</p>
+  {{ $eyebrow := or .Params.eyebrow (.Section | humanize) }}
+  {{ with $eyebrow }}<p class="eyebrow">{{ . }}</p>{{ end }}
   <h1>{{ .Title }}</h1>
   {{ with .Params.summary }}<p class="standing-claim">{{ . }}</p>{{ end }}
   {{ .Content }}

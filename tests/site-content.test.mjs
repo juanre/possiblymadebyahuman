@@ -21,7 +21,8 @@ const requiredDocPages = [
 ];
 
 const sectionsCoveringProductPromise = [
-  { file: "_index.md", needs: ["We cannot prove a human wrote it", "reverse Turing test"] },
+  { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record how you wrote it", "reverse Turing test", "/write", "/emacs/"] },
+  { file: "emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open an **empty** writing buffer", "refuses to start in a non-empty buffer"] },
   { file: "docs/product-promise.md", needs: ["No verdicts", "Process, not content", "Hash-addressed records"] },
   { file: "docs/claims.md", needs: ["We claim", "We do not claim"] },
   { file: "docs/privacy.md", needs: ["content-opaque", "capture context", "no public deletion API", "no user system"] },
@@ -58,14 +59,22 @@ test("hugo config is configured for the content-opaque landing + docs surface", 
   assert.match(hugo, /unsafe = true/);
 });
 
-test("home content explains the product and links to docs without per-record disclaimer copy", async () => {
+test("home content names the two producers, the not-a-detector framing, and no fake CWS install URL", async () => {
   const home = await read(join(contentRoot, "_index.md"));
+  // Headline + counter + closer voice.
   assert.match(home, /We cannot prove a human wrote it/);
+  assert.match(home, /But we can record how you wrote it/);
   assert.match(home, /reverse Turing test/);
-  assert.match(home, /\/docs\//);
+  // The two producers the page invites the reader to try.
+  assert.match(home, /\/write/, "home must link to /write");
+  assert.match(home, /\/emacs\//, "home must link to /emacs/");
+  // Hard rules: no blog, no per-record standing-claim block in body, no
+  // detector wording, no placeholder Chrome Web Store install URL on home
+  // (gated until .26 records the real listing).
   assert.doesNotMatch(home, /\/blog\//, "home must not link to a blog");
   assert.doesNotMatch(home, /standing-claim/, "per-record standing claim must not appear on the home page");
   assert.doesNotMatch(home, /\bdetector\s+score\b/i);
+  assert.doesNotMatch(home, /chromewebstore\.google\.com|chrome\.google\.com\/webstore/i, "home must not publish a Chrome Web Store URL before approval");
 });
 
 test("required doc pages exist and cover the SOT-mandated topics", async () => {
@@ -87,15 +96,23 @@ test("each doc page renders content-aligned content and avoids verdict language"
   }
 });
 
-test("layout base sets the candid description, provides site nav, exposes the OSS/MIT footer, and links no blog route", async () => {
+test("layout base sets the candid description, provides site nav with producer CTAs, exposes the OSS/MIT footer, and links no blog route", async () => {
   const base = await read(join(siteRoot, "layouts/_default/baseof.html"));
   assert.match(base, /content="A content-opaque writing-record service/);
   assert.match(base, /aria-label="Site sections"/);
+  // Left rail: Home + Docs.
   assert.match(base, /href="\/docs\/"/);
+  // Center CTAs: Write + Emacs.
+  assert.match(base, /class="site-nav-cta" href="\/write"/);
+  assert.match(base, /class="site-nav-cta" href="\/emacs\/"/);
+  // Right rail: GitHub.
   assert.match(base, /href="https:\/\/github\.com\/juanre\/possiblymadebyahuman"/);
   assert.match(base, /class="site-nav-repo"/);
+  // Footer.
   assert.match(base, /Open source/);
   assert.match(base, /MIT licensed/);
+  assert.match(base, /Brought to you by/);
+  assert.match(base, /href="https:\/\/aweb\.ai"/);
   assert.doesNotMatch(base, /href="\/blog\/"/);
 });
 

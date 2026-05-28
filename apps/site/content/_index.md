@@ -5,8 +5,10 @@ title: "possiblymadebyahuman"
 <p class="eyebrow">possiblymadebyahuman</p>
 
 <section class="home-hero">
-  <h1 class="home-headline">We cannot prove a human wrote it.</h1>
-  <!-- a record of editing, not a verdict. -->
+  <div class="home-hero-copy">
+    <h1 class="home-headline">We cannot prove a human wrote it.</h1>
+    <h2 class="home-counter">But we can record how you wrote it, and sign it for you.</h2>
+  </div>
   <figure class="home-figure">
     <picture>
       <source type="image/webp" srcset="/images/pmbah-figure-600.webp 600w, /images/pmbah-figure-1200.webp 1200w" sizes="(max-width: 640px) 40vw, 220px">
@@ -27,6 +29,11 @@ Oh well. It cannot be done but we are doing it anyway. You can at least assert t
 
 </div>
 
-<p class="home-closer">Think of it as a reverse Turing test. This is where we've come to!</p>
+<p class="home-pitch">You write — in your browser, on <a href="/write">/write</a>, or in <a href="/emacs/">Emacs</a>. We record the shape of your editing as you go, sign it with a hash chain, and give you a short URL anyone can check.</p>
 
-<p class="home-links"><a href="/write">Write in the browser</a><span class="dot">·</span><a href="/docs/">Read the docs</a></p>
+<p class="home-closer">Think of it as a reverse Turing test.<br>This is what it's come to!</p>
+
+<p class="home-ctas">
+  <a class="home-cta" href="/write">Write in the browser</a>
+  <a class="home-cta" href="/emacs/">Write in Emacs</a>
+</p>
