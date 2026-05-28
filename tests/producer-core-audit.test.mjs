@@ -18,6 +18,16 @@ const BANNED_SYMBOLS = [
   "plaintext",
 ];
 
+// DOM / event-payload surfaces that producer-core must never touch. The kernel
+// is consumed by both browser SW and Emacs subprocess; consumers translate raw
+// events into PendingMutation before calling appendMutation.
+const BANNED_DOM_SYMBOLS = [
+  "value.length",
+  "innerText",
+  "textContent",
+  "event.data",
+];
+
 async function walk(path) {
   const info = await stat(path).catch(() => null);
   if (!info) return [];
@@ -43,6 +53,20 @@ test("producer-core source contains no banned plaintext-handling symbols", async
   for (const file of files) {
     const body = await readFile(file, "utf8");
     for (const symbol of BANNED_SYMBOLS) {
+      if (body.includes(symbol)) {
+        hits.push(`${file}: ${symbol}`);
+      }
+    }
+  }
+  assert.equal(hits.length, 0, hits.length ? `\n${hits.join("\n")}` : "");
+});
+
+test("producer-core source never touches DOM/text APIs", async () => {
+  const files = await collectFiles(SOURCE_ROOT);
+  const hits = [];
+  for (const file of files) {
+    const body = await readFile(file, "utf8");
+    for (const symbol of BANNED_DOM_SYMBOLS) {
       if (body.includes(symbol)) {
         hits.push(`${file}: ${symbol}`);
       }

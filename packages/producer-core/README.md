@@ -86,13 +86,39 @@ Concurrency: at most one checkpoint is in flight; while one runs, further trigge
 
 Failure handling:
 
-- `transient` (network / 5xx) or `rate_limited` (429): backoff doubles 1s → 2s → … → 60s. No retry fires while idle; the next event-driven trigger re-attempts if backoff has elapsed.
+- `transient` (network / 5xx) or `rate_limited` (429): backoff is 1s on the first failure, doubles 2s → 4s → … → 60s on each subsequent failure. No retry fires while idle and no queued trailing call inside the in-flight loop is allowed to bypass `next_backoff_ms`; the next event-driven `appendMutation` re-evaluates after the window has elapsed.
 - `conflict` (409) or `client_bug` (400): observation pins to `diverged`. No further checkpoints fire; the record will be marked `partial` (or worse) by the ingest API.
 - `unavailable` (404 `observation_unavailable`, TTL-expired or token lost): observation resets to `unknown`, `observed_session_id` and `last_observed_token` are cleared, commitments dropped. The next mutation mints a fresh `observed_session_id`.
 
 Sign-time flush is explicit: callers run `await registry.flushObservation(session_id)` before `sign()` to give the server a final commitment covering the tail. `flushObservation` does not retry transient failures — the consumer is expected to read `record.observation.state` and decide whether to bind a (possibly stale) envelope on the upload anyway.
 
 Commitments retained per session are capped at `commitment_retention` (default 32) using "oldest anchor + last 31 tail," so the very first commitment stays available as an anchor while the in-memory footprint stays bounded.
+
+### Wiring a `CheckpointAdapter` — `token: null` is internal
+
+`CheckpointRequest.token` is typed `ObservedSessionToken | null`. The `null` value is an internal kernel signal that no commitment has succeeded yet for the current observed session, and the request body sent to `.39`'s `POST /api/observed-sessions/:observed_session_id/checkpoints` must omit the `token` field entirely in that case — the ingest API rejects `{ "token": null }`. A correct browser/`/write` adapter looks like:
+
+```ts
+class FetchCheckpointAdapter implements CheckpointAdapter {
+  constructor(private readonly base: string) {}
+  async postCheckpoint(request: CheckpointRequest): Promise<CheckpointResult> {
+    const body: Record<string, unknown> = {
+      event_count: request.event_count,
+      chain_tip: request.chain_tip,
+    };
+    if (request.token !== null) body.token = request.token; // do NOT serialise null
+    const url = `${this.base}/api/observed-sessions/${request.observed_session_id}/checkpoints`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return mapResponse(response);
+  }
+}
+```
+
+The bearer `token` is the only secret the kernel hands the adapter. It must never appear in logs, in `chrome.runtime.sendMessage` payloads to content scripts, in any public record, or in any analytics surface — it stays inside `SessionRecord.observation.last_observed_token` and reaches the network only through the adapter.
 
 ## Per-field identity (the load-bearing detail)
 

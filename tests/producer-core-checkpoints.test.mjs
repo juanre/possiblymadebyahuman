@@ -336,7 +336,7 @@ test("9. 5xx transient response: backoff doubles, no retry fires while idle", as
   registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
   await registry.awaitObservationIdle(session.session_id);
   let obs = registry.get(session.session_id).observation;
-  assert.equal(obs.next_backoff_ms, 2_000); // initial 1000 * 2
+  assert.equal(obs.next_backoff_ms, 1_000); // initial 1000ms on first failure
   assert.equal(obs.last_failure?.reason, "upstream unavailable");
   // Idle time passes, no further calls (no heartbeats).
   clock.advance(120_000);
@@ -360,7 +360,7 @@ test("10. 429 rate_limited bumps backoff but stays in current observation state"
   registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
   await registry.awaitObservationIdle(session.session_id);
   const obs = registry.get(session.session_id).observation;
-  assert.equal(obs.next_backoff_ms, 2_000);
+  assert.equal(obs.next_backoff_ms, 1_000);
   assert.equal(obs.state, "unknown"); // never committed; stays unknown
 });
 
@@ -515,6 +515,67 @@ test("getObservationEnvelope returns null when no checkpoint adapter is wired", 
   assert.equal(registry.getObservationEnvelope(session.session_id), null);
   const live = registry.get(session.session_id);
   assert.equal(live.observation.state, "disabled");
+});
+
+test("9b. queued events during transient failure do not bypass next_backoff_ms", async () => {
+  // Regression: an earlier draft of #runCheckpointLoop drained the queued flag
+  // even on failure, which let bursty typing produce immediate retries and
+  // bypass backoff. The loop must exit on failure so that #shouldTrigger can
+  // gate the next attempt.
+  let resolveFirst;
+  const firstPromise = new Promise((resolve) => {
+    resolveFirst = resolve;
+  });
+  let callIndex = 0;
+  const checkpoint = {
+    calls: [],
+    async postCheckpoint(request) {
+      checkpoint.calls.push(request);
+      callIndex += 1;
+      if (callIndex === 1) {
+        await firstPromise;
+        return { ok: false, kind: "transient", status: 503, reason: "down" };
+      }
+      return {
+        ok: true,
+        response: {
+          observed_session_id: request.observed_session_id ?? `obs-${callIndex}`,
+          token: `tok-${callIndex}`,
+          checkpoint_id: `cp-${callIndex}`,
+          event_count: request.event_count,
+          chain_tip: request.chain_tip,
+          server_t: new Date(1_700_000_010_000 + callIndex).toISOString(),
+          created: true,
+        },
+      };
+    },
+  };
+  const clock = mutableClock(0);
+  const { registry } = makeRegistry({ checkpoint, clock });
+  const session = newSession(registry);
+  // First event kicks call #1 which is blocked.
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  // Burst-type 50 events while call #1 is in flight — these set the queued flag.
+  appendMany(registry, session.session_id, 50, 1);
+  // Release the first call to return a transient failure.
+  resolveFirst();
+  await registry.awaitObservationIdle(session.session_id);
+  assert.equal(checkpoint.calls.length, 1, "trailing queued call must not fire while backoff is active");
+  const obs = registry.get(session.session_id).observation;
+  assert.equal(obs.next_backoff_ms, 1_000, "first transient sets backoff to initial 1000ms");
+
+  // Within the backoff window — new mutation still gated.
+  clock.advance(999);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 51, del_len: 0, ins_len: 1, source: "typing" });
+  await registry.awaitObservationIdle(session.session_id);
+  assert.equal(checkpoint.calls.length, 1, "backoff window still active");
+
+  // Past the backoff window — next mutation triggers call #2 covering the tail.
+  clock.advance(2);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 52, del_len: 0, ins_len: 1, source: "typing" });
+  await registry.awaitObservationIdle(session.session_id);
+  assert.equal(checkpoint.calls.length, 2, "backoff elapsed → catch-up call");
+  assert.equal(checkpoint.calls[1].event_count, 53, "catch-up covers everything");
 });
 
 test("snapshot round-trip clears in-flight + queued and preserves commitments", async () => {

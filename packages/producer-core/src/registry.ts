@@ -407,7 +407,10 @@ export class SessionRegistry {
       const liveRecord = this.#sessions.get(session_id);
       if (!liveRecord) return;
       this.#applyCheckpointResult(liveRecord, observed_session_id, event_count, chain_tip, result);
-      if (liveRecord.observation.state === "diverged") {
+      if (!result.ok) {
+        // Failure (transient, rate_limited, conflict, client_bug, unavailable): do not
+        // immediately drain queued work — that would bypass `next_backoff_ms`. Future
+        // appendMutation triggers will re-evaluate via #shouldTrigger.
         liveRecord.observation.in_flight = false;
         liveRecord.observation.queued = false;
         return;
@@ -459,8 +462,10 @@ export class SessionRegistry {
       return;
     }
     // transient / rate_limited: stay in current state, advance backoff
-    const previous = record.observation.next_backoff_ms || this.#backoff_initial_ms;
-    record.observation.next_backoff_ms = Math.min(this.#backoff_max_ms, previous * 2);
+    // (initial on first failure; double on each subsequent failure; capped).
+    record.observation.next_backoff_ms = record.observation.next_backoff_ms === 0
+      ? this.#backoff_initial_ms
+      : Math.min(this.#backoff_max_ms, record.observation.next_backoff_ms * 2);
     if (record.observation.last_committed_event_count === 0) {
       record.observation.state = "unknown";
     } else if (record.observation.last_committed_event_count < record.events.length) {
