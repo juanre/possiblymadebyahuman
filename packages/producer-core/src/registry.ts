@@ -266,6 +266,16 @@ export class SessionRegistry {
    * from a popup), distinct from the time-based `sweep`. Returns the removed
    * record so callers can persist a tombstone or surface a confirmation.
    * Returns `null` if the session id is not in the registry.
+   *
+   * In-flight checkpoint caveat: if a checkpoint POST was in flight at the
+   * moment of discard, the request continues on the server side and may
+   * succeed — creating an unfinalized observed-session that will be reclaimed
+   * by the ingest service's TTL sweep. The local registry's state stays
+   * consistent (the session is gone and no further checkpoints will fire) but
+   * the orphan checkpoint count on the server is non-zero until TTL. This is
+   * expected behaviour and not a leak: the orphan record contains only
+   * (observed_session_id, event_count, chain_tip) — no text or text-derived
+   * hashes are involved.
    */
   discard(session_id: SessionId): SessionRecord | null {
     const existing = this.#sessions.get(session_id);

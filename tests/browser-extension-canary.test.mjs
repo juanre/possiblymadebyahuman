@@ -121,6 +121,58 @@ test("manifest version matches the package version", async () => {
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);
 });
 
+test("content script retains no text snapshots between events", async () => {
+  // Coord's no-retention rule: producers may transiently inspect text only to
+  // derive metadata; they must not retain text in session/content-script state
+  // across event boundaries. Forbid any identifier that would name retained
+  // text (snapshots, previous/current text caches, diff-fallback helpers).
+  // Inline transient reads inside a handler scope are fine — the bans below
+  // target names that imply state across calls.
+  const body = await readFile("apps/browser-extension/src/content/capture.ts", "utf8");
+  const bannedRetainedTextSymbols = [
+    /\bpreviousText\b/,
+    /\bpreviousValue\b/,
+    /\bpreviousTextSnapshot\b/,
+    /\bcurrentText\b/,
+    /\bcurrentValue\b/,
+    /\blastText\b/,
+    /\blastValue\b/,
+    /\bsnapshotValue\b/,
+    /\bsnapshotText\b/,
+    /\bsharedPrefixLength\b/,
+    /\bsharedSuffixLength\b/,
+    /\binferTextFieldMutation\b/,
+  ];
+  for (const pattern of bannedRetainedTextSymbols) {
+    assert.doesNotMatch(body, pattern, `content/capture.ts retains text via ${pattern} — content-opacity violation`);
+  }
+});
+
+test("FieldEntry type carries no text-bearing string field", async () => {
+  // The FieldEntry struct is the per-field UI state held by the content
+  // script. It must not carry any text or text-producing closure. We grab the
+  // declared type block and assert no `string` field appears beyond the
+  // session_id union (which holds a UUID, not text).
+  const source = await readFile("apps/browser-extension/src/content/capture.ts", "utf8");
+  const fieldEntryMatch = source.match(/type\s+FieldEntry\s*=\s*\{([^}]+)\}/m);
+  assert.ok(fieldEntryMatch, "FieldEntry type declaration not found");
+  const declaration = fieldEntryMatch[1];
+  // Allowed fields are exactly element / session_id / state.
+  const expectedFields = ["element", "session_id", "state"];
+  const declaredFields = (declaration.match(/^\s*(\w+)\s*[:?]/gm) ?? [])
+    .map((line) => line.trim().replace(/[:?].*$/, ""));
+  assert.deepEqual(
+    declaredFields.sort(),
+    expectedFields.sort(),
+    `FieldEntry must declare exactly ${expectedFields.join(", ")} — extra fields invite retained-text leakage`,
+  );
+  // Defense in depth: no `string` type or "() => string" closure type on the
+  // entry. The session_id is typed `string | null` (UUID), but the bans below
+  // catch standalone string types or closure-returning-string patterns.
+  assert.doesNotMatch(declaration, /:\s*\(\s*\)\s*=>\s*string/, "FieldEntry must not declare a () => string closure");
+  assert.doesNotMatch(declaration, /text\s*\??:\s*string/i, "FieldEntry must not declare a text-bearing string");
+});
+
 test("source files outside the content script never read DOM text", async () => {
   // codepoint.ts inspects transient strings passed by the content script — it
   // does not itself touch the DOM. Its parameters happen to be named *Value,

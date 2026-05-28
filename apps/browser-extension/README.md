@@ -53,7 +53,7 @@ A new producer scope rule applies: **the extension does not snapshot existing no
 - **Non-empty field, resumable session matches** → resumed, mutations continue.
 - **Non-empty field, no resumable session** → INELIGIBLE. Badge reads `not recording (existing content)`. To start a session in this field the user must either clear the field or open a fresh one.
 
-This is deliberate: silently snapshotting pre-existing draft text would be a content-opacity violation, and silently merging an unrelated session into the field would be dishonest.
+This is deliberate: silently snapshotting pre-existing draft text would be a content-opacity violation, and silently merging an unrelated session into the field would be misleading.
 
 ## Sign / upload flow
 
@@ -62,7 +62,7 @@ This is deliberate: silently snapshotting pre-existing draft text would be a con
 3. Open the popup. The session for the focused field appears under its origin group.
 4. Click **Sign & upload**. The service worker calls `registry.flushObservation` to cover the tail of uncheckpointed events, signs the session, and POSTs `{manifest, events, observation: {observed_session_id, token}}` to the configured ingest endpoint.
 5. On success the popup shows the returned `short_signature` (the record URL), copies it to the clipboard, and removes the session.
-6. On failure the session moves to `failed_upload` with the reason visible in the popup. **Retry semantics in v0**: producer-core does not memoise the signed draft between attempts, so a true in-place retry would require re-signing a session that is no longer `active`. The popup surfaces this honestly: **Discard** the failed session and continue typing to start a fresh one, then sign again. This avoids pretending a one-click retry works when the kernel does not support it. A follow-up task may add draft memoisation if real usage shows the workflow matters.
+6. On failure the session moves to `failed_upload` with the reason visible in the popup. **Retry semantics in v0**: producer-core does not memoise the signed draft between attempts, so a true in-place retry would require re-signing a session that is no longer `active`. The popup labels this explicitly: **Discard** the failed session and continue typing to start a fresh one, then sign again. This avoids pretending a one-click retry works when the kernel does not support it. A follow-up task may add draft memoisation if real usage shows the workflow matters.
 
 ## Build, package, install
 
@@ -108,7 +108,7 @@ EXT_BASE_URL=http://localhost:8787 make extension-package
 The agent that wrote this code cannot load a real browser. The following manual checks are the responsibility of the human or reviewer who installs the unpacked extension. Each check corresponds to an acceptance criterion in the task.
 
 - **Textarea capture (Chrome).** Open `chrome://newtab`, navigate to any page with a `<textarea>`, focus it, type a few characters, observe the `recording` badge, open the popup, click **Sign & upload**, confirm a toast shows the returned `short_signature` and that the clipboard contains the record URL.
-- **Contenteditable degraded capture (Chrome).** Open a contenteditable surface (e.g. any rich-text reply box that is fundamentally a contenteditable div), focus it, type. The badge should read `recording`. Open the popup — the event count grows as you type. Sign and confirm the upload succeeds. Note: positions are reported as `unknown` for contenteditable in v0; the badge surfaces this honestly via the source-attribution column.
+- **Contenteditable degraded capture (Chrome).** Open a contenteditable surface (e.g. any rich-text reply box that is fundamentally a contenteditable div), focus it, type. The badge should read `recording`. Open the popup — the event count grows as you type. Sign and confirm the upload succeeds. Note: positions are labelled `unknown` for contenteditable in v0; the badge surfaces this explicitly via the source-attribution column.
 - **Multi-field, multi-site session isolation.** Open two textareas on site A in one tab and one textarea on site B in another tab; interleave edits; confirm three independent sessions appear in the popup grouped by origin; sign one; confirm the other two remain `active` with their event counts unchanged.
 - **Pre-existing content INELIGIBLE.** Open a page where a textarea already has some text (e.g. a draft restored by the site itself). Focus it. The badge should read `not recording (existing content)`. Clear the field; the badge should switch to `recording`.
 - **Idle gap preserved.** Type into a textarea, switch to another tab for several minutes, come back, type one more character. Sign and inspect the record: the last event's `t` should reflect the wall-clock gap, not a compressed value.

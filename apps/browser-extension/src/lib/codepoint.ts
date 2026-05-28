@@ -65,12 +65,20 @@ export function operationFor(args: { ins_len: number; del_len: number }): Operat
 }
 
 /**
- * Synchronously builds a PendingMutation from a textarea/input change. Callers
- * pass the field's current `selectionStart`/`selectionEnd` (UTF-16 from the
- * DOM) and the transient text snapshots. The snapshots are not retained.
+ * Synchronously builds a PendingMutation from a textarea/input `beforeinput`
+ * cycle. The caller reads the field's pre-change text transiently from
+ * `event.target.value` at the call site, passes it in as `text`, and the
+ * helper computes codepoint-anchored numeric metadata. Neither the caller nor
+ * this helper retains the text after the call returns — that is the content-
+ * opacity rule and it is enforced by the consumer-side static audit.
+ *
+ * If the selection facts are unreliable (start === end at the same point with
+ * no inserted text, or the inputType is structural/ambiguous) the caller is
+ * expected to degrade explicitly and emit nulls — there is no diff fallback,
+ * because a diff fallback would require retaining text between events.
  */
 export function buildTextFieldMutation(args: {
-  previousText: string;
+  text: string;
   selectionStartUtf16: number;
   selectionEndUtf16: number;
   insertedText: string;
@@ -79,9 +87,9 @@ export function buildTextFieldMutation(args: {
   const ins_len = codepointCount(args.insertedText);
   const del_start = Math.min(args.selectionStartUtf16, args.selectionEndUtf16);
   const del_end = Math.max(args.selectionStartUtf16, args.selectionEndUtf16);
-  const deletedSlice = args.previousText.slice(del_start, del_end);
+  const deletedSlice = args.text.slice(del_start, del_end);
   const del_len = codepointCount(deletedSlice);
-  const pos = codepointOffsetOf(args.previousText, del_start);
+  const pos = codepointOffsetOf(args.text, del_start);
   return {
     op: operationFor({ ins_len, del_len }),
     pos,

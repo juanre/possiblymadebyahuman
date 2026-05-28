@@ -119,7 +119,7 @@ export class BackgroundDispatcher {
     // v0 retry is opt-in via discard + fresh start. Producer-core does not
     // memoize the signed draft, so a true in-place retry would require
     // re-signing — but the session is no longer `active` once it has reached
-    // `failed_upload`. The popup surfaces this honestly as "Discard and
+    // `failed_upload`. The popup surfaces this explicitly as "Discard and
     // continue typing to start a fresh session" rather than pretending a
     // one-click retry works.
     return { kind: "retry_result", result: { kind: "failed", reason: "retry_requires_discard_and_resign" } };

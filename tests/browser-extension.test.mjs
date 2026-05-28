@@ -130,7 +130,7 @@ test("codepoint: sourceFromInputType maps to format enum, unknown when ambiguous
 test("codepoint: buildTextFieldMutation computes codepoint pos/del/ins from selection", () => {
   // Insert "x" at offset 2 of "abc": no selection, caret at index 2.
   let m = buildTextFieldMutation({
-    previousText: "abc",
+    text: "abc",
     selectionStartUtf16: 2,
     selectionEndUtf16: 2,
     insertedText: "x",
@@ -139,7 +139,7 @@ test("codepoint: buildTextFieldMutation computes codepoint pos/del/ins from sele
   assert.deepEqual(m, { op: "insert", pos: 2, del_len: 0, ins_len: 1, source: "typing" });
   // Replace selected "bc" with "yy".
   m = buildTextFieldMutation({
-    previousText: "abc",
+    text: "abc",
     selectionStartUtf16: 1,
     selectionEndUtf16: 3,
     insertedText: "yy",
@@ -148,13 +148,46 @@ test("codepoint: buildTextFieldMutation computes codepoint pos/del/ins from sele
   assert.deepEqual(m, { op: "replace", pos: 1, del_len: 2, ins_len: 2, source: "typing" });
   // Delete one char via backspace at end of "abc".
   m = buildTextFieldMutation({
-    previousText: "abc",
+    text: "abc",
     selectionStartUtf16: 2,
     selectionEndUtf16: 3,
     insertedText: "",
     inputType: "deleteContentBackward",
   });
   assert.deepEqual(m, { op: "delete", pos: 2, del_len: 1, ins_len: 0, source: "typing" });
+});
+
+test("codepoint: buildTextFieldMutation handles surrogate-pair text without retaining the snapshot", () => {
+  // Insert "a" after "🙂" in "🙂xyz". UTF-16 caret index 2 (after the emoji),
+  // which is codepoint 1. The pre-change text is passed as a parameter and
+  // dies with the call; tests do not (and the helper does not) cache it.
+  const m = buildTextFieldMutation({
+    text: "🙂xyz",
+    selectionStartUtf16: 2,
+    selectionEndUtf16: 2,
+    insertedText: "a",
+    inputType: "insertText",
+  });
+  assert.deepEqual(m, { op: "insert", pos: 1, del_len: 0, ins_len: 1, source: "typing" });
+});
+
+test("content-script ambiguous fallback emits null pos/del_len rather than retain text", async () => {
+  const module = await import("../apps/browser-extension/src/content/capture.ts");
+  const { ambiguousMutation } = module.__test;
+  assert.deepEqual(ambiguousMutation("", null), {
+    op: "delete",
+    pos: null,
+    del_len: null,
+    ins_len: 0,
+    source: "unknown",
+  });
+  assert.deepEqual(ambiguousMutation("formatting", "formatBold"), {
+    op: "insert",
+    pos: null,
+    del_len: null,
+    ins_len: 10,
+    source: "unknown",
+  });
 });
 
 test("policy: fresh empty field is eligible; non-empty without resumable session is INELIGIBLE", () => {

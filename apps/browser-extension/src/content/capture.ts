@@ -1,6 +1,7 @@
-import { buildTextFieldMutation } from "../lib/codepoint.ts";
+import { codepointCount, buildTextFieldMutation, sourceFromInputType } from "../lib/codepoint.ts";
 import { extractDescriptor, isEligibleTag } from "../lib/descriptor.ts";
 import type { BackgroundResponse, ContentToBackground } from "../lib/messages.ts";
+import type { PendingMutation } from "../../../../packages/producer-core/src/index.ts";
 
 declare const chrome: {
   runtime: {
@@ -9,16 +10,19 @@ declare const chrome: {
   };
 };
 
-const BADGE_ATTR = "data-pmbah-badge";
-const SESSION_ATTR = "data-pmbah-session";
-const STATE_ATTR = "data-pmbah-state";
-
+// Per-field UI state. There are no string fields here — by content-opacity
+// rule the content script must not retain text across input events. Every
+// beforeinput cycle inspects the field's text once inside the handler scope
+// and discards the reference when the handler returns.
 type FieldEntry = {
   element: HTMLElement;
   session_id: string | null;
-  previousTextSnapshot: () => string;
   state: "pending" | "recording" | "ineligible" | "signed" | "error";
 };
+
+const BADGE_ATTR = "data-pmbah-badge";
+const SESSION_ATTR = "data-pmbah-session";
+const STATE_ATTR = "data-pmbah-state";
 
 const fields = new WeakMap<HTMLElement, FieldEntry>();
 
@@ -61,12 +65,11 @@ function parentSlice(element: HTMLElement | null): ParentSliceLike | null {
   };
 }
 
+// One transient eligibility-time read of the field's text length. The string
+// reference dies when this function returns; only the boolean leaves the call.
 function isFieldEmpty(element: HTMLElement): boolean {
   if (isTextField(element)) return element.value.length === 0;
-  if (isContentEditable(element)) {
-    const text = element.textContent ?? "";
-    return text.trim().length === 0;
-  }
+  if (isContentEditable(element)) return (element.textContent ?? "").trim().length === 0;
   return true;
 }
 
@@ -110,8 +113,7 @@ function positionBadge(element: HTMLElement, badge: HTMLElement): void {
 function setBadge(element: HTMLElement, state: FieldEntry["state"], note?: string): void {
   const badge = ensureBadge(element);
   element.setAttribute(STATE_ATTR, state);
-  const label = stateLabel(state, note);
-  badge.textContent = label;
+  badge.textContent = stateLabel(state, note);
   badge.style.background = badgeColor(state);
   positionBadge(element, badge);
 }
@@ -147,12 +149,7 @@ async function registerField(element: HTMLElement): Promise<void> {
   });
   const empty = isFieldEmpty(element);
   setBadge(element, "pending");
-  const entry: FieldEntry = {
-    element,
-    session_id: null,
-    state: "pending",
-    previousTextSnapshot: () => snapshotValue(element),
-  };
+  const entry: FieldEntry = { element, session_id: null, state: "pending" };
   fields.set(element, entry);
 
   const response = await chrome.runtime.sendMessage({
@@ -182,147 +179,85 @@ async function registerField(element: HTMLElement): Promise<void> {
   entry.state = "recording";
 }
 
-function snapshotValue(element: HTMLElement): string {
-  if (isTextField(element)) return element.value;
-  if (isContentEditable(element)) return element.textContent ?? "";
-  return "";
-}
-
-function selectionRangeFor(element: HTMLElement): { start: number; end: number } {
-  if (isTextField(element)) {
-    return {
-      start: element.selectionStart ?? 0,
-      end: element.selectionEnd ?? 0,
-    };
-  }
-  // ContentEditable: degraded — we lack a reliable codepoint anchor without
-  // walking the DOM tree, so for v0 we surface mutations with pos=null,
-  // ins_len/del_len from event.data length only. The downstream stats label
-  // these as "unknown" positions, not zeros that lie.
-  return { start: 0, end: 0 };
-}
-
-async function handleInput(event: InputEvent): Promise<void> {
-  const target = event.target as HTMLElement | null;
-  if (!target) return;
+/**
+ * beforeinput is the canonical content-opaque capture point: it fires BEFORE
+ * the browser applies the change, so `target.value`, `target.selectionStart`,
+ * and `target.selectionEnd` reflect the pre-change state. We read those three
+ * values inline, compute codepoint-anchored numeric metadata via
+ * `buildTextFieldMutation`, and the string references die when this handler
+ * returns. No text crosses event boundaries.
+ *
+ * If the selection is empty AND there is no inserted text AND no inputType is
+ * provided, the cycle is ambiguous (e.g. a programmatic format change) and we
+ * emit nulls rather than retain text to disambiguate.
+ */
+function handleBeforeInput(event: InputEvent): void {
+  const target = event.target as Element | null;
+  if (!target || !(target instanceof HTMLElement)) return;
   const entry = fields.get(target);
   if (!entry || entry.state !== "recording" || !entry.session_id) return;
   const inputType = event.inputType ?? null;
   const insertedText = event.data ?? "";
+
   if (isTextField(target)) {
-    const previousText = entry.previousTextSnapshot();
-    const range = selectionRangeFor(target);
-    // For deleting events the selection range here is AFTER the delete already
-    // applied; the previousTextSnapshot still holds the pre-delete state
-    // because it is captured on the prior input cycle. We reconstruct the
-    // deleted span from the difference between previousText.length and
-    // current target.value.length when the explicit range is collapsed.
-    const currentText = target.value;
-    const mutation = inferTextFieldMutation({
-      previousText,
-      currentText,
-      selectionStartUtf16: range.start,
-      selectionEndUtf16: range.end,
+    const start = target.selectionStart ?? 0;
+    const end = target.selectionEnd ?? 0;
+    if (insertedText.length === 0 && start === end && !inputType) {
+      sendMutation(entry, ambiguousMutation(insertedText, inputType));
+      return;
+    }
+    const mutation = buildTextFieldMutation({
+      text: target.value,
+      selectionStartUtf16: start,
+      selectionEndUtf16: end,
       insertedText,
       inputType,
     });
-    entry.previousTextSnapshot = () => currentText;
-    const response = await chrome.runtime.sendMessage({
-      kind: "append_mutation",
-      session_id: entry.session_id,
-      mutation,
-    });
-    if (response.kind === "error") {
-      setBadge(target, "error", response.reason);
-      entry.state = "error";
-    }
+    sendMutation(entry, mutation);
     return;
   }
-  // ContentEditable degraded path — emit a mutation with null position and
-  // best-effort codepoint counts; pos is null to honour the spec rather than
-  // fabricate an offset.
-  const mutation = {
-    op: insertedText.length > 0 ? "insert" as const : "delete" as const,
+
+  // ContentEditable: degraded. Emit codepoint-counted ins_len from event.data
+  // (the only reliable numeric we have without walking the DOM tree), and
+  // leave pos and del_len as null rather than fabricate an offset.
+  sendMutation(entry, {
+    op: insertedText.length > 0 ? "insert" : "delete",
     pos: null,
     del_len: null,
-    ins_len: Array.from(insertedText).length,
-    source: ((): import("../../../../packages/format/src/index.ts").Source => {
-      const t = inputType ?? "";
-      if (t === "insertFromPaste") return "paste";
-      if (t === "insertText" || t === "insertParagraph" || t === "insertLineBreak") return "typing";
-      return "unknown";
-    })(),
+    ins_len: codepointCount(insertedText),
+    source: sourceFromInputType(inputType),
+  });
+}
+
+function ambiguousMutation(insertedText: string, inputType: string | null): PendingMutation {
+  return {
+    op: insertedText.length > 0 ? "insert" : "delete",
+    pos: null,
+    del_len: null,
+    ins_len: codepointCount(insertedText),
+    source: sourceFromInputType(inputType),
   };
+}
+
+async function sendMutation(entry: FieldEntry, mutation: PendingMutation): Promise<void> {
+  if (!entry.session_id) return;
   const response = await chrome.runtime.sendMessage({
     kind: "append_mutation",
     session_id: entry.session_id,
     mutation,
   });
   if (response.kind === "error") {
-    setBadge(target, "error", response.reason);
+    setBadge(entry.element, "error", response.reason);
     entry.state = "error";
   }
-}
-
-export function inferTextFieldMutation(args: {
-  previousText: string;
-  currentText: string;
-  selectionStartUtf16: number;
-  selectionEndUtf16: number;
-  insertedText: string;
-  inputType: string | null;
-}) {
-  const lengthDelta = args.currentText.length - args.previousText.length;
-  // If the inserted text plus the deleted range explain the diff, trust the
-  // explicit numbers from the InputEvent. Otherwise fall back to inferring
-  // the deletion span by comparing previousText and currentText at the
-  // caret. Both paths inspect strings transiently and discard them.
-  if (lengthDelta === args.insertedText.length - (args.selectionEndUtf16 - args.selectionStartUtf16)) {
-    return buildTextFieldMutation({
-      previousText: args.previousText,
-      selectionStartUtf16: args.selectionStartUtf16,
-      selectionEndUtf16: args.selectionEndUtf16,
-      insertedText: args.insertedText,
-      inputType: args.inputType,
-    });
-  }
-  // Diff-fallback: derive deletion span by comparing the two snapshots around
-  // the caret. Safe because pos/del_len come out as codepoint counts only.
-  const commonPrefix = sharedPrefixLength(args.previousText, args.currentText);
-  const commonSuffix = sharedSuffixLength(args.previousText, args.currentText, commonPrefix);
-  const del_end_utf16 = args.previousText.length - commonSuffix;
-  const del_start_utf16 = commonPrefix;
-  return buildTextFieldMutation({
-    previousText: args.previousText,
-    selectionStartUtf16: del_start_utf16,
-    selectionEndUtf16: del_end_utf16,
-    insertedText: args.currentText.slice(commonPrefix, args.currentText.length - commonSuffix),
-    inputType: args.inputType,
-  });
-}
-
-function sharedPrefixLength(a: string, b: string): number {
-  const len = Math.min(a.length, b.length);
-  let i = 0;
-  while (i < len && a.charCodeAt(i) === b.charCodeAt(i)) i += 1;
-  return i;
-}
-
-function sharedSuffixLength(a: string, b: string, prefix: number): number {
-  const maxA = a.length - prefix;
-  const maxB = b.length - prefix;
-  const len = Math.min(maxA, maxB);
-  let i = 0;
-  while (i < len && a.charCodeAt(a.length - 1 - i) === b.charCodeAt(b.length - 1 - i)) i += 1;
-  return i;
 }
 
 function attachListeners(element: HTMLElement): void {
   element.addEventListener("focus", () => {
     void registerField(element);
   });
-  element.addEventListener("input", (event) => {
-    void handleInput(event as InputEvent);
+  element.addEventListener("beforeinput", (event) => {
+    handleBeforeInput(event as InputEvent);
   });
 }
 
@@ -349,10 +284,8 @@ function start(): void {
 start();
 
 export const __test = {
-  inferTextFieldMutation,
-  sharedPrefixLength,
-  sharedSuffixLength,
   isEligibleElement,
+  ambiguousMutation,
 };
 
 export const CONTENT_ENTRYPOINT = "capture";

@@ -9,6 +9,9 @@ const USER_FACING_TARGETS = [
   "apps/site/layouts/_default/baseof.html",
   "apps/site/content",
   "apps/web/src",
+  "apps/browser-extension/README.md",
+  "apps/browser-extension/src/popup/popup.html",
+  "apps/browser-extension/src/popup/popup.ts",
 ];
 
 const TEXTLIKE = new Set([".md", ".html", ".tsx", ".ts", ".jsx", ".js"]);
