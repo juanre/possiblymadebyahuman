@@ -22,8 +22,10 @@ export function CaptureContextSummary({ record }: { record: RecordApiResponse })
         {context.surface && <><dt>Surface</dt><dd>{String(context.surface)}</dd></>}
         {context.label && <><dt>Label</dt><dd>{String(context.label)}</dd></>}
         {context.browser?.url && <><dt>URL</dt><dd>{context.browser.url}</dd></>}
+        {context.browser?.title && <><dt>Page title</dt><dd>{context.browser.title}</dd></>}
         {context.browser?.field_kind && <><dt>Field</dt><dd>{context.browser.field_kind}</dd></>}
         {context.emacs?.buffer_name && <><dt>Buffer</dt><dd>{context.emacs.buffer_name}</dd></>}
+        {context.emacs?.major_mode && <><dt>Major mode</dt><dd>{context.emacs.major_mode}</dd></>}
       </dl>
     </section>
   );

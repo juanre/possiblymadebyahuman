@@ -1,4 +1,4 @@
-.PHONY: help install check test typecheck dev-api dev-web dev-site docker-build local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-migrate prod-container-down clean
+.PHONY: help install check test typecheck dev-api dev-web dev-site docker-build local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-migrate prod-container-down clean test-web-browser
 
 ENV_FILE ?= .env.local-container
 PROD_ENV_FILE ?= .env.localprod
@@ -27,6 +27,7 @@ help:
 	@echo "  make prod-container        Run prod-like container against external Neon DATABASE_URL"
 	@echo "  make prod-container-migrate Run migrations against external Neon DATABASE_URL"
 	@echo "  make prod-container-down   Stop prod-like stack"
+	@echo "  make test-web-browser      Build web app and run Playwright smoke for the record page"
 	@echo "  make clean                 Remove safe local build/test output"
 	@echo ""
 	@echo "Ports: app=$${PMBAH_PORT:-$(PMBAH_PORT)} postgres=$${POSTGRES_PORT:-5432}"
@@ -102,6 +103,10 @@ prod-container-migrate:
 prod-container-down:
 	@env_file="$(PROD_ENV_FILE)"; if [ ! -f "$$env_file" ]; then env_file=.env.localprod.example; fi; \
 	IMAGE=$(IMAGE) ENV_FILE="$$env_file" docker compose --env-file "$$env_file" -f docker-compose.prod.yml -p pmbah-prod down
+
+test-web-browser:
+	npm run build:web
+	npm run test:web-browser
 
 clean:
 	rm -rf apps/web/dist apps/site/public coverage

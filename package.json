@@ -15,9 +15,11 @@
     "build:web": "npm --workspace @possiblymadebyahuman/web run build",
     "migrate": "node apps/ingest-api/scripts/migrate.mjs",
     "serve": "node apps/ingest-api/src/server.ts",
-    "smoke:local-container": "node scripts/smoke-local-container.mjs"
+    "smoke:local-container": "node scripts/smoke-local-container.mjs",
+    "test:web-browser": "playwright test --config playwright.config.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/pg": "^8.20.0",
     "typescript": "^5.8.3"
   },

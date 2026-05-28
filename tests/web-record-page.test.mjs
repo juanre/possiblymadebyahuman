@@ -67,6 +67,14 @@ test("RecordPage source defines required public record sections without verdict 
   assert.doesNotMatch(source, /percentage-human|humanness score|certificate of humanity/i);
 });
 
+test("CaptureContextSummary renders browser.title and emacs.major_mode when present", async () => {
+  const source = await readFile("apps/web/src/components.tsx", "utf8");
+  assert.match(source, /context\.browser\?\.title/);
+  assert.match(source, /Page title/);
+  assert.match(source, /context\.emacs\?\.major_mode/);
+  assert.match(source, /Major mode/);
+});
+
 test("browser-side verification helper recomputes the hash chain", async () => {
   const record = await recordFixture();
   const verification = verifyRecordChain(record);
