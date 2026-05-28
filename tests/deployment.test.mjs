@@ -121,6 +121,31 @@ test("release docs cover Render, GHCR, tags, Neon, and startup migrations", asyn
   }
 });
 
+test("Chrome Web Store prep docs define human checklist without fake install links", async () => {
+  const readme = await read("README.md");
+  assert.match(readme, /docs\/chrome-web-store-prep\.md/);
+  assert.match(readme, /do not publish placeholder or "coming soon" install links/);
+
+  const prep = await read("docs/chrome-web-store-prep.md");
+  for (const phrase of [
+    "Chrome Web Store Developer account",
+    "public or unlisted install link",
+    "Extension ID: `TBD",
+    "Chrome Web Store listing URL: `TBD",
+    "Privacy policy URL",
+    "Draft Chrome Web Store listing copy",
+    "Draft privacy and data-use disclosure answers",
+    "Draft permission-justification template",
+    "TBD by default-aaaa.7",
+    "No fake, placeholder, or \"coming soon\" install URL",
+    "not an AI detector",
+    "do not contain your document plaintext",
+  ]) {
+    assert.match(prep, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.doesNotMatch(prep, /chromewebstore\.google\.com\/detail\/[a-z0-9_-]+/i);
+});
+
 test("SOT documents M2.x deployment and reserved routes", async () => {
   const sot = await read("docs/sot.md");
   assert.match(sot, /single Docker container/);
