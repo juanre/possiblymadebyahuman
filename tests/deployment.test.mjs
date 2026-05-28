@@ -43,8 +43,10 @@ test("Makefile is the primary management surface", async () => {
     "docker-build",
     "release-build-image",
     "release-build-image-nocache",
+    "local-container-build",
     "local-container",
     "local-container-down",
+    "local-container-reset",
     "local-container-logs",
     "local-container-test",
     "migrate",
@@ -59,6 +61,16 @@ test("Makefile is the primary management surface", async () => {
   ]) {
     assert.match(makefile, new RegExp(`^${target}:`, "m"));
   }
+});
+
+test("local-container builds the image tag that compose runs", async () => {
+  const makefile = await read("Makefile");
+  assert.match(makefile, /^LOCAL_IMAGE \?= possiblymadebyahuman-local:latest$/m);
+  assert.match(makefile, /^local-container-build:\n\t\$\(MAKE\) docker-build IMAGE=\$\(LOCAL_IMAGE\)$/m);
+  assert.match(makefile, /^local-container: local-container-build$/m);
+  assert.match(makefile, /^LOCAL_COMPOSE = .*LOCAL_IMAGE=\$\(LOCAL_IMAGE\)/m);
+  assert.match(makefile, /^local-container-reset:/m);
+  assert.match(makefile, /docker compose --env-file "\$\$env_file" -f docker-compose\.local-container\.yml -p pmbah-local down -v/);
 });
 
 test("deployment examples do not commit secrets and docker ignores local artifacts", async () => {

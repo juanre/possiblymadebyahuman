@@ -32,6 +32,7 @@ make docker-build
 make local-container
 make local-container-test  # full local Docker+Postgres HTTP e2e journey
 make local-container-down
+make local-container-reset # stop local stack and remove the local Postgres volume
 make build-site             # build the Hugo landing/docs into apps/site/public
 make dev-site               # run the Hugo dev server while editing the site (override port with SITE_PORT=...)
 make extension-build        # build the Chrome/Chromium extension into apps/browser-extension/dist

@@ -1,4 +1,4 @@
-.PHONY: help install check test typecheck dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container local-container-down local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser build-site release-ready ship-tag
+.PHONY: help install check test typecheck dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container-build local-container local-container-down local-container-reset local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser build-site release-ready ship-tag
 
 ENV_FILE ?= .env.local-container
 PROD_ENV_FILE ?= .env.localprod
@@ -30,6 +30,7 @@ help:
 	@echo "  make local-container-test  Run full local Docker+Postgres HTTP e2e journey"
 	@echo "  make local-container-logs  Tail local container logs"
 	@echo "  make local-container-down  Stop local stack"
+	@echo "  make local-container-reset Stop local stack and remove the local Postgres volume"
 	@echo "  make migrate               Run checked, ordered migrations against DATABASE_URL"
 	@echo "  make prod-container        Run prod-like container against external Neon DATABASE_URL"
 	@echo "  make prod-container-pull   Pull configured PROD_IMAGE when it is remote"
@@ -75,6 +76,9 @@ extension-package:
 docker-build:
 	docker build --platform $(DOCKER_PLATFORM) -t $(IMAGE) .
 
+local-container-build:
+	$(MAKE) docker-build IMAGE=$(LOCAL_IMAGE)
+
 release-build-image:
 	@echo "Building production release image $(RELEASE_IMAGE):latest for $(RELEASE_PLATFORM)..."
 	docker build --platform $(RELEASE_PLATFORM) -t $(RELEASE_IMAGE):latest .
@@ -83,7 +87,7 @@ release-build-image-nocache:
 	@echo "Building production release image without cache $(RELEASE_IMAGE):latest for $(RELEASE_PLATFORM)..."
 	docker build --platform $(RELEASE_PLATFORM) --no-cache -t $(RELEASE_IMAGE):latest .
 
-local-container: docker-build
+local-container: local-container-build
 	@test -f "$(ENV_FILE)" || (echo "Missing $(ENV_FILE). Copy .env.local-container.example first." && exit 1)
 	@echo "Starting local Postgres..."
 	$(LOCAL_COMPOSE) up -d postgres
@@ -112,6 +116,10 @@ local-container-logs:
 local-container-down:
 	@env_file="$(ENV_FILE)"; if [ ! -f "$$env_file" ]; then env_file=.env.local-container.example; fi; \
 	ENV_FILE="$$env_file" LOCAL_IMAGE=$(LOCAL_IMAGE) docker compose --env-file "$$env_file" -f docker-compose.local-container.yml -p pmbah-local down
+
+local-container-reset:
+	@env_file="$(ENV_FILE)"; if [ ! -f "$$env_file" ]; then env_file=.env.local-container.example; fi; \
+	ENV_FILE="$$env_file" LOCAL_IMAGE=$(LOCAL_IMAGE) docker compose --env-file "$$env_file" -f docker-compose.local-container.yml -p pmbah-local down -v
 
 migrate:
 	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is required" && exit 1)

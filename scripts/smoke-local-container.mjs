@@ -1,10 +1,14 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
-import { computeEventHashChain } from '../packages/format/src/index.ts';
+import { computeEventHashChain, computeRecordHash } from '../packages/format/src/index.ts';
 
 const baseUrl = process.env.SMOKE_BASE_URL ?? `http://localhost:${process.env.PMBAH_PORT ?? 8000}`;
 const [golden] = JSON.parse(await readFile(new URL('../packages/conformance/vectors/golden-records.json', import.meta.url), 'utf8'));
-const record = golden.record;
+const sessionId = randomUUID();
+const record = structuredClone(golden.record);
+record.manifest.session_id = sessionId;
+record.manifest.record_hash = computeRecordHash(record.events, sessionId, record.manifest.format_version);
 const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
 const plaintextFixtures = [' there', 'Hi ther!'];
 const shortPlaintextJsonFixture = '"Hi"';
@@ -77,9 +81,11 @@ const assetResponse = await fetch(`${baseUrl}${assetMatch[1]}`);
 if (!assetResponse.ok) throw new Error(`Vite asset failed: ${assetResponse.status} ${await assetResponse.text()}`);
 const assetText = await assetResponse.text();
 if (!assetText.includes('Writing record')) throw new Error('Vite asset missing record page copy');
-if (!assetText.includes('Write and sign')) throw new Error('Vite asset missing write page copy');
+if (!assetText.includes('Writing canvas')) throw new Error('Vite asset missing /write canvas affordance');
+if (!assetText.includes('Drafting status')) throw new Error('Vite asset missing /write status affordance');
 if (!assetText.includes('Edit timeline')) throw new Error('Vite asset missing edit timeline copy');
-if (!assetText.includes('not a verdict')) throw new Error('Vite asset missing no-verdict copy');
+if (!assetText.includes('signed writing record')) throw new Error('Vite asset missing signed-record copy');
+if (!assetText.includes('not a human/AI score')) throw new Error('Vite asset missing non-score copy');
 assertNoPlaintext('Vite asset', assetText);
 
 console.log(JSON.stringify({ ok: true, short_signature: created.short_signature, record_hash: created.record_hash }));
