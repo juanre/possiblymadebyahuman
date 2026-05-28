@@ -148,6 +148,124 @@ test("content script retains no text snapshots between events", async () => {
   }
 });
 
+test("content-script-reachable BackgroundResponse never carries the observation bearer token", async () => {
+  // Final-review blocker fix (.43). The content script forwards only the
+  // register_field and append_mutation message kinds to the service worker.
+  // The responses to those messages — plus a generic `error` reply — are the
+  // ONLY BackgroundResponse shapes a content-script context can observe. None
+  // of them may carry `observation.last_observed_token` (the bearer token
+  // used to authenticate server-observed checkpoints) or any string equal to
+  // the token's literal value. The popup is a separate, extension-privileged
+  // context and may keep the full SessionRecord for v0.
+  const { BackgroundDispatcher } = await import("../apps/browser-extension/src/lib/dispatcher.ts");
+  const { CONTENT_SCRIPT_REACHABLE_RESPONSE_KINDS } = await import("../apps/browser-extension/src/lib/messages.ts");
+
+  const KNOWN_TOKEN_LITERAL = "secret-canary-bearer-token-DO-NOT-LEAK";
+  const clock = { now: () => 1_700_000_000_000 };
+  let counter = 0;
+  const uuid = { uuid: () => `00000000-0000-4000-8000-${(counter += 1).toString(16).padStart(12, "0")}` };
+  const storage = (() => {
+    let snap = [];
+    return {
+      async read() { return snap.map((s) => structuredClone(s)); },
+      async write(next) { snap = next.map((s) => structuredClone(s)); },
+    };
+  })();
+  const checkpoint = {
+    async postCheckpoint(req) {
+      return {
+        ok: true,
+        response: {
+          observed_session_id: req.observed_session_id,
+          token: KNOWN_TOKEN_LITERAL,
+          checkpoint_id: "cp-1",
+          event_count: req.event_count,
+          chain_tip: req.chain_tip,
+          server_t: "2026-05-28T20:30:00.000Z",
+          created: true,
+        },
+      };
+    },
+  };
+  const upload = { async postRecord() { throw new Error("unused"); } };
+  const producer = { id: "browser-extension", version: "0.1.0", capabilities: ["timing", "source_attribution"] };
+
+  const dispatcher = new BackgroundDispatcher({ clock, uuid, storage, upload, checkpoint, producer });
+
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "x",
+    descriptor: {
+      tag_name: "TEXTAREA", field_kind: "textarea",
+      name: "reply", id: "reply", aria_label: null, nearest_form_id: null,
+      dom_signature: "sig-1", index_among_similar: 0,
+    },
+    field_is_empty: true,
+  });
+
+  const session_id = reg.result.session_id;
+  // First mutation triggers an immediate checkpoint that populates the bearer token.
+  const append1 = await dispatcher.handle({
+    kind: "append_mutation",
+    session_id,
+    mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" },
+  });
+  await dispatcher.registry.awaitObservationIdle(session_id);
+  // Sanity check: the bearer token IS stored locally on the session record.
+  const live = dispatcher.registry.get(session_id);
+  assert.equal(live?.observation.last_observed_token, KNOWN_TOKEN_LITERAL, "test setup: token must be present locally before assertions");
+
+  // A second append happens AFTER the checkpoint has committed; this is the
+  // canonical regression case — the token is set, and the response must NOT carry it.
+  const append2 = await dispatcher.handle({
+    kind: "append_mutation",
+    session_id,
+    mutation: { op: "insert", pos: 1, del_len: 0, ins_len: 1, source: "typing" },
+  });
+  const errorResponse = await dispatcher.handle({
+    kind: "append_mutation",
+    session_id: "00000000-0000-4000-8000-deadbeefdead",
+    mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" },
+  });
+
+  const responses = [reg, append1, append2, errorResponse];
+  for (const response of responses) {
+    assert.ok(
+      CONTENT_SCRIPT_REACHABLE_RESPONSE_KINDS.includes(response.kind),
+      `test produced an unexpected response kind ${response.kind} — update the canary if you added a new content-script-reachable kind`,
+    );
+    assertNoTokenLeak(response, KNOWN_TOKEN_LITERAL);
+  }
+});
+
+function assertNoTokenLeak(value, tokenLiteral, path = "$") {
+  if (value === null || value === undefined) return;
+  if (typeof value === "string") {
+    assert.ok(
+      !value.includes(tokenLiteral),
+      `bearer token literal leaked at ${path}: "${value}"`,
+    );
+    return;
+  }
+  if (typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => assertNoTokenLeak(entry, tokenLiteral, `${path}[${index}]`));
+    return;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    assert.ok(
+      key !== "last_observed_token",
+      `BackgroundResponse leaked observation.last_observed_token at ${path}.${key}`,
+    );
+    assert.ok(
+      key !== "token" || !(typeof nested === "string"),
+      `BackgroundResponse carries a string-typed "token" field at ${path}.${key} — content-script context must not see bearer tokens`,
+    );
+    assertNoTokenLeak(nested, tokenLiteral, `${path}.${key}`);
+  }
+}
+
 test("FieldEntry type carries no text-bearing string field", async () => {
   // The FieldEntry struct is the per-field UI state held by the content
   // script. It must not carry any text or text-producing closure. We grab the

@@ -43,12 +43,28 @@ export type SignSessionResult =
 
 export type BackgroundResponse =
   | { kind: "register_field_result"; result: RegisterFieldResult }
-  | { kind: "append_mutation_result"; session: SessionRecord }
+  | { kind: "append_mutation_result" }
   | { kind: "list_sessions_result"; sessions: SessionRecord[] }
   | { kind: "sign_session_result"; result: SignSessionResult }
   | { kind: "retry_result"; result: SignSessionResult }
   | { kind: "discard_result"; ok: true }
   | { kind: "error"; reason: string };
+
+/**
+ * Responses that may be returned to a content-script context. These MUST NOT
+ * carry the bearer `observation.last_observed_token` or any field from
+ * `SessionRecord.observation`. The content script forwards only register_field
+ * and append_mutation messages, so only these two response kinds are reachable
+ * from a content-script context. A recursive regression test
+ * (`tests/browser-extension-canary.test.mjs`) asserts that no string equal to
+ * the bearer token and no key named `last_observed_token` ever appears in a
+ * response of one of these kinds.
+ */
+export const CONTENT_SCRIPT_REACHABLE_RESPONSE_KINDS = [
+  "register_field_result",
+  "append_mutation_result",
+  "error",
+] as const satisfies ReadonlyArray<BackgroundResponse["kind"]>;
 
 export const MESSAGE_KINDS = [
   "register_field",

@@ -44,6 +44,13 @@ popup/popup.ts         ← lists sessions across all open tabs, signs one, copie
 
 The trust boundary is the service worker: it is the only place that talks to the network. The content script never sees a network call, and the popup only sends user-initiated control messages. The service worker bundle is statically audited to contain no DOM/text-reading symbols.
 
+### Content-script vs popup response shape
+
+The two contexts that send messages to the service worker have different trust profiles, and the response shapes returned to them differ accordingly:
+
+- **Content script** (runs inside every page, including untrusted ones). It forwards only `register_field` and `append_mutation` messages and is allowed to observe only three response kinds: `register_field_result` (carries `session_id` and identity `certainty` only — never observation state), `append_mutation_result` (a pure ack with no payload), and the generic `error` (kind + reason). The full `SessionRecord` — including the bearer `observation.last_observed_token` used to authenticate server-observed checkpoints — never crosses the message boundary into a content-script context. A recursive regression test (`tests/browser-extension-canary.test.mjs`) walks the responses for the content-script message kinds and asserts no `last_observed_token` field and no token-equal string ever appears.
+- **Popup** (extension-privileged page, signed by the extension manifest, not reachable from page JavaScript). It forwards `list_sessions`, `sign_session`, `retry_failed_upload`, and `discard_session`. The popup may retain full `SessionRecord` state in v0 because it is extension-privileged. If a future v0.1 surface exposes that state to less-privileged code, the same regression test should be extended to cover those kinds.
+
 ## Eligibility (the per-field invariant)
 
 A new producer scope rule applies: **the extension does not snapshot existing non-empty fields**. When the user focuses an eligible field for the first time, the producer-core registry checks for a resumable session matching the field's descriptor under the current `(origin, path, field_kind)` slice. The outcomes:

@@ -101,9 +101,13 @@ export class BackgroundDispatcher {
   }
 
   #handleAppend(message: Extract<ContentToBackground, { kind: "append_mutation" }>): BackgroundResponse {
-    const session = this.registry.appendMutation(message.session_id, message.mutation);
+    // The full SessionRecord stays inside the service worker. The response
+    // returned to the content script is a pure ack — sending the session
+    // record would leak `observation.last_observed_token` (the bearer token)
+    // into the page's content-script context, where it has no business being.
+    this.registry.appendMutation(message.session_id, message.mutation);
     void this.registry.persist();
-    return { kind: "append_mutation_result", session };
+    return { kind: "append_mutation_result" };
   }
 
   async #handleSign(message: Extract<ContentToBackground, { kind: "sign_session" }>): Promise<BackgroundResponse> {
