@@ -203,11 +203,17 @@ export function SignalCard({ signal }: { signal: Signal }) {
 
 export function VerificationPanel({ record }: { record: RecordApiResponse }) {
   const [verification, setVerification] = useState(() => verifyRecordChain(record));
+  const [recheckedAt, setRecheckedAt] = useState<string | null>(null);
+  const reverify = () => {
+    setVerification(verifyRecordChain(record));
+    setRecheckedAt(new Date().toLocaleTimeString());
+  };
   return (
     <section className="card">
       <h2>Verification</h2>
-      <ChainVerificationButton onVerify={() => setVerification(verifyRecordChain(record))} ok={verification.ok} />
-      <p className={verification.ok ? "ok" : "error"}>{verification.messages.join(" ")}</p>
+      <p className="muted">Confirms this record itself has not been altered since it was signed. This is not the document check above — it re-hashes the record's own data, and uploads nothing.</p>
+      <ChainVerificationButton onVerify={reverify} ok={verification.ok} />
+      <p className={verification.ok ? "ok" : "error"}>{verification.messages.join(" ")}{recheckedAt ? ` (re-checked at ${recheckedAt})` : ""}</p>
       <ObservationStatusLine record={record} />
       <ManifestDetails record={record} computedRecordHash={verification.computedRecordHash} />
     </section>
@@ -364,8 +370,8 @@ export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
   const [result, setResult] = useState<BindingCheckResult | null>(null);
   return (
     <section className="card" id="check-a-document" aria-label="Check a document">
-      <h2>Check a document</h2>
-      <p className="muted">Paste a document to check it against the text this record signed.</p>
+      <h2>Check a document against this record</h2>
+      <p className="muted">Have a copy of this writing? Paste it below and your browser tells you whether it is the text signed here — comparing wording, not exact bytes. Nothing is uploaded. (The Check button turns on once you paste something.)</p>
       <textarea
         className="binding-check-input"
         value={candidate}
@@ -437,8 +443,8 @@ export function RecordPage({ record }: { record: RecordApiResponse }) {
       <QuickStatsPanel record={record} />
       <EditTimeline record={record} />
       <SignalList signals={record.signals} />
-      <VerificationPanel record={record} />
       <TextBindingSection record={record} />
+      <VerificationPanel record={record} />
     </main>
   );
 }
