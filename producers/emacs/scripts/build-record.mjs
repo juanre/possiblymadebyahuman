@@ -26,11 +26,12 @@ try {
   if (typeof input.session_id !== "string") fail("session_id must be a string");
 
   const events = input.events;
-  const recordHash = computeRecordHash(events, input.session_id, input.format_version ?? FORMAT_VERSION);
+  const formatVersion = input.format_version ?? FORMAT_VERSION;
+  const recordHash = computeRecordHash(events, input.session_id, formatVersion);
 
   const record = {
     manifest: {
-      format_version: FORMAT_VERSION,
+      format_version: formatVersion,
       record_hash: recordHash,
       session_id: input.session_id,
       producer: input.producer ?? {

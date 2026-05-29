@@ -454,6 +454,7 @@ const PUBLIC_MANIFEST_FIELDS = new Set([
   "session_id",
   "producer",
   "capture_context",
+  "text_binding",
   "event_count",
   "duration_ms",
   "created_client_t",

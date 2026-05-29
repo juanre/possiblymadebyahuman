@@ -68,5 +68,51 @@
       "b3:2813cbb2acdb09f604e59cca4382e622a1a386cf0ad32a587ba0d4761254d552"
     ],
     "record_hash": "b3:2813cbb2acdb09f604e59cca4382e622a1a386cf0ad32a587ba0d4761254d552"
+  },
+  {
+    "name": "format 0.2 no-binding hash chain",
+    "session_id": "123e4567-e89b-42d3-a456-426614174002",
+    "format_version": "0.2",
+    "events": [
+      {
+        "seq": 0,
+        "t": 0,
+        "op": "insert",
+        "pos": 0,
+        "del_len": 0,
+        "ins_len": 5,
+        "source": "typing"
+      }
+    ],
+    "chain": [
+      "b3:459912946d58ceff00eb4436d3f478df987a2be17a797659fceda887150344c2"
+    ],
+    "record_hash": "b3:459912946d58ceff00eb4436d3f478df987a2be17a797659fceda887150344c2"
+  },
+  {
+    "name": "format 0.2 sealed text binding record hash",
+    "session_id": "123e4567-e89b-42d3-a456-426614174002",
+    "format_version": "0.2",
+    "events": [
+      {
+        "seq": 0,
+        "t": 0,
+        "op": "insert",
+        "pos": 0,
+        "del_len": 0,
+        "ins_len": 5,
+        "source": "typing"
+      }
+    ],
+    "chain": [
+      "b3:459912946d58ceff00eb4436d3f478df987a2be17a797659fceda887150344c2"
+    ],
+    "text_binding": {
+      "scheme": "canon-letters/0.1",
+      "policy": "prefix",
+      "canonical_length": 10,
+      "commitment": "b3:5b529348dcf566686e8a10595122f011f040a3cdd2f84e096303cfb3a2d4a140"
+    },
+    "record_hash": "b3:e8cac69de019e7779e5d8d2258f2c8795bba147d793f75e933e006efe9e5980b"
   }
 ]

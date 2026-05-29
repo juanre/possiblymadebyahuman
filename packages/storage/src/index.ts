@@ -314,7 +314,7 @@ export type PostgresDatabase = PostgresQueryable & {
 };
 
 /**
- * Minimal Postgres-backed RecordStore adapter for the v0 schema in migrations/001_init.sql.
+ * Minimal Postgres-backed RecordStore adapter for the ordered SQL migrations schema.
  * Tests use InMemoryRecordStore; this adapter keeps SQL mapping in the storage package without
  * making HTTP/API code depend on a specific Postgres client library.
  */
@@ -357,10 +357,10 @@ export class PostgresRecordStore implements RecordStore {
         await client.query(
           `insert into records (
             record_hash, short_signature, format_version, session_id,
-            producer_id, producer_version, producer_capabilities, capture_context,
+            producer_id, producer_version, producer_capabilities, capture_context, text_binding,
             event_count, duration_ms,
             created_client_t, ingested_server_t, parent_record_hash, attestations, events, created_at, observation_state
-          ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16,$17)`,
+          ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15::jsonb,$16::jsonb,$17,$18)`,
           [
             manifest.record_hash,
             input.short_signature,
@@ -370,6 +370,7 @@ export class PostgresRecordStore implements RecordStore {
             manifest.producer.version,
             JSON.stringify(manifest.producer.capabilities),
             JSON.stringify(manifest.capture_context ?? null),
+            manifest.text_binding ? JSON.stringify(manifest.text_binding) : null,
             manifest.event_count,
             manifest.duration_ms,
             manifest.created_client_t ?? null,
@@ -508,6 +509,7 @@ export class PostgresRecordStore implements RecordStore {
          r.producer_version,
          r.producer_capabilities,
          r.capture_context,
+         r.text_binding,
          r.event_count,
          r.duration_ms,
          r.created_client_t,
@@ -708,12 +710,13 @@ export class PostgresRecordStore implements RecordStore {
 type RecordRow = Record<string, unknown> & {
   record_hash: B3Hash;
   short_signature: string;
-  format_version: "0.1";
+  format_version: RecordManifest["format_version"];
   session_id: string;
   producer_id: string;
   producer_version: string;
   producer_capabilities: string[];
   capture_context: Record<string, JsonValue> | null;
+  text_binding: RecordManifest["text_binding"] | null;
   event_count: number;
   duration_ms: number;
   created_client_t: string | null;
@@ -755,6 +758,7 @@ function rowToStoredRecord(row: RecordRow, observation: RecordObservation): Stor
       capabilities: row.producer_capabilities as RecordManifest["producer"]["capabilities"],
     },
     capture_context: row.capture_context,
+    ...(row.text_binding ? { text_binding: row.text_binding } : {}),
     event_count: row.event_count,
     duration_ms: row.duration_ms,
     created_client_t: row.created_client_t,

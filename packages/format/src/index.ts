@@ -1,13 +1,22 @@
 import { blake3 } from "@noble/hashes/blake3.js";
 import { bytesToHex, hexToBytes, utf8ToBytes } from "@noble/hashes/utils.js";
+import { unicodeFullCasefold } from "./casefold.ts";
 
 export const FORMAT_PACKAGE = "@possiblymadebyahuman/format";
-export const FORMAT_VERSION = "0.1";
+export const FORMAT_VERSION_0_1 = "0.1";
+export const FORMAT_VERSION_0_2 = "0.2";
+export const FORMAT_VERSION = FORMAT_VERSION_0_2;
+export const FORMAT_VERSIONS = [FORMAT_VERSION_0_1, FORMAT_VERSION_0_2] as const;
 export const HASH_PREFIX = "b3:";
 export const BLAKE3_HEX_LENGTH = 64;
 
-export type FormatVersion = typeof FORMAT_VERSION;
+export type FormatVersion = (typeof FORMAT_VERSIONS)[number];
 export type B3Hash = `${typeof HASH_PREFIX}${string}`;
+
+export const TEXT_BINDING_SCHEME = "canon-letters/0.1";
+export const TEXT_BINDING_POLICIES = ["exact", "prefix"] as const;
+export type TextBindingScheme = typeof TEXT_BINDING_SCHEME;
+export type TextBindingPolicy = (typeof TEXT_BINDING_POLICIES)[number];
 
 export const OPERATIONS = ["insert", "delete", "replace"] as const;
 export type Operation = (typeof OPERATIONS)[number];
@@ -75,12 +84,29 @@ export type Attestation = {
   [key: string]: JsonValue | undefined;
 };
 
+export type TextBinding = {
+  scheme: TextBindingScheme;
+  policy: TextBindingPolicy;
+  canonical_length: number;
+  commitment: B3Hash;
+};
+
+export type TextBindingVerificationResult = {
+  valid: boolean;
+  policy: TextBindingPolicy;
+  canonicalLength: number;
+  candidateCanonicalLength: number;
+  appendedCanonicalLength?: number;
+  errors: string[];
+};
+
 export type RecordManifest = {
   format_version: FormatVersion;
   record_hash: B3Hash;
   session_id: string;
   producer: ProducerInfo;
   capture_context?: CaptureContext | null;
+  text_binding?: TextBinding;
   event_count: number;
   duration_ms: number;
   created_client_t?: string | null;
@@ -119,6 +145,8 @@ export type VerificationResult = {
 const OPERATION_SET = new Set<string>(OPERATIONS);
 const SOURCE_SET = new Set<string>(SOURCES);
 const CAPABILITY_SET = new Set<string>(CAPABILITIES);
+const FORMAT_VERSION_SET = new Set<string>(FORMAT_VERSIONS);
+const TEXT_BINDING_POLICY_SET = new Set<string>(TEXT_BINDING_POLICIES);
 const EVENT_KEYS = new Set(["seq", "t", "op", "pos", "del_len", "ins_len", "source"]);
 
 export function canonicalizeJson(value: unknown): string {
@@ -179,6 +207,91 @@ export function b3HashText(input: string): B3Hash {
   return b3HashBytes(utf8ToBytes(input));
 }
 
+export function canonicalizeTextForBinding(input: string): string {
+  const normalized = input.normalize("NFKC");
+  const folded = unicodeFullCasefold(normalized);
+  return Array.from(folded).filter(isLetterNumberOrMark).join("");
+}
+
+export function computeTextBindingCommitment(sessionId: string, canonicalForm: string): B3Hash {
+  if (typeof sessionId !== "string" || !isUuid(sessionId)) {
+    throw new TypeError("session_id must be a UUIDv4 string");
+  }
+  if (canonicalForm.length === 0) {
+    throw new TypeError("text binding canonical form must not be empty");
+  }
+  return b3HashBytes(concatBytes(utf8ToBytes(sessionId), utf8ToBytes(canonicalForm)));
+}
+
+export function createTextBinding(input: string, sessionId: string, policy: TextBindingPolicy = "prefix"): TextBinding {
+  if (!TEXT_BINDING_POLICY_SET.has(policy)) {
+    throw new TypeError(`text_binding.policy must be one of ${TEXT_BINDING_POLICIES.join(", ")}`);
+  }
+  const canonicalForm = canonicalizeTextForBinding(input);
+  return {
+    scheme: TEXT_BINDING_SCHEME,
+    policy,
+    canonical_length: Array.from(canonicalForm).length,
+    commitment: computeTextBindingCommitment(sessionId, canonicalForm),
+  };
+}
+
+export function verifyTextBindingCandidate(
+  binding: TextBinding,
+  candidateText: string,
+  sessionId: string,
+): TextBindingVerificationResult {
+  const errors = validateTextBinding(binding);
+  if (typeof sessionId !== "string" || !isUuid(sessionId)) errors.push("session_id must be a UUIDv4 string");
+  const candidateCanonical = canonicalizeTextForBinding(candidateText);
+  const candidateCodepoints = Array.from(candidateCanonical);
+  let valid = false;
+  let appendedCanonicalLength: number | undefined;
+
+  if (errors.length === 0) {
+    if (binding.policy === "exact") {
+      if (candidateCodepoints.length !== binding.canonical_length) {
+        errors.push(`canonical length mismatch: expected ${binding.canonical_length}, got ${candidateCodepoints.length}`);
+      } else if (computeTextBindingCommitment(sessionId, candidateCanonical) !== binding.commitment) {
+        errors.push("text binding commitment mismatch");
+      } else {
+        valid = true;
+      }
+    } else {
+      if (candidateCodepoints.length < binding.canonical_length) {
+        errors.push(`canonical length shorter than prefix: expected at least ${binding.canonical_length}, got ${candidateCodepoints.length}`);
+      } else {
+        const prefix = candidateCodepoints.slice(0, binding.canonical_length).join("");
+        if (computeTextBindingCommitment(sessionId, prefix) !== binding.commitment) {
+          errors.push("text binding commitment mismatch");
+        } else {
+          appendedCanonicalLength = candidateCodepoints.length - binding.canonical_length;
+          valid = true;
+        }
+      }
+    }
+  }
+
+  return {
+    valid,
+    policy: binding.policy,
+    canonicalLength: binding.canonical_length,
+    candidateCanonicalLength: candidateCodepoints.length,
+    appendedCanonicalLength,
+    errors,
+  };
+}
+
+export function canonicalizeTextBinding(binding: TextBinding): string {
+  assertValidTextBinding(binding);
+  return canonicalizeJson({
+    scheme: binding.scheme,
+    policy: binding.policy,
+    canonical_length: binding.canonical_length,
+    commitment: binding.commitment,
+  });
+}
+
 export function isB3Hash(value: unknown): value is B3Hash {
   return typeof value === "string" && new RegExp(`^${HASH_PREFIX}[0-9a-f]{${BLAKE3_HEX_LENGTH}}$`).test(value);
 }
@@ -214,8 +327,11 @@ export function computeRecordHash(
   events: EventLog,
   sessionId: string,
   formatVersion: FormatVersion = FORMAT_VERSION,
+  textBinding?: TextBinding,
 ): B3Hash {
-  return last(computeEventHashChain(events, sessionId, formatVersion));
+  const eventTip = last(computeEventHashChain(events, sessionId, formatVersion));
+  if (formatVersion === FORMAT_VERSION_0_1 || textBinding === undefined) return eventTip;
+  return b3HashBytes(concatBytes(b3HashToBytes(eventTip), utf8ToBytes(canonicalizeTextBinding(textBinding))));
 }
 
 export function verifyEventHashChain(record: WritingRecord): VerificationResult {
@@ -232,7 +348,12 @@ export function verifyEventHashChain(record: WritingRecord): VerificationResult 
       record.manifest.session_id,
       record.manifest.format_version,
     );
-    computedRecordHash = last(computedChain);
+    computedRecordHash = computeRecordHash(
+      record.events,
+      record.manifest.session_id,
+      record.manifest.format_version,
+      record.manifest.text_binding,
+    );
     if (record.manifest.record_hash !== computedRecordHash) {
       errors.push(`record_hash mismatch: expected ${record.manifest.record_hash}, computed ${computedRecordHash}`);
     }
@@ -282,7 +403,12 @@ export function verifyRecord(record: WritingRecord): VerificationResult {
       record.manifest.session_id,
       record.manifest.format_version,
     );
-    computedRecordHash = last(computedChain);
+    computedRecordHash = computeRecordHash(
+      record.events,
+      record.manifest.session_id,
+      record.manifest.format_version,
+      record.manifest.text_binding,
+    );
     if (record.manifest.record_hash !== computedRecordHash) {
       errors.push(`record_hash mismatch: expected ${record.manifest.record_hash}, computed ${computedRecordHash}`);
     }
@@ -371,7 +497,9 @@ export function validateManifest(manifest: unknown): string[] {
   if (!isPlainObject(manifest)) return ["manifest must be an object"];
   const candidate = manifest as Partial<RecordManifest>;
 
-  if (candidate.format_version !== FORMAT_VERSION) errors.push(`format_version must be ${FORMAT_VERSION}`);
+  if (typeof candidate.format_version !== "string" || !FORMAT_VERSION_SET.has(candidate.format_version)) {
+    errors.push(`format_version must be one of ${FORMAT_VERSIONS.join(", ")}`);
+  }
   if (!isB3Hash(candidate.record_hash)) errors.push(`record_hash must be a ${HASH_PREFIX} hash`);
   if (typeof candidate.session_id !== "string" || !isUuid(candidate.session_id)) {
     errors.push("session_id must be a UUIDv4 string");
@@ -402,6 +530,12 @@ export function validateManifest(manifest: unknown): string[] {
   ) {
     errors.push("capture_context must be an object, null, or absent");
   }
+  if (candidate.format_version === FORMAT_VERSION_0_1 && "text_binding" in candidate) {
+    errors.push("text_binding is not valid for format_version 0.1");
+  }
+  if (candidate.format_version === FORMAT_VERSION_0_2 && candidate.text_binding !== undefined) {
+    errors.push(...validateTextBinding(candidate.text_binding));
+  }
   validateNonNegativeInteger(candidate.event_count, "event_count", errors);
   validateNonNegativeInteger(candidate.duration_ms, "duration_ms", errors);
   if ("final_text_hash" in candidate) errors.push("final_text_hash is not a content-blind public manifest field");
@@ -424,6 +558,35 @@ export function assertValidEvent(event: unknown, expectedSeq?: number): asserts 
 
 export function assertValidEventLog(events: unknown): asserts events is EventLog {
   const errors = validateEventLog(events);
+  if (errors.length > 0) throw new TypeError(errors.join("; "));
+}
+
+export function validateTextBinding(binding: unknown): string[] {
+  const errors: string[] = [];
+  if (!isPlainObject(binding)) return ["text_binding must be an object"];
+  const candidate = binding as Partial<TextBinding>;
+  const allowedKeys = new Set(["scheme", "policy", "canonical_length", "commitment"]);
+  for (const key of Object.keys(candidate)) {
+    if (!allowedKeys.has(key)) errors.push(`text_binding contains unknown field ${key}`);
+  }
+  if (candidate.scheme !== TEXT_BINDING_SCHEME) {
+    errors.push(`text_binding.scheme must be ${TEXT_BINDING_SCHEME}`);
+  }
+  if (typeof candidate.policy !== "string" || !TEXT_BINDING_POLICY_SET.has(candidate.policy)) {
+    errors.push(`text_binding.policy must be one of ${TEXT_BINDING_POLICIES.join(", ")}`);
+  }
+  validateNonNegativeInteger(candidate.canonical_length, "text_binding.canonical_length", errors);
+  if (candidate.canonical_length === 0) {
+    errors.push("text_binding.canonical_length must be greater than 0");
+  }
+  if (!isB3Hash(candidate.commitment)) {
+    errors.push(`text_binding.commitment must be a ${HASH_PREFIX} hash`);
+  }
+  return errors;
+}
+
+export function assertValidTextBinding(binding: unknown): asserts binding is TextBinding {
+  const errors = validateTextBinding(binding);
   if (errors.length > 0) throw new TypeError(errors.join("; "));
 }
 
@@ -474,6 +637,10 @@ function validateNullableNonNegativeInteger(value: unknown, name: string, errors
   if (value !== null && (!Number.isInteger(value) || (value as number) < 0)) {
     errors.push(`${name} must be a non-negative integer or null`);
   }
+}
+
+function isLetterNumberOrMark(input: string): boolean {
+  return /[\p{Letter}\p{Number}\p{Mark}]/u.test(input);
 }
 
 function validateNullableString(value: unknown, name: string, errors: string[]): void {
