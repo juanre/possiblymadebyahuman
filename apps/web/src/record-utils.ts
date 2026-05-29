@@ -154,7 +154,10 @@ export function describeBindingMatch(result: BindingCheckResult): BindingMatchSu
   } else {
     headline = "Same wording as the signed text.";
   }
-  const hasEdgeExtra = result.kind === "trailing" || result.kind === "leading";
-  const short = hasEdgeExtra && result.canonicalLength < SHORT_BINDING_CANONICAL_LENGTH;
+  // A match on very little text is weak evidence whether it is a whole, leading,
+  // or trailing match — many documents share a short run of letters/digits (and
+  // short numeric forms collide once formatting is dropped) — so warn on any
+  // short successful match, not only edge ones.
+  const short = result.canonicalLength < SHORT_BINDING_CANONICAL_LENGTH;
   return { ok: true, headline, short };
 }

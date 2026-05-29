@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { buildTimelinePoints, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "../apps/web/src/record-utils.ts";
+import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "../apps/web/src/record-utils.ts";
+import { createTextBinding } from "../packages/format/src/index.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -185,4 +186,31 @@ test("edit timeline points preserve unknown process measurements", () => {
   assert.equal(points[1].pos, null);
   assert.equal(points[1].documentLength, null);
   assert.equal(points[1].isLargeInsert, false);
+});
+
+const BIND_SID = "123e4567-e89b-42d3-a456-426614174000";
+const LONG_DOC = "We cannot prove a human wrote this but here is the recorded shape of the writing process";
+
+test("checker is edge-anchored: whole, leading, and trailing match; interior does not", () => {
+  const binding = createTextBinding(LONG_DOC, BIND_SID, "prefix");
+  const check = (candidate) => checkCandidateAgainstBinding(binding, candidate, BIND_SID);
+  assert.equal(check(LONG_DOC).kind, "exact");
+  assert.equal(check(`On Tuesday someone wrote:\n${LONG_DOC}`).kind, "leading");
+  assert.equal(check(`${LONG_DOC}\n-- signature`).kind, "trailing");
+  // Material on BOTH sides (interior) must not match in v1 — no interior search.
+  assert.equal(check(`Quoted header.\n${LONG_DOC}\n-- sig`).kind, "none");
+  assert.equal(check("An entirely different document.").kind, "none");
+  assert.equal(check("   \n\t  !!!  ").kind, "none");
+});
+
+test("short bindings warn on every successful match, including whole/exact", () => {
+  const shortBinding = createTextBinding("ok thanks", BIND_SID, "prefix");
+  for (const candidate of ["ok thanks", "ok thanks, see you", "well, ok thanks"]) {
+    const summary = describeBindingMatch(checkCandidateAgainstBinding(shortBinding, candidate, BIND_SID));
+    assert.equal(summary.ok, true);
+    assert.equal(summary.short, true, `expected short warning for: ${candidate}`);
+  }
+  // A long binding does not warn even when matched exactly.
+  const longSummary = describeBindingMatch(checkCandidateAgainstBinding(createTextBinding(LONG_DOC, BIND_SID, "prefix"), LONG_DOC, BIND_SID));
+  assert.equal(longSummary.short, false);
 });

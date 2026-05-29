@@ -389,7 +389,7 @@ function BindingResult({ result }: { result: BindingCheckResult }) {
       <p className="binding-result-note muted">{TEXT_BINDING_DISCLAIMER}</p>
       {summary.short && (
         <p className="binding-result-warning">
-          This binds only a short run of text ({result.canonicalLength} letters), so a partial match is weak on its own — many documents share a short run.
+          This binds only a short run of text ({result.canonicalLength} letters), so a match on it is weak on its own — many documents share a short run.
         </p>
       )}
     </div>
