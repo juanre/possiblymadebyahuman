@@ -1,7 +1,10 @@
 import {
+  canonicalizeTextForBinding,
+  computeTextBindingCommitment,
   verifyRecord,
+  verifyTextBindingCandidate,
   type BufferMutation,
-  type TextBindingVerificationResult,
+  type TextBinding,
 } from "../../../packages/format/src/index.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
@@ -99,22 +102,59 @@ export const SHORT_BINDING_CANONICAL_LENGTH = 64;
 export const TEXT_BINDING_DISCLAIMER =
   "Compares letters and digits in order; ignores spacing, punctuation, case, and number formatting — it is not a check of exact text.";
 
-export type BindingMatchSummary = {
+export type BindingCheckResult = {
   ok: boolean;
-  headline: string;
-  appendedCanonicalLength: number;
-  short: boolean;
+  kind: "exact" | "trailing" | "leading" | "none";
+  leadingCount: number;
+  trailingCount: number;
+  canonicalLength: number;
 };
 
-export function describeBindingMatch(result: TextBindingVerificationResult): BindingMatchSummary {
-  if (!result.valid) {
-    return { ok: false, headline: "These letters don't match what the author signed.", appendedCanonicalLength: 0, short: false };
+// Bounded edge leniency: a prefix-policy binding matches if the signed
+// wording is the whole canonical candidate (exact), its start (trailing
+// extra — an appended signature/footer line), or its end (leading extra —
+// a quoted header or greeting pasted before it). We anchor at the two edges
+// only — never an arbitrary interior substring search — so accidental
+// over-selection at the start or end does not fail a legitimate check.
+// exact-policy bindings stay strict (no edge leniency).
+export function checkCandidateAgainstBinding(
+  binding: TextBinding,
+  candidateText: string,
+  sessionId: string,
+): BindingCheckResult {
+  const length = binding.canonical_length;
+  const base = verifyTextBindingCandidate(binding, candidateText, sessionId);
+  if (base.valid) {
+    const trailing = base.appendedCanonicalLength ?? 0;
+    return { ok: true, kind: trailing > 0 ? "trailing" : "exact", leadingCount: 0, trailingCount: trailing, canonicalLength: length };
   }
-  const appended = result.appendedCanonicalLength ?? 0;
-  const headline =
-    appended > 0
-      ? `Same wording as the signed text, followed by ${appended} more ${appended === 1 ? "character" : "characters"}.`
-      : "Same wording as the signed text.";
-  const short = result.policy === "prefix" && result.canonicalLength < SHORT_BINDING_CANONICAL_LENGTH;
-  return { ok: true, headline, appendedCanonicalLength: appended, short };
+  if (binding.policy === "prefix") {
+    const candidateCodepoints = Array.from(canonicalizeTextForBinding(candidateText));
+    if (candidateCodepoints.length > length) {
+      const suffix = candidateCodepoints.slice(candidateCodepoints.length - length).join("");
+      if (computeTextBindingCommitment(sessionId, suffix) === binding.commitment) {
+        return { ok: true, kind: "leading", leadingCount: candidateCodepoints.length - length, trailingCount: 0, canonicalLength: length };
+      }
+    }
+  }
+  return { ok: false, kind: "none", leadingCount: 0, trailingCount: 0, canonicalLength: length };
+}
+
+export type BindingMatchSummary = { ok: boolean; headline: string; short: boolean };
+
+export function describeBindingMatch(result: BindingCheckResult): BindingMatchSummary {
+  if (!result.ok) {
+    return { ok: false, headline: "These letters don't match what the author signed.", short: false };
+  }
+  let headline: string;
+  if (result.kind === "trailing") {
+    headline = `Same wording as the signed text, followed by ${result.trailingCount} more ${result.trailingCount === 1 ? "character" : "characters"}.`;
+  } else if (result.kind === "leading") {
+    headline = `Same wording as the signed text, preceded by ${result.leadingCount} more ${result.leadingCount === 1 ? "character" : "characters"}.`;
+  } else {
+    headline = "Same wording as the signed text.";
+  }
+  const hasEdgeExtra = result.kind === "trailing" || result.kind === "leading";
+  const short = hasEdgeExtra && result.canonicalLength < SHORT_BINDING_CANONICAL_LENGTH;
+  return { ok: true, headline, short };
 }

@@ -132,6 +132,16 @@ test.describe("text binding — bound record", () => {
     await expect(result).toContainText(/followed by \d+ more characters/);
   });
 
+  test("leading over-selection still matches with material before the signed text", async ({ page }) => {
+    const card = page.locator("section.card", { hasText: "Check a document" });
+    await card.getByLabel("document to check").fill(`On Tuesday, someone wrote:\n\n${BOUND_TEXT}`);
+    await card.getByRole("button", { name: "Check" }).click();
+    const result = card.locator(".binding-result");
+    await expect(result).toHaveClass(/ok/);
+    await expect(result).toContainText(/preceded by \d+ more characters/);
+    await expect(result).toContainText("not a check of exact text");
+  });
+
   test("different text does not match", async ({ page }) => {
     const card = page.locator("section.card", { hasText: "Check a document" });
     await card.getByLabel("document to check").fill("Something else entirely, written by another author at another time.");

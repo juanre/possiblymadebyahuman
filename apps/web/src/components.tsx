@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
-import { verifyTextBindingCandidate, type Signal, type TextBindingVerificationResult } from "../../../packages/format/src/index.ts";
+import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildTimelinePoints, describeBindingMatch, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, verifyRecordChain } from "./record-utils.ts";
+import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
 import type { RecordApiResponse } from "./types.ts";
 
 export function DisclaimerBanner() {
@@ -353,7 +353,7 @@ export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
   const binding = record.manifest.text_binding!;
   const sessionId = record.manifest.session_id;
   const [candidate, setCandidate] = useState("");
-  const [result, setResult] = useState<TextBindingVerificationResult | null>(null);
+  const [result, setResult] = useState<BindingCheckResult | null>(null);
   return (
     <section className="card" aria-label="Check a document">
       <h2>Check a document</h2>
@@ -370,7 +370,7 @@ export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
           className="verify-button"
           type="button"
           disabled={candidate.length === 0}
-          onClick={() => setResult(verifyTextBindingCandidate(binding, candidate, sessionId))}
+          onClick={() => setResult(checkCandidateAgainstBinding(binding, candidate, sessionId))}
         >
           Check
         </button>
@@ -381,7 +381,7 @@ export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
   );
 }
 
-function BindingResult({ result }: { result: TextBindingVerificationResult }) {
+function BindingResult({ result }: { result: BindingCheckResult }) {
   const summary = describeBindingMatch(result);
   return (
     <div className={`binding-result ${summary.ok ? "ok" : "error"}`} role="status" aria-live="polite">
@@ -389,7 +389,7 @@ function BindingResult({ result }: { result: TextBindingVerificationResult }) {
       <p className="binding-result-note muted">{TEXT_BINDING_DISCLAIMER}</p>
       {summary.short && (
         <p className="binding-result-warning">
-          This binds only a short run of text ({result.canonicalLength} letters), so a begins-with match is weak on its own — many documents share a short opening.
+          This binds only a short run of text ({result.canonicalLength} letters), so a partial match is weak on its own — many documents share a short run.
         </p>
       )}
     </div>
