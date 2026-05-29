@@ -31,7 +31,7 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
       "docs/server-observed-commitments/index.html",
       "docs/write/index.html",
       "docs/terms/index.html",
-      "emacs/index.html",
+      "docs/emacs/index.html",
     ];
 
     for (const relative of expected) {
@@ -49,9 +49,34 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
       "images/pmbah-figure-1200.jpg",
       "images/pmbah-figure-600.webp",
       "images/pmbah-figure-600.jpg",
+      "favicon.svg",
+      "favicon.ico",
+      "favicon-32.png",
+      "apple-touch-icon.png",
+      "icon-192.png",
+      "icon-512.png",
+      "site.webmanifest",
+      "robots.txt",
+      "sitemap.xml",
+      "og/card.jpg",
     ]) {
       assert.ok(existsSync(join(out, asset)), `${asset} missing from build output`);
     }
+
+    const sitemap = readFileSync(join(out, "sitemap.xml"), "utf8");
+    assert.ok(sitemap.includes("https://possiblymadebyahuman.com/"), "sitemap missing absolute URLs");
+    assert.ok(sitemap.includes("https://possiblymadebyahuman.com/docs/emacs/"), "sitemap missing /docs/emacs/");
+    assert.ok(sitemap.includes("https://possiblymadebyahuman.com/docs/privacy/"), "sitemap missing /docs/privacy/");
+    assert.ok(sitemap.includes("https://possiblymadebyahuman.com/docs/terms/"), "sitemap missing /docs/terms/");
+
+    const robots = readFileSync(join(out, "robots.txt"), "utf8");
+    assert.ok(robots.includes("Sitemap: https://possiblymadebyahuman.com/sitemap.xml"), "robots.txt missing Sitemap directive");
+    assert.ok(robots.includes("Disallow: /api/"), "robots.txt missing /api/ Disallow");
+
+    const manifest = JSON.parse(readFileSync(join(out, "site.webmanifest"), "utf8"));
+    assert.equal(manifest.name, "possiblymadebyahuman");
+    assert.equal(manifest.theme_color, "#fbf8f2");
+    assert.ok(manifest.icons.length >= 2, "manifest must declare icon set");
 
     const home = readFileSync(join(out, "index.html"), "utf8");
     assert.ok(home.includes("We cannot prove a human wrote it"), "home missing the headline");
@@ -59,7 +84,7 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
     assert.ok(home.includes("home-figure"), "home missing the hand-drawn figure block");
     assert.ok(home.includes("/images/pmbah-figure"), "home missing the figure asset reference");
     assert.ok(home.includes("href=/write"), "home missing /write CTA");
-    assert.ok(home.includes("href=/emacs/"), "home missing /emacs/ CTA");
+    assert.ok(home.includes("href=/docs/emacs/"), "home missing /emacs/ CTA");
     assert.ok(home.includes("href=/docs/"), "header nav missing /docs/ link");
     assert.ok(home.includes("github.com/juanre/possiblymadebyahuman"), "home missing repo link");
     assert.ok(home.includes("MIT licensed"), "home missing OSS/MIT footer line");
@@ -67,6 +92,18 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
     assert.ok(home.includes("href=/docs/terms/"), "home footer missing Terms link");
     assert.ok(home.includes("Brought to you by"), "home missing aweb.ai credit");
     assert.ok(home.includes("href=https://aweb.ai"), "home missing aweb.ai link");
+
+    // SEO / social card surface on the home page.
+    assert.ok(/<link rel=canonical href=https:\/\/possiblymadebyahuman.com\/>/.test(home), "home missing canonical link");
+    assert.ok(home.includes("og:type") && home.includes("\"website\""), "home missing og:type=website");
+    assert.ok(home.includes("og:image") && home.includes("/og/card.jpg"), "home missing og:image");
+    assert.ok(home.includes("twitter:card") && home.includes("\"summary_large_image\""), "home missing twitter:card=summary_large_image");
+    assert.ok(home.includes("application/ld+json"), "home missing JSON-LD structured data");
+    assert.ok(home.includes("\"WebSite\"") && home.includes("\"Organization\""), "home JSON-LD missing WebSite + Organization");
+    assert.ok(home.includes("favicon.svg"), "home missing favicon link");
+    assert.ok(home.includes("apple-touch-icon"), "home missing apple-touch-icon link");
+    assert.ok(home.includes("site.webmanifest"), "home missing webmanifest link");
+    assert.ok(home.includes("theme-color"), "home missing theme-color meta");
 
     const terms = readFileSync(join(out, "docs/terms/index.html"), "utf8");
     assert.ok(terms.includes("provided as-is"), "terms page missing as-is statement");
@@ -81,7 +118,7 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
     assert.ok(!home.includes("class=standing-claim"), "per-record standing claim must not appear on the home page");
     assert.ok(!/chromewebstore\.google\.com|chrome\.google\.com\/webstore/i.test(home), "home must not publish a Chrome Web Store URL before approval");
 
-    const emacs = readFileSync(join(out, "emacs/index.html"), "utf8");
+    const emacs = readFileSync(join(out, "docs/emacs/index.html"), "utf8");
     assert.ok(emacs.includes("pmbah-mode"), "emacs page missing pmbah-mode reference");
     assert.ok(emacs.includes("GNU Emacs 29.1"), "emacs page missing GNU Emacs 29.1 requirement");
     assert.ok(emacs.includes("refuses to start in a non-empty buffer"), "emacs page missing the empty-buffer rule");

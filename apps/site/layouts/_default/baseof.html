@@ -3,8 +3,65 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ if .IsHome }}possiblymadebyahuman{{ else }}{{ .Title }} · possiblymadebyahuman{{ end }}</title>
-    <meta name="description" content="A content-blind writing-record service. Not a detector. Not a certificate of humanity.">
+    {{- $siteTitle := "possiblymadebyahuman" -}}
+    {{- $siteDescription := "A content-blind writing-record service. Not a detector. Not a certificate of humanity." -}}
+    {{- $pageTitle := cond .IsHome $siteTitle (printf "%s · %s" .Title $siteTitle) -}}
+    {{- /* `meta name=description` always carries the site framing so search results lead with the content-blind claim. `og:description` / `twitter:description` below prefer the page-specific summary so social cards show the hook. */ -}}
+    {{- $pageSummary := or .Params.summary .Description $siteDescription -}}
+    {{- $ogImage := absURL "og/card.jpg" -}}
+    <title>{{ $pageTitle }}</title>
+    <meta name="description" content="{{ $siteDescription }}">
+    <link rel="canonical" href="{{ .Permalink }}">
+    <meta name="theme-color" content="#fbf8f2">
+    <meta name="color-scheme" content="light">
+    <meta name="robots" content="index,follow,max-image-preview:large">
+    <meta name="referrer" content="strict-origin-when-cross-origin">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <link rel="icon" href="/favicon.ico" sizes="any">
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+    <link rel="manifest" href="/site.webmanifest">
+    <meta property="og:type" content="{{ cond .IsHome "website" "article" }}">
+    <meta property="og:site_name" content="{{ $siteTitle }}">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:title" content="{{ $pageTitle }}">
+    <meta property="og:description" content="{{ $pageSummary }}">
+    <meta property="og:url" content="{{ .Permalink }}">
+    <meta property="og:image" content="{{ $ogImage }}">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="A hand-drawn pencil stick figure wearing a beret, holding a canvas with an infinity scribble, beside the headline 'We cannot prove a human wrote it.'">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{{ $pageTitle }}">
+    <meta name="twitter:description" content="{{ $pageSummary }}">
+    <meta name="twitter:image" content="{{ $ogImage }}">
+    <meta name="twitter:image:alt" content="A hand-drawn pencil stick figure wearing a beret, holding a canvas with an infinity scribble, beside the headline 'We cannot prove a human wrote it.'">
+    {{- if .IsHome }}
+    <script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "{{ absURL "" }}#website",
+      "url": "{{ absURL "" }}",
+      "name": "{{ $siteTitle }}",
+      "description": "{{ $siteDescription }}",
+      "inLanguage": "en-US",
+      "publisher": { "@id": "{{ absURL "" }}#org" }
+    },
+    {
+      "@type": "Organization",
+      "@id": "{{ absURL "" }}#org",
+      "name": "{{ $siteTitle }}",
+      "url": "{{ absURL "" }}",
+      "logo": "{{ absURL "icon-512.png" }}",
+      "sameAs": ["https://github.com/juanre/possiblymadebyahuman"]
+    }
+  ]
+}
+    </script>
+    {{- end }}
     <style>
       :root {
         color-scheme: light;
@@ -239,7 +296,7 @@
         </div>
         <div class="site-nav-group site-nav-center">
           <a class="site-nav-cta" href="/write">Write</a>
-          <a class="site-nav-cta" href="/emacs/">Emacs</a>
+          <a class="site-nav-cta" href="/docs/emacs/">Emacs</a>
         </div>
         <div class="site-nav-group site-nav-right">
           <a class="site-nav-repo" href="https://github.com/juanre/possiblymadebyahuman" rel="noopener" target="_blank">

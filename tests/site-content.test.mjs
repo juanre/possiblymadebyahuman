@@ -19,11 +19,12 @@ const requiredDocPages = [
   "conformance.md",
   "routing.md",
   "server-observed-commitments.md",
+  "emacs.md",
 ];
 
 const sectionsCoveringProductPromise = [
-  { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/write", "/emacs/"] },
-  { file: "emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open an **empty** writing buffer", "refuses to start in a non-empty buffer"] },
+  { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/write", "/docs/emacs/"] },
+  { file: "docs/emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open an **empty** writing buffer", "refuses to start in a non-empty buffer"] },
   { file: "docs/product-promise.md", needs: ["No verdicts", "Process, not content", "Hash-addressed records"] },
   { file: "docs/claims.md", needs: ["We claim", "We do not claim"] },
   { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system", "chrome.storage.local", "bearer", "Server-observed checkpoints", "GitHub issues"] },
@@ -69,7 +70,7 @@ test("home content names the two producers, the not-a-detector framing, and no f
   assert.match(home, /reverse Turing test/);
   // The two producers the page invites the reader to try.
   assert.match(home, /\/write/, "home must link to /write");
-  assert.match(home, /\/emacs\//, "home must link to /emacs/");
+  assert.match(home, /\/docs\/emacs\//, "home must link to /docs/emacs/");
   // Hard rules: no blog, no per-record standing-claim block in body, no
   // detector wording, no placeholder Chrome Web Store install URL on home
   // (gated until .26 records the real listing).
@@ -100,13 +101,22 @@ test("each doc page renders content-aligned content and avoids verdict language"
 
 test("layout base sets the candid description, provides site nav with producer CTAs, exposes the OSS/MIT footer, and links no blog route", async () => {
   const base = await read(join(siteRoot, "layouts/_default/baseof.html"));
-  assert.match(base, /content="A content-blind writing-record service/);
+  // The description is now templated through `$siteDescription`; match on the
+  // assignment so the test still anchors on the canonical text.
+  assert.match(base, /\$siteDescription := "A content-blind writing-record service/);
+  // SEO/social tag scaffolding on every page (template form).
+  assert.match(base, /rel="canonical"/);
+  assert.match(base, /rel="icon" href="\/favicon\.svg"/);
+  assert.match(base, /rel="manifest" href="\/site\.webmanifest"/);
+  assert.match(base, /property="og:image"/);
+  assert.match(base, /name="twitter:card" content="summary_large_image"/);
+  assert.match(base, /application\/ld\+json/);
   assert.match(base, /aria-label="Site sections"/);
   // Left rail: Home + Docs.
   assert.match(base, /href="\/docs\/"/);
   // Center CTAs: Write + Emacs.
   assert.match(base, /class="site-nav-cta" href="\/write"/);
-  assert.match(base, /class="site-nav-cta" href="\/emacs\/"/);
+  assert.match(base, /class="site-nav-cta" href="\/docs\/emacs\/"/);
   // Right rail: GitHub.
   assert.match(base, /href="https:\/\/github\.com\/juanre\/possiblymadebyahuman"/);
   assert.match(base, /class="site-nav-repo"/);

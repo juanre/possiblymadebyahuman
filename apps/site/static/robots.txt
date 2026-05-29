@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+# The Vite record viewer is served at /<short_signature>; do not encourage
+# crawlers to walk those paths (records are immutable and have stable
+# canonical URLs on their own).
+Disallow: /api/
+
+Sitemap: https://possiblymadebyahuman.com/sitemap.xml

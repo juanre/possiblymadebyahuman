@@ -1,7 +1,12 @@
 baseURL = 'https://possiblymadebyahuman.com/'
 locale = 'en-US'
 title = 'possiblymadebyahuman'
-disableKinds = ['taxonomy', 'term', 'RSS', 'sitemap', 'robotsTXT']
+disableKinds = ['taxonomy', 'term', 'RSS', 'robotsTXT']
+
+[sitemap]
+  changefreq = 'monthly'
+  priority = 0.5
+  filename = 'sitemap.xml'
 
 [markup]
   [markup.goldmark]
