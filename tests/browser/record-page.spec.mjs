@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { BOUND_TEXT } from "./bound-fixture-text.mjs";
+
 const slug = process.env.PMBAH_FIXTURE_SLUG ?? "smoke";
 
 const plaintextFixtures = ["Hi there!", "Hi ther!", " there", "\"Hi\""];
@@ -97,5 +99,72 @@ test.describe("public record page", () => {
     // consumers get the canonical timestamp without relying on the truncated label.
     const datetimes = await items.locator("time.utc-instant").evaluateAll((els) => els.map((el) => el.getAttribute("datetime")));
     expect(datetimes).toContain("2026-05-28T14:34:55.000Z");
+  });
+
+  test("a record with no binding shows the no-binding state", async ({ page }) => {
+    const card = page.locator("section.card", { hasText: "Bound document" });
+    await expect(card).toContainText("No document was bound to this record.");
+  });
+});
+
+test.describe("text binding — bound record", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/bound");
+    await page.getByRole("heading", { name: "Writing record" }).waitFor();
+  });
+
+  test("exact paste of the signed text matches as same wording", async ({ page }) => {
+    const card = page.locator("section.card", { hasText: "Check a document" });
+    await card.getByLabel("document to check").fill(BOUND_TEXT);
+    await card.getByRole("button", { name: "Check" }).click();
+    const result = card.locator(".binding-result");
+    await expect(result).toHaveClass(/ok/);
+    await expect(result).toContainText("Same wording as the signed text.");
+    await expect(result).toContainText("not a check of exact text");
+  });
+
+  test("appended text reports a prefix match with extra characters", async ({ page }) => {
+    const card = page.locator("section.card", { hasText: "Check a document" });
+    await card.getByLabel("document to check").fill(`${BOUND_TEXT}\n\n— recorded at possiblymadebyahuman.com/bound`);
+    await card.getByRole("button", { name: "Check" }).click();
+    const result = card.locator(".binding-result");
+    await expect(result).toHaveClass(/ok/);
+    await expect(result).toContainText(/followed by \d+ more characters/);
+  });
+
+  test("different text does not match", async ({ page }) => {
+    const card = page.locator("section.card", { hasText: "Check a document" });
+    await card.getByLabel("document to check").fill("Something else entirely, written by another author at another time.");
+    await card.getByRole("button", { name: "Check" }).click();
+    const result = card.locator(".binding-result");
+    await expect(result).toHaveClass(/error/);
+    await expect(result).toContainText("don't match");
+    await expect(result).toContainText("not a check of exact text");
+  });
+
+  test("commensurability is a separate card with facts, not a verdict", async ({ page }) => {
+    const card = page.locator("section.card", { hasText: "How this was written" });
+    await expect(card).toContainText("Signed text");
+    await expect(card).toContainText("Writing process");
+    await expect(card).toContainText("yours to read");
+    const text = (await card.innerText()).toLowerCase();
+    for (const term of ["verified", "humanness", "score", "authentic"]) {
+      expect(text.includes(term), `commensurability card leaked verdict term: ${term}`).toBe(false);
+    }
+  });
+
+  test("the document being checked is never sent to the server", async ({ page }) => {
+    const marker = "ZZUNIQUECANARYMARKER42";
+    const requestLog = [];
+    page.on("request", (request) => {
+      requestLog.push(`${request.url()} ${request.postData() ?? ""}`);
+    });
+    const card = page.locator("section.card", { hasText: "Check a document" });
+    await card.getByLabel("document to check").fill(`${BOUND_TEXT} ${marker}`);
+    await card.getByRole("button", { name: "Check" }).click();
+    await expect(card.locator(".binding-result")).toBeVisible();
+    for (const entry of requestLog) {
+      expect(entry.includes(marker), `candidate text was sent to the server: ${entry}`).toBe(false);
+    }
   });
 });

@@ -1,4 +1,8 @@
-import { verifyRecord, type BufferMutation } from "../../../packages/format/src/index.ts";
+import {
+  verifyRecord,
+  type BufferMutation,
+  type TextBindingVerificationResult,
+} from "../../../packages/format/src/index.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 export type TimelinePoint = {
@@ -86,4 +90,31 @@ export function formatServerObservedSpan(ms: number): string {
   const minutes = totalMinutes % 60;
   if (minutes === 0) return `${hours} ${hours === 1 ? "hour" : "hours"}`;
   return `${hours} ${hours === 1 ? "hour" : "hours"} ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+}
+
+// A prefix match over a very short bound text is weak evidence — many
+// documents share a short opening — so the checker warns below this length.
+export const SHORT_BINDING_CANONICAL_LENGTH = 64;
+
+export const TEXT_BINDING_DISCLAIMER =
+  "Compares letters and digits in order; ignores spacing, punctuation, case, and number formatting — it is not a check of exact text.";
+
+export type BindingMatchSummary = {
+  ok: boolean;
+  headline: string;
+  appendedCanonicalLength: number;
+  short: boolean;
+};
+
+export function describeBindingMatch(result: TextBindingVerificationResult): BindingMatchSummary {
+  if (!result.valid) {
+    return { ok: false, headline: "These letters don't match what the author signed.", appendedCanonicalLength: 0, short: false };
+  }
+  const appended = result.appendedCanonicalLength ?? 0;
+  const headline =
+    appended > 0
+      ? `Same wording as the signed text, followed by ${appended} more ${appended === 1 ? "character" : "characters"}.`
+      : "Same wording as the signed text.";
+  const short = result.policy === "prefix" && result.canonicalLength < SHORT_BINDING_CANONICAL_LENGTH;
+  return { ok: true, headline, appendedCanonicalLength: appended, short };
 }

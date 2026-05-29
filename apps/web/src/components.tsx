@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
-import type { Signal } from "../../../packages/format/src/index.ts";
+import { verifyTextBindingCandidate, type Signal, type TextBindingVerificationResult } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildTimelinePoints, formatDuration, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "./record-utils.ts";
+import { buildTimelinePoints, describeBindingMatch, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, verifyRecordChain } from "./record-utils.ts";
 import type { RecordApiResponse } from "./types.ts";
 
 export function DisclaimerBanner() {
@@ -331,6 +331,90 @@ function truncateHash(hash: string): string {
   return `${hash.slice(0, 9)}…${hash.slice(-4)}`;
 }
 
+export function TextBindingSection({ record }: { record: RecordApiResponse }) {
+  const binding = record.manifest.text_binding;
+  if (!binding) {
+    return (
+      <section className="card" aria-label="Bound document">
+        <h2>Bound document</h2>
+        <p className="muted">No document was bound to this record.</p>
+      </section>
+    );
+  }
+  return (
+    <>
+      <DocumentCheckCard record={record} />
+      <CommensurabilityCard record={record} />
+    </>
+  );
+}
+
+export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
+  const binding = record.manifest.text_binding!;
+  const sessionId = record.manifest.session_id;
+  const [candidate, setCandidate] = useState("");
+  const [result, setResult] = useState<TextBindingVerificationResult | null>(null);
+  return (
+    <section className="card" aria-label="Check a document">
+      <h2>Check a document</h2>
+      <p className="muted">Paste a document to check it against the text this record signed.</p>
+      <textarea
+        className="binding-check-input"
+        value={candidate}
+        onChange={(event) => setCandidate(event.target.value)}
+        placeholder="paste the document you want to check…"
+        aria-label="document to check"
+      />
+      <div className="binding-check-actions">
+        <button
+          className="verify-button"
+          type="button"
+          disabled={candidate.length === 0}
+          onClick={() => setResult(verifyTextBindingCandidate(binding, candidate, sessionId))}
+        >
+          Check
+        </button>
+        <span className="binding-check-privacy muted">Checked in your browser — nothing is uploaded.</span>
+      </div>
+      {result && <BindingResult result={result} />}
+    </section>
+  );
+}
+
+function BindingResult({ result }: { result: TextBindingVerificationResult }) {
+  const summary = describeBindingMatch(result);
+  return (
+    <div className={`binding-result ${summary.ok ? "ok" : "error"}`} role="status" aria-live="polite">
+      <p className="binding-result-headline">{summary.headline}</p>
+      <p className="binding-result-note muted">{TEXT_BINDING_DISCLAIMER}</p>
+      {summary.short && (
+        <p className="binding-result-warning">
+          This binds only a short run of text ({result.canonicalLength} letters), so a begins-with match is weak on its own — many documents share a short opening.
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function CommensurabilityCard({ record }: { record: RecordApiResponse }) {
+  const binding = record.manifest.text_binding!;
+  const stats = record.stats;
+  const pasteLabel = `${stats.paste_event_count} ${stats.paste_event_count === 1 ? "paste" : "pastes"}`;
+  return (
+    <section className="card commensurability-card" aria-label="How this was written">
+      <h2>How this was written</h2>
+      <div className="commensurability">
+        <Stat label="Signed text" value={`${binding.canonical_length} letters & digits`} />
+        <Stat
+          label="Writing process"
+          value={`${formatDuration(stats.duration_ms)} · ${stats.event_count} edits · ${pasteLabel} · largest insert ${stats.largest_atomic_insert_codepoints}`}
+        />
+      </div>
+      <p className="muted">What counts as “enough” is yours to read.</p>
+    </section>
+  );
+}
+
 export function RecordPage({ record }: { record: RecordApiResponse }) {
   return (
     <main className="page-shell">
@@ -342,6 +426,7 @@ export function RecordPage({ record }: { record: RecordApiResponse }) {
       <EditTimeline record={record} />
       <SignalList signals={record.signals} />
       <VerificationPanel record={record} />
+      <TextBindingSection record={record} />
     </main>
   );
 }

@@ -4,6 +4,9 @@ import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { computeRecordHash, createTextBinding } from "../../packages/format/src/index.ts";
+import { BOUND_TEXT } from "./bound-fixture-text.mjs";
+
 const rootDir = fileURLToPath(new URL("../..", import.meta.url));
 const webDistDir = join(rootDir, "apps/web/dist");
 const goldenPath = join(rootDir, "packages/conformance/vectors/golden-records.json");
@@ -128,14 +131,37 @@ const observation = {
 
 const fixtureRecord = { manifest: record.manifest, events: record.events, stats, signals, observation };
 
+// A second fixture served at /api/records/bound: a format 0.2 record that
+// actually carries a text binding, so the record-page checker has a real
+// commitment to verify against. record_hash is resealed over the binding so
+// the chain still verifies in the browser.
+const boundSessionId = record.manifest.session_id;
+const boundBinding = createTextBinding(BOUND_TEXT, boundSessionId, "prefix");
+const boundManifest = {
+  ...record.manifest,
+  format_version: "0.2",
+  text_binding: boundBinding,
+  record_hash: computeRecordHash(record.events, boundSessionId, "0.2", boundBinding),
+};
+const boundStats = { ...stats, record_hash: boundManifest.record_hash };
+const boundObservation = {
+  ...observation,
+  commitments: observation.commitments.map((commitment) =>
+    commitment.event_count === 4 ? { ...commitment, chain_tip: boundManifest.record_hash } : commitment,
+  ),
+};
+const boundRecord = { manifest: boundManifest, events: record.events, stats: boundStats, signals, observation: boundObservation };
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
     if (url.pathname.startsWith("/api/records/")) {
+      const requestedSlug = url.pathname.slice("/api/records/".length);
+      const body = requestedSlug === "bound" ? boundRecord : fixtureRecord;
       res.statusCode = 200;
       res.setHeader("content-type", "application/json; charset=utf-8");
-      res.end(JSON.stringify(fixtureRecord));
+      res.end(JSON.stringify(body));
       return;
     }
 
