@@ -368,6 +368,7 @@ export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
   const sessionId = record.manifest.session_id;
   const [candidate, setCandidate] = useState("");
   const [result, setResult] = useState<BindingCheckResult | null>(null);
+  const [checkedAt, setCheckedAt] = useState<string | null>(null);
   return (
     <section className="card" id="check-a-document" aria-label="Check a document">
       <h2>Check a document against this record</h2>
@@ -375,7 +376,13 @@ export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
       <textarea
         className="binding-check-input"
         value={candidate}
-        onChange={(event) => setCandidate(event.target.value)}
+        onChange={(event) => {
+          setCandidate(event.target.value);
+          // Clear any prior result so the page never shows an answer for text
+          // that is no longer in the box.
+          setResult(null);
+          setCheckedAt(null);
+        }}
         placeholder="paste the document you want to check…"
         aria-label="document to check"
       />
@@ -384,13 +391,17 @@ export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
           className="verify-button"
           type="button"
           disabled={candidate.length === 0}
-          onClick={() => setResult(checkCandidateAgainstBinding(binding, candidate, sessionId))}
+          onClick={() => {
+            setResult(checkCandidateAgainstBinding(binding, candidate, sessionId));
+            setCheckedAt(new Date().toLocaleTimeString());
+          }}
         >
           Check
         </button>
         <span className="binding-check-privacy muted">Checked in your browser — nothing is uploaded.</span>
       </div>
       {result && <BindingResult result={result} />}
+      {result && checkedAt ? <p className="muted binding-checked-at">Checked at {checkedAt}.</p> : null}
     </section>
   );
 }
