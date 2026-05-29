@@ -128,7 +128,7 @@ function openSignConfirm(session: SessionRecord): void {
     <p class="sign-affirm">I affirm this is the text this record is meant to cover.</p>
     <label><input type="checkbox" class="sign-bind" checked /> Bind the document I wrote</label>
     <div class="sign-policy">
-      <label><input type="radio" name="sign-policy" value="prefix" checked /> Allow text after it — a signature line or reply footer</label>
+      <label><input type="radio" name="sign-policy" value="prefix" checked /> Allow extra text before or after it — e.g. a quoted header or a signature line</label>
       <label><input type="radio" name="sign-policy" value="exact" /> Only this text — nothing after it</label>
     </div>
     <p class="sign-note">The check compares wording — letters and digits — not exact text.</p>

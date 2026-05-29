@@ -321,7 +321,7 @@ export function WritePage() {
           <fieldset className="write-sign-policy">
             <label>
               <input type="radio" name="bind-policy" checked={policy === "prefix"} onChange={() => setPolicy("prefix")} />
-              <span>Allow text after it — a signature line or reply footer</span>
+              <span>Allow extra text before or after it — e.g. a quoted header or a signature line</span>
             </label>
             <label>
               <input type="radio" name="bind-policy" checked={policy === "exact"} onChange={() => setPolicy("exact")} />

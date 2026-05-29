@@ -119,9 +119,13 @@ Given public `session_id`, public `text_binding`, and local candidate text `C`:
 
 1. Compute `canon(C)` with `canon-letters/0.1`.
 2. For `policy: "exact"`: pass iff `len(canon(C)) == canonical_length` and `H(utf8(session_id) || utf8(canon(C))) == commitment`.
-3. For `policy: "prefix"`: pass iff `len(canon(C)) >= canonical_length` and `H(utf8(session_id) || utf8(canon(C)[0:canonical_length])) == commitment`.
+3. For `policy: "prefix"`, verification is **edge-anchored** for v1: the committed canonical form must match the whole candidate, the start of the candidate, or the end of the candidate, each by exact commitment equality on the relevant codepoint slice. Pass iff `len(canon(C)) >= canonical_length` and at least one of:
+   - **whole or start:** `H(utf8(session_id) || utf8(canon(C)[0:canonical_length])) == commitment` — the committed form is the entire candidate (when lengths are equal) or its start, with the remainder being trailing material after it;
+   - **end:** `H(utf8(session_id) || utf8(canon(C)[len(canon(C)) - canonical_length : len(canon(C))])) == commitment` — the committed form is the end of the candidate, with the leading codepoints being material before it.
 
-The prefix slice is by Unicode codepoint count in the canonical form, not by UTF-16 code unit and not by byte. Any canonical material after `canonical_length` is appended material and is not part of the commitment check.
+All slices are by Unicode codepoint count in the canonical form, never by UTF-16 code unit and never by byte. Codepoints before a matched end-slice are leading material; codepoints after a matched start-slice are appended material; neither is part of the commitment check.
+
+This edge anchoring tolerates accidental over-selection at one edge — a quoted header pasted before the signed text, or an appended signature/footer line after it — so a legitimate check is not a false negative. It is strictly edge-anchored: the committed form is tested only against the whole candidate and its two edges. There is **no interior substring search, no fuzzy matching, and no chunk matching.** A candidate that contains the signed wording only in its interior (material both before and after) does not match in v1. The `exact` policy performs no edge leniency.
 
 Candidate text verification is client-side. Candidate text must not be uploaded.
 

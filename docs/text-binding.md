@@ -47,15 +47,18 @@ uploaded or stored.
 ```
 
 - `exact`: the candidate's canonical form must equal the committed one.
-- `prefix`: the committed canonical form must be a prefix of the
-  candidate's canonical form. Covers the motivating case — sign a mail,
-  then append `possiblymadebyahuman.com/<sig>`; the appended line is
-  trailing material after the signed body.
+- `prefix`: **edge-anchored** (v1). The committed canonical form matches the
+  whole candidate, its start (trailing material after it — e.g. an appended
+  signature line), or its end (leading material before it — e.g. a quoted
+  header), each by exact commitment equality on the relevant codepoint slice.
+  There is no interior substring, fuzzy, or chunk search; a signed run that sits
+  in the candidate's interior (material both before and after) does not match in
+  v1. The normative rule lives in `docs/spec/canonicalization.md`.
 
-**Default policy: `prefix`.** It tolerates appended footers/signatures
-and trailing whitespace, which `exact` would reject; the producer lets
-the signer choose `exact` when they mean "exactly this and nothing
-after."
+**Default policy: `prefix`.** It tolerates accidental over-selection at one edge
+— an appended footer/signature after, or a quoted header before — which `exact`
+would reject; the producer lets the signer choose `exact` when they mean
+"exactly this and nothing added."
 
 ### 2.2 Aggressive canonical form (`canon-letters/0.1`)
 
@@ -184,9 +187,13 @@ The record page offers a check box. Given candidate text `C`:
 - compute `canon(C)`;
 - **exact**: pass iff `len(canon(C)) == canonical_length` and
   `b3(session_id ‖ canon(C)) == commitment`;
-- **prefix**: pass iff `len(canon(C)) >= canonical_length` and
-  `b3(session_id ‖ canon(C)[0:canonical_length]) == commitment`; the
-  remainder is reported as appended material.
+- **prefix** (edge-anchored): pass iff `len(canon(C)) >= canonical_length` and
+  the committed form matches the candidate's start
+  (`b3(session_id ‖ canon(C)[0:canonical_length]) == commitment`, with the
+  remainder reported as appended material) **or** its end
+  (`b3(session_id ‖ canon(C)[len−canonical_length:len]) == commitment`, with the
+  leading codepoints reported as material before it). Equal-length candidates
+  are the whole match. No interior search.
 
 `session_id` and the binding are public in the record, so the browser
 computes everything locally. The candidate text never leaves the page.
