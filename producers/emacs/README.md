@@ -60,30 +60,42 @@ npm ci
 # or: make install
 ```
 
-Then add the producer directory to your Emacs configuration:
+Then add one checkout root variable to your Emacs configuration and derive the
+producer paths from it:
 
 ```elisp
-(add-to-list 'load-path "/path/to/possiblymadebyahuman/producers/emacs")
+(defvar pmbah-checkout-root
+  (expand-file-name "~/src/possiblymadebyahuman/"))
+
+(add-to-list 'load-path
+             (expand-file-name "producers/emacs" pmbah-checkout-root))
 (require 'pmbah-mode)
-```
 
-If you copy `pmbah-mode.el` somewhere else, keep the helper in the dependency
-installed checkout and point Emacs at it:
-
-```elisp
 (setq pmbah-helper-script
-      "/path/to/possiblymadebyahuman/producers/emacs/scripts/build-record.mjs")
+      (expand-file-name "producers/emacs/scripts/build-record.mjs"
+                        pmbah-checkout-root))
+;; Public service; this is also the package default.
+(setq pmbah-api-base-url "https://possiblymadebyahuman.com")
 ```
 
-`use-package` users can do the same manual load-path setup:
+Change only `pmbah-checkout-root` for your checkout location.
+
+`use-package` users can use the same root variable:
 
 ```elisp
+(defvar pmbah-checkout-root
+  (expand-file-name "~/src/possiblymadebyahuman/"))
+
+(add-to-list 'load-path
+             (expand-file-name "producers/emacs" pmbah-checkout-root))
+
 (use-package pmbah-mode
-  :load-path "/path/to/possiblymadebyahuman/producers/emacs"
   :commands (pmbah-mode pmbah-sign-buffer pmbah-show-session-status)
   :custom
+  (pmbah-api-base-url "https://possiblymadebyahuman.com")
   (pmbah-helper-script
-   "/path/to/possiblymadebyahuman/producers/emacs/scripts/build-record.mjs"))
+   (expand-file-name "producers/emacs/scripts/build-record.mjs"
+                     pmbah-checkout-root)))
 ```
 
 Emacs 29 `package-vc-install` can fetch Lisp code, but it does not install npm
@@ -94,37 +106,30 @@ directory and run `npm ci` there.
 
 ### API base URL
 
-`pmbah-api-base-url` defaults to `http://localhost:8000`, matching
-`make local-container`.
-
-Environment variable:
-
-```sh
-export PMBAH_API_BASE_URL=http://localhost:8000
-```
-
-Emacs Lisp:
+`pmbah-api-base-url` defaults to the public service:
 
 ```elisp
-(setq pmbah-api-base-url "http://localhost:8000")
+(setq pmbah-api-base-url "https://possiblymadebyahuman.com")
 ```
 
-If you run the local container on a custom port, match that port:
+You normally do not need to set it. If you previously copied local-development
+configuration such as `(setq pmbah-api-base-url "http://localhost:8000")`, remove
+that line or replace it with the HTTPS production URL above.
+
+For local development, override the URL to match your local container:
 
 ```sh
 PMBAH_PORT=18800 make local-container
 export PMBAH_API_BASE_URL=http://localhost:18800
 ```
 
-For production, set the value to the deployed HTTPS origin, for example:
+For the default local port:
 
 ```elisp
-(setq pmbah-api-base-url "https://possiblymadebyahuman.com")
+(setq pmbah-api-base-url "http://localhost:8000")
 ```
 
 Do not publish docs or configs with fake production hosts as if they were live.
-Use an explicit placeholder such as `https://<your-pmbah-host>` until the actual
-service URL is approved.
 
 ### Node path for GUI Emacs
 
@@ -178,18 +183,18 @@ you can retry.
 
 ## Verify the installation
 
-A quick local check:
+A quick public-service check:
 
-1. Start the API: `make local-container`.
-2. In Emacs, open a buffer and run `M-x pmbah-mode`.
-3. Type a short draft.
-4. Run `M-x pmbah-show-session-status`; confirm the event count is non-zero and
-   the API URL is the one you expect.
-5. Run `M-x pmbah-sign-buffer`; review capture context, upload, and confirm a
+1. In Emacs, open a buffer and run `M-x pmbah-mode`.
+2. Type a short draft.
+3. Run `M-x pmbah-show-session-status`; confirm the API URL is
+   `https://possiblymadebyahuman.com`.
+4. Run `M-x pmbah-sign-buffer`; review capture context, upload, and confirm a
    short URL is copied to the kill ring.
 
-For a custom local port, start with `PMBAH_PORT=18800 make local-container` and
-set `PMBAH_API_BASE_URL` / `pmbah-api-base-url` to `http://localhost:18800`.
+For a local development check instead, start with `make local-container` (or
+`PMBAH_PORT=18800 make local-container`) and set `PMBAH_API_BASE_URL` /
+`pmbah-api-base-url` to the matching local origin.
 
 ## Capture context review
 
@@ -265,8 +270,10 @@ make check
 - `generated record failed verification`: keep the local session and report the
   sequence; the helper rejected an internally inconsistent public process record
   before upload.
-- Upload HTTP errors: ensure `pmbah-api-base-url` points to an ingest API with
-  `POST /api/records`, usually `http://localhost:8000` for `make local-container`,
-  and that `/ready` is healthy.
+- Upload HTTP errors: run `M-x pmbah-show-session-status` and confirm
+  `pmbah-api-base-url` is `https://possiblymadebyahuman.com` for normal public
+  use. `http://localhost:8000` only works when you are running `make
+  local-container` locally. The API origin must serve `POST /api/records`, and
+  `/ready` should be healthy.
 - No URL copied: upload did not complete; the local session is retained for
   retry.

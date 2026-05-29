@@ -33,6 +33,7 @@ test("Emacs production path allows non-empty starts and helper receives no text 
   assert.match(readme, /does not pass\s+buffer text to the helper/);
   assert.match(readme, /non-empty buffer/);
   assert.match(readme, /ERR_MODULE_NOT_FOUND/);
+  assert.match(readme, /https:\/\/possiblymadebyahuman\.com/);
   assert.match(readme, /localhost:8000/);
   assert.doesNotMatch(readme, /localhost:8787/);
 

@@ -27,10 +27,11 @@
   :prefix "pmbah-")
 
 (defcustom pmbah-api-base-url
-  (or (getenv "PMBAH_API_BASE_URL") "http://localhost:8000")
+  (or (getenv "PMBAH_API_BASE_URL") "https://possiblymadebyahuman.com")
   "Base URL for the PMBAH ingest API.
-The producer posts records to `/api/records` below this URL.  The default
-matches `make local-container`."
+The producer posts records to `/api/records` below this URL.  The default is
+the public PMBAH service; set `PMBAH_API_BASE_URL` or customize this variable
+to use a local `make local-container` stack."
   :type 'string
   :group 'pmbah)
 
