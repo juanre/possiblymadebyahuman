@@ -334,7 +334,7 @@ function truncateHash(hash: string): string {
 export function RecordPage({ record }: { record: RecordApiResponse }) {
   return (
     <main className="page-shell">
-      <p className="eyebrow">possiblymadebyahuman</p>
+      <p className="eyebrow"><a className="eyebrow-home" href="/">← possiblymadebyahuman</a></p>
       <h1>Writing record</h1>
       <DisclaimerBanner />
       <CaptureContextSummary record={record} />
