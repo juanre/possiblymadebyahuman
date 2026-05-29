@@ -113,8 +113,8 @@ For something called a signature, that is unacceptable.
 Therefore the binding is sealed into the record's identity hash:
 
 ```
-event_tip = chain[last]                       // computed as today (format 0.1 rules)
-record_hash = event_tip                        // when no text_binding is present (identical to 0.1)
+event_tip = chain[last]                        // BLAKE3 event chain; seed uses format_version "0.2"
+record_hash = event_tip                        // when no text_binding is present
 record_hash = b3(event_tip ‖ canon(binding))   // when a text_binding is present
 ```
 
@@ -128,9 +128,14 @@ Consequences:
 - `verifyRecord` recomputes the event chain, then re-applies the seal
   when a binding is present, and compares to `manifest.record_hash`.
   Browser-verifiable, same as the event chain today.
-- **Format version → `0.2`.** Records with no binding compute an
-  identical `record_hash` to `0.1`. New conformance vectors cover the
-  sealed case.
+- **Format version → `0.2`.** The event-chain seed includes
+  `format_version`, so a `0.2` record's `record_hash` is **not**
+  byte-identical to a `0.1` record over the same events — and it need not
+  be. Existing `0.1` records keep their version, seed, and hashes and
+  continue to verify under `0.1` rules untouched; `verifyRecord`
+  dispatches on `format_version`. New conformance vectors cover the `0.2`
+  no-binding and sealed cases; all existing `0.1` vectors must keep
+  passing unchanged.
 
 **Circularity note:** the commitment is salted with `session_id`
 (`b3(session_id ‖ canonical_form)`), **not** with `record_hash` —
@@ -184,9 +189,9 @@ content-blind invariant.
   "not exact text" disclaimer. A prominent "checked in your browser —
   nothing is uploaded" line. Separately and always shown: the
   commensurability facts (§2.3), visually distinct from the match result.
-- **No binding present (the common case — most records will have none):**
-  show plainly *"No document was bound to this record."* Do not hide the
-  section; absence is honest information.
+- **No binding present** (legacy `0.1` records, and any record signed
+  without binding): show plainly *"No document was bound to this
+  record."* Do not hide the section; absence is honest information.
 
 ## 5. Explicitly out of scope
 
