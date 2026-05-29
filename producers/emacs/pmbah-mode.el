@@ -188,7 +188,7 @@ callers and must be a JSON-serializable plist."
                            (buffer-substring-no-properties (region-beginning) (region-end))
                          (buffer-substring-no-properties (point-min) (point-max)))))
          (bind-policy (when bind
-                        (if (yes-or-no-p "Allow appended text after it (e.g. a signature line)? ")
+                        (if (yes-or-no-p "Allow extra text before or after it (e.g. a quoted header or a signature line)? ")
                             "prefix" "exact")))
          (_affirm (when (and bind (not (y-or-n-p "Affirm this is the text this record is meant to cover? ")))
                     (user-error "Signing aborted")))
