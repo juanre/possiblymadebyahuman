@@ -28,7 +28,7 @@ test.describe("public record page", () => {
   test("renders the edit timeline without document text", async ({ page }) => {
     const timeline = page.locator("section.card", { hasText: "Edit timeline" });
     await expect(timeline).toContainText("Document length and event activity over time");
-    await expect(timeline).toContainText("No text is stored");
+    await expect(timeline).toContainText("Bars above the curve are events colored by source");
     const chart = timeline.locator("svg.timeline-chart");
     await expect(chart).toHaveCount(1);
     await expect(chart).toHaveAttribute("role", "img");

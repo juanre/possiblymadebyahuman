@@ -117,7 +117,7 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   return (
     <section className="card timeline-card">
       <h2>Edit timeline</h2>
-      <p className="muted">Document length and event activity over time. Bars above the curve are events colored by source; vertical bands are long pauses. No text is stored, hashed, or reconstructed.</p>
+      <p className="muted">Document length and event activity over time. Bars above the curve are events colored by source; vertical bands are long pauses.</p>
       <svg className="timeline-chart" viewBox={`0 0 ${TIMELINE_VB_W} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
         {pauseSpans.map((point) => {
           const startT = Math.max(0, point.t - point.delayFromPreviousMs);
@@ -339,9 +339,9 @@ export function RecordPage({ record }: { record: RecordApiResponse }) {
       <DisclaimerBanner />
       <CaptureContextSummary record={record} />
       <QuickStatsPanel record={record} />
+      <EditTimeline record={record} />
       <SignalList signals={record.signals} />
       <VerificationPanel record={record} />
-      <EditTimeline record={record} />
     </main>
   );
 }
