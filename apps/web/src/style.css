@@ -181,12 +181,17 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   border-top: 1px solid #eadfce;
   padding-top: 12px;
 }
-.binding-result-headline { margin: 0; font-weight: 700; }
-.binding-result.ok .binding-result-headline { color: #166534; }
+/* The match headline is a statement about wording, not a pass/fail verdict,
+   so it uses neutral ink — never the verification green — to avoid reading
+   as an authenticity certificate. A no-match keeps a quiet warning red. */
+.binding-result-headline { margin: 0; font-weight: 700; color: #202124; }
 .binding-result.error .binding-result-headline { color: #a12a2a; }
 .binding-result-note { margin: 6px 0 0; font-size: 0.9rem; }
 .binding-result-warning { margin: 8px 0 0; color: #6e5631; font-size: 0.92rem; }
 .commensurability { display: grid; gap: 12px; margin-top: 8px; }
+/* Distinct surface so the human-judgment card never reads as a continuation
+   of the automated check above it. */
+.commensurability-card { background: #f6efe2; border-color: #e2d4ba; }
 
 /* /write — canvas-first layout */
 .write-shell {

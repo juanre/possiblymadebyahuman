@@ -92,6 +92,7 @@ export function WritePage() {
   const [policy, setPolicy] = useState<TextBindingPolicy>("prefix");
   const [bindDocument, setBindDocument] = useState(true);
   const [canBind, setCanBind] = useState(false);
+  const signSheetRef = useRef<HTMLDivElement | null>(null);
 
   const refreshSession = useCallback((sessionId: string) => {
     const next = registry.get(sessionId);
@@ -274,6 +275,14 @@ export function WritePage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [canSign, canRetry, confirming, openSignConfirm, signAndUpload]);
 
+  // Move focus into the sign sheet when it opens, so keyboard and screen-reader
+  // users land on the first actionable control rather than the modeline button.
+  useEffect(() => {
+    if (!confirming) return;
+    const focusable = signSheetRef.current?.querySelector<HTMLElement>("input:not(:disabled), button");
+    focusable?.focus();
+  }, [confirming]);
+
   return <div className="write-shell">
     <a className="write-home" href="/">← possiblymadebyahuman</a>
 
@@ -297,7 +306,7 @@ export function WritePage() {
     ) : null}
 
     {confirming && !uploaded ? (
-      <div className="write-sign-sheet" role="dialog" aria-label="Sign this record">
+      <div className="write-sign-sheet" role="dialog" aria-label="Sign this record" ref={signSheetRef}>
         <p className="write-sign-affirm">I affirm this is the text this record is meant to cover.</p>
         <label className="write-sign-option">
           <input
@@ -312,11 +321,11 @@ export function WritePage() {
           <fieldset className="write-sign-policy">
             <label>
               <input type="radio" name="bind-policy" checked={policy === "prefix"} onChange={() => setPolicy("prefix")} />
-              <span>Allow appended text after it (prefix)</span>
+              <span>Allow text after it — a signature line or reply footer</span>
             </label>
             <label>
               <input type="radio" name="bind-policy" checked={policy === "exact"} onChange={() => setPolicy("exact")} />
-              <span>Exactly this text, nothing after (exact)</span>
+              <span>Only this text — nothing after it</span>
             </label>
             <p className="write-sign-note">The check compares wording — letters and digits — not exact text.</p>
           </fieldset>

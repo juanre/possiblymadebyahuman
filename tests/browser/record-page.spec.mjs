@@ -102,7 +102,7 @@ test.describe("public record page", () => {
   });
 
   test("a record with no binding shows the no-binding state", async ({ page }) => {
-    const card = page.locator("section.card", { hasText: "Bound document" });
+    const card = page.locator("section.card", { hasText: "Document binding" });
     await expect(card).toContainText("No document was bound to this record.");
   });
 });
@@ -129,7 +129,8 @@ test.describe("text binding — bound record", () => {
     await card.getByRole("button", { name: "Check" }).click();
     const result = card.locator(".binding-result");
     await expect(result).toHaveClass(/ok/);
-    await expect(result).toContainText(/followed by \d+ more characters/);
+    await expect(result).toContainText("Same wording as the signed text");
+    await expect(result).toContainText(/\d+ more characters? after it/);
   });
 
   test("leading over-selection still matches with material before the signed text", async ({ page }) => {
@@ -138,7 +139,7 @@ test.describe("text binding — bound record", () => {
     await card.getByRole("button", { name: "Check" }).click();
     const result = card.locator(".binding-result");
     await expect(result).toHaveClass(/ok/);
-    await expect(result).toContainText(/preceded by \d+ more characters/);
+    await expect(result).toContainText(/\d+ more characters? before it/);
     await expect(result).toContainText("not a check of exact text");
   });
 

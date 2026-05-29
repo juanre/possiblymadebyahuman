@@ -148,9 +148,9 @@ export function describeBindingMatch(result: BindingCheckResult): BindingMatchSu
   }
   let headline: string;
   if (result.kind === "trailing") {
-    headline = `Same wording as the signed text, followed by ${result.trailingCount} more ${result.trailingCount === 1 ? "character" : "characters"}.`;
+    headline = `Same wording as the signed text, plus ${result.trailingCount} more ${result.trailingCount === 1 ? "character" : "characters"} after it (for example an appended signature line).`;
   } else if (result.kind === "leading") {
-    headline = `Same wording as the signed text, preceded by ${result.leadingCount} more ${result.leadingCount === 1 ? "character" : "characters"}.`;
+    headline = `Same wording as the signed text, with ${result.leadingCount} more ${result.leadingCount === 1 ? "character" : "characters"} before it (for example a quoted header).`;
   } else {
     headline = "Same wording as the signed text.";
   }

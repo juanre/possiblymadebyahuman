@@ -335,8 +335,8 @@ export function TextBindingSection({ record }: { record: RecordApiResponse }) {
   const binding = record.manifest.text_binding;
   if (!binding) {
     return (
-      <section className="card" aria-label="Bound document">
-        <h2>Bound document</h2>
+      <section className="card" aria-label="Document binding">
+        <h2>Document binding</h2>
         <p className="muted">No document was bound to this record.</p>
       </section>
     );
@@ -403,8 +403,9 @@ export function CommensurabilityCard({ record }: { record: RecordApiResponse }) 
   return (
     <section className="card commensurability-card" aria-label="How this was written">
       <h2>How this was written</h2>
+      <p className="muted">A separate judgment, for you to make — not an automated result. Weigh the signed size against the recorded process.</p>
       <div className="commensurability">
-        <Stat label="Signed text" value={`${binding.canonical_length} letters & digits`} />
+        <Stat label="Signed text" value={`${binding.canonical_length} letters & digits (no punctuation or spacing)`} />
         <Stat
           label="Writing process"
           value={`${formatDuration(stats.duration_ms)} · ${stats.event_count} edits · ${pasteLabel} · largest insert ${stats.largest_atomic_insert_codepoints}`}
