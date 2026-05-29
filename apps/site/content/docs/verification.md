@@ -7,13 +7,13 @@ Every public record page includes a **Signature & details** section. A record's 
 
 ## What the section shows
 
-- **Full record hash** — the record's signature, as stored in the manifest. The short URL is a prefix of this hash.
-- **Computed hash** — the same hash, recomputed in your browser from the event log (and, for a bound record, the content-blind document commitment). If it equals the stored hash, the events reproduce the signature.
-- **Server metadata** — whether the server recorded an ingestion time, or only a client-claimed time.
+- **Full record hash**: the record's signature, as stored in the manifest. The short URL is a prefix of this hash.
+- **Computed hash**: the same hash, recomputed in your browser from the event log (and, for a bound record, the content-blind document commitment). If it equals the stored hash, the events reproduce the signature.
+- **Server metadata**: whether the server recorded an ingestion time, or only a client-claimed time.
 
 When the record was server-observed, this section also carries the one-line observation status and the collapsible list of server-observed commitments.
 
-The recomputation runs automatically when the page loads — there is no button to press. Checking whether a particular text is the one that was signed is a separate tool, the [document checker](/docs/checking-a-document/).
+The recomputation runs automatically when the page loads; there is no button to press. Checking whether a particular text is the one that was signed is a separate tool, the [document checker](/docs/checking-a-document/).
 
 ## How the hash is computed
 
@@ -32,13 +32,13 @@ Recomputing the hash confirms:
 
 - The events were not altered after the signer uploaded them.
 - The manifest is internally consistent (event count, declared duration vs. last event time, etc.).
-- The stored `record_hash` matches what the events — and any document binding — actually produce when re-hashed in canonical form.
+- The stored `record_hash` matches what the events, and any document binding, actually produce when re-hashed in canonical form.
 
 It does **not** confirm:
 
-- That the signer authored the words. The hash chain never inspects the text. A signer may separately **bind** a document so a reader can check that a given text is the one signed (see [Bind and check a document](/docs/checking-a-document/)) — but even a match confirms *wording*, not authorship.
+- That the signer authored the words. The hash chain never inspects the text. A signer may separately **bind** a document so a reader can check that a given text is the one signed (see [Bind and check a document](/docs/checking-a-document/)), but even a match confirms *wording*, not authorship.
 - That a human typed the events instead of a script driving the producer.
-- That the `capture_context` is true — that field is metadata the signer chose to include, not a sworn attribution.
+- That the `capture_context` is true; that field is metadata the signer chose to include, not a sworn attribution.
 
 A matching hash is a consistency check, not a verdict. Comparing the recomputed hash to the manifest's own hash field tells you the record is internally consistent and unaltered; it says nothing about who wrote the text.
 

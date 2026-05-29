@@ -1,6 +1,6 @@
 ---
 title: "Server-observed commitments"
-summary: "What the server-observed checkpoints on a record mean — and the limits of what they say."
+summary: "What the server-observed checkpoints on a record mean, and the limits of what they say."
 ---
 
 A writing record published by `possiblymadebyahuman` can carry a list of **server-observed commitments**. Each commitment is a short, content-blind message that the producer sent to the ingest service while the writing session was still open: it names a position in the event-chain (the commitment's `event_count`) and a chain-tip (a BLAKE3 prefix hash that depends on every event up to that point). The server timestamps each commitment as it arrives and stores it alongside the finalised record.
@@ -21,15 +21,15 @@ The server saw the start of this session but not the tail. Either connectivity w
 
 ### Not observed
 
-No server commitment was received for this session. Either the producer was offline for the whole session, every commitment attempt failed, or the producer was configured without observation. The signed record remains valid on its own — absence of observation is itself a real signal in the record, not a defect.
+No server commitment was received for this session. Either the producer was offline for the whole session, every commitment attempt failed, or the producer was configured without observation. The signed record remains valid on its own; absence of observation is itself a real signal in the record, not a defect.
 
 ### No observation requested
 
-Some producers do not request observation — for example a producer used entirely offline or one that chooses to ship records without server timestamps. The signed record is verifiable on its own.
+Some producers do not request observation, for example a producer used entirely offline or one that chooses to ship records without server timestamps. The signed record is verifiable on its own.
 
 ## Server-observed span
 
-When a record is observed or partially observed, the page shows a **Server-observed span**: the wall-clock distance between the first and last commitments — it does not count active typing, and it includes any idle gaps between commitments.
+When a record is observed or partially observed, the page shows a **Server-observed span**: the wall-clock distance between the first and last commitments; it does not count active typing, and it includes any idle gaps between commitments.
 
 A reader might reasonably ask: "If the server saw a chain tip at 14:02 and another at 14:34, doesn't that mean the writing took at least 32 minutes?" The precise answer is no. The server received commitments to the event-chain prefix at those times. A commitment shows that the events covered by it were already shaped before the server received the commitment, and a later check against the final record can confirm the commitment matches the corresponding prefix. The mechanism does not establish how much active writing time elapsed, and it does not rule out an attacker pre-computing events offline and submitting commitments at cadence. The product makes after-the-fact fabrication materially more work; it does not make fabrication impossible.
 

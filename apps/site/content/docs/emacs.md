@@ -8,14 +8,14 @@ eyebrow: "Producer"
 
 ## What it captures
 
-- Buffer mutations recorded after `pmbah-mode` starts — not raw keystrokes, not OS-level input, and not pre-existing buffer contents.
+- Buffer mutations recorded after `pmbah-mode` starts, not raw keystrokes, OS-level input, or pre-existing buffer contents.
 - If the buffer is already non-empty, the mode still records only later mutation positions/lengths/timing. It does not store a starting buffer length, snapshot, hash, or replay fixture. Some length-derived stats may be `unknown` because the verifier cannot infer total document length from the captured suffix alone.
 - Codepoint-anchored process metadata: insert, delete, and replace operations with zero-based Unicode codepoint offsets and lengths. Wall-clock timing relative to the session start.
 - Source attribution where reliable. Common Emacs commands (`self-insert-command`, `yank`, `kill-region`, and so on) map to typing / paste / cut / etc.; ambiguous cases fall back to `unknown` rather than guess.
 
 ## What it does not capture
 
-- Your document text. No plaintext leaves the producer. The local Node helper that builds the public record is passed numeric process metadata only — with one sanctioned exception: if you choose to bind the document at sign time, the helper receives the selected text transiently so it can compute the content-blind binding commitment, then discards it. Only the commitment is uploaded; the text never leaves your machine. See [Bind and check a document](/docs/checking-a-document/).
+- Your document text. No plaintext leaves the producer. The local Node helper that builds the public record is passed numeric process metadata only, with one sanctioned exception: if you choose to bind the document at sign time, the helper receives the selected text transiently so it can compute the content-blind binding commitment, then discards it. Only the commitment is uploaded; the text never leaves your machine. See [Bind and check a document](/docs/checking-a-document/).
 - Absolute local file paths. The capture-context review preview shows the path as omitted by default.
 - Anything outside the buffer `pmbah-mode` is attached to. The mode is per-buffer.
 
@@ -104,8 +104,6 @@ For the default local port:
 (setq pmbah-api-base-url "http://localhost:8000")
 ```
 
-Do not configure a fake production host as if it were live.
-
 ### Node path for GUI Emacs
 
 If GUI Emacs cannot find Node, set either:
@@ -120,7 +118,7 @@ or:
 (setq pmbah-node-command "/opt/homebrew/bin/node")
 ```
 
-Use the path printed by `command -v node` in the shell where the repository tests pass.
+Use the path printed by `command -v node` in a shell where Node is available.
 
 ## Usage
 
@@ -168,15 +166,15 @@ It then asks separately whether to include `emacs.buffer_name` and `emacs.major_
 
 ## Troubleshooting
 
-- **`PMBAH helper script is not readable`** — set `pmbah-helper-script` to the helper path in the checkout where you ran `npm ci` / `make install`.
-- **`Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@noble/hashes'`** — install repository dependencies from the repo root (`npm ci` or `make install`) and confirm `pmbah-helper-script` points to `producers/emacs/scripts/build-record.mjs` inside that same checkout.
-- **`Searching for program: No such file or directory, node`** — GUI Emacs cannot find Node. Set `PMBAH_NODE` or `pmbah-node-command` to an absolute Node path.
-- **`generated record failed verification`** — keep the local session and report the sequence; the helper rejected an internally inconsistent public process record before upload.
-- **Upload HTTP errors** — run `M-x pmbah-show-session-status` and confirm `pmbah-api-base-url` is `https://possiblymadebyahuman.com` for normal public use. `http://localhost:8000` only works when you are running `make local-container` locally. The API origin must serve `POST /api/records`, and `/ready` should be healthy.
-- **No URL copied** — upload did not complete; the local session is retained for retry.
+- **`PMBAH helper script is not readable`**: set `pmbah-helper-script` to the helper path in the checkout where you ran `npm ci` / `make install`.
+- **`Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@noble/hashes'`**: install repository dependencies from the repo root (`npm ci` or `make install`) and confirm `pmbah-helper-script` points to `producers/emacs/scripts/build-record.mjs` inside that same checkout.
+- **`Searching for program: No such file or directory, node`**: GUI Emacs cannot find Node. Set `PMBAH_NODE` or `pmbah-node-command` to an absolute Node path.
+- **`generated record failed verification`**: keep the local session and report the sequence; the helper rejected an internally inconsistent public process record before upload.
+- **Upload HTTP errors**: run `M-x pmbah-show-session-status` and confirm `pmbah-api-base-url` is `https://possiblymadebyahuman.com` for normal public use. `http://localhost:8000` only works when you are running `make local-container` locally. The API origin must serve `POST /api/records`, and `/ready` should be healthy.
+- **No URL copied**: upload did not complete; the local session is retained for retry.
 
 ## Sibling producers
 
 The [browser writing page](/write) is the no-install producer: an empty drafting canvas in your browser that records edits made inside it, signs, and returns a short URL. A capture-all browser extension producer of the same record format is also in the repository (`apps/browser-extension/`); its public install path will be linked here once the Chrome Web Store listing is approved.
 
-All three producers — Emacs, the browser writing page, and the extension — sign content-blind manifests that `packages/format` verifies the same way. See [the verification page](/docs/verification/) for the chain of trust and [the records page](/docs/records/) for the public record format.
+All three producers (Emacs, the browser writing page, and the extension) sign content-blind manifests that `packages/format` verifies the same way. See [the verification page](/docs/verification/) for the chain of trust and [the records page](/docs/records/) for the public record format.

@@ -1,33 +1,18 @@
 ---
-title: "Product promise"
-summary: "What this record is, and what it deliberately is not."
+title: "What this is"
+summary: "A signed record of how a piece of writing was written, not a verdict about who wrote it."
 ---
 
-`possiblymadebyahuman` records the shape of a writing process and gives someone an inspectable, hash-addressed process record. The record never contains, stores, or reconstructs the text that was written; if the signer binds a document, it carries only a content-blind commitment to that text — computed locally, with the text discarded — never the text itself.
+You wrote something, and you'd like to show that you wrote it. Not hand over the words and ask to be believed, just show the *work*: the shape of how it actually happened, the typing and the backtracking and the long pause where you got up for coffee.
 
-The product is **not** a detector and must not become one.
+Why bother? Because it is maddening that this is even necessary, that you can write your own sentences and still have to prove they are yours, because somewhere a detector or a skeptic decided they looked too tidy for a human. It is infuriating. It is also real, and a lot of people genuinely need a way to show their work. So we made one.
 
-## The single claim we make
+Here is what we do. While you write, we capture the shape of your editing, never the text itself, and sign it with a hash chain into a short URL anyone can open. If you like, you can bind the finished text to the record too. Not by storing it (we never do that), but by keeping a content-blind fingerprint, computed on your own machine and then thrown away, so a reader can later check that the copy in front of them is the one you signed.
 
-> This record shows the shape of an editing process. It makes pasted and atomically inserted content visible. It does not prove that a human originated the ideas, and it cannot detect a human retyping an AI draft from another screen.
+A reader gets something concrete instead of taking you on faith. They can watch the writing grow letter by letter over twenty minutes, or land in one four-thousand-character paste. They can recompute the signature in their own browser and confirm nothing was touched after you signed it.
 
-That sentence is the standing disclaimer rendered on every record page. It is the only authorship-shaped claim the service makes.
+Here is what it cannot do. It cannot prove a human wrote it. Nobody can, and anything that claimed to would be bluffing. It will not score you, stamp you human-or-machine, or hand you a certificate. What it offers is the shape of the process, with your name on it.
 
-## Hard rules
+And here is how you would fake it: write a program that types the way a person does, with its hesitations, typos, second thoughts, the occasional pause, and let it drive the record. Nothing stops that. But the record *is* the timing, so the forgery has to run in real time. Faking a twenty-minute essay costs your program twenty patient minutes of pretending to think. Faking a week of work takes a week. It does not make cheating impossible. It makes it as slow as just writing the thing, which is the whole bargain.
 
-1. **No verdicts.** No human/AI label, no confidence percentage, no badge implying certification of humanity, no aggregate authorship score.
-2. **Process, not content.** The public service stores edit structure, metadata, and statistics. It does not store plaintext document content. An optional document binding adds only a content-blind commitment to the signed text — computed locally, with the text discarded — never the text.
-3. **Hash-addressed records.** A record URL is a short signature that resolves to a record whose full hash is always shown and browser-verifiable.
-4. **Tone matters.** The UI is candid, lightweight, and self-aware: "we cannot prove it, but here is us caring enough to show the work."
-
-## What this is for
-
-- Letting an author share a *gesture* — "here is the shape of how I wrote this" — without handing over the text or asking a service to vouch for them.
-- Making certain mechanical patterns visible: a single 4,000-codepoint paste, an unbroken burst of insertions at a constant interval, or a completely empty editing process.
-- Giving a reader something concrete to look at instead of asking them to take it on faith — while being clear that the gesture is not proof.
-
-## What this is not for
-
-- Settling disputes about whether a particular passage was AI-generated.
-- Replacing assessment, attribution, or judgement by a human reader.
-- Creating a marketplace of "verified human" content.
+Your text stays yours. It is never uploaded, stored, or reconstructed from a record, only the shape of the process and, if you choose, a fingerprint that points back to your words without giving them away.

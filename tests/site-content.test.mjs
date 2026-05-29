@@ -25,7 +25,7 @@ const requiredDocPages = [
 const sectionsCoveringProductPromise = [
   { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/write", "/docs/emacs/"] },
   { file: "docs/emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open a writing buffer", "length-derived stats may be unknown"] },
-  { file: "docs/product-promise.md", needs: ["No verdicts", "Process, not content", "Hash-addressed records"] },
+  { file: "docs/product-promise.md", needs: ["never uploaded, stored, or reconstructed", "recompute the signature in their own browser", "human-or-machine"] },
   { file: "docs/claims.md", needs: ["We claim", "We do not claim"] },
   { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system", "chrome.storage.local", "bearer", "Server-observed checkpoints", "GitHub issues"] },
   { file: "docs/terms.md", needs: ["MIT licensed", "provided as-is", "no public deletion API", "not a detector", "Identity and authorship assertions", "Moderation and removal", "project issue tracker"] },
@@ -42,7 +42,7 @@ const sectionsCoveringProductPromise = [
       "Not observed",
       "No observation requested",
       "Server-observed span",
-      "wall-clock distance between the first and last commitments — it does not count active typing, and it includes any idle gaps between commitments.",
+      "wall-clock distance between the first and last commitments; it does not count active typing, and it includes any idle gaps between commitments.",
       "after-the-fact fabrication materially more work",
     ],
   },

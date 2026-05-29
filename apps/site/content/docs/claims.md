@@ -1,5 +1,5 @@
 ---
-title: "What we claim — and do not claim"
+title: "What we claim, and do not claim"
 summary: "A short, candid list of what the record means and what it deliberately does not mean."
 ---
 
@@ -9,7 +9,7 @@ summary: "A short, candid list of what the record means and what it deliberately
 - The record is hash-addressed. Anyone with the URL can recompute the BLAKE3 hash chain from the stored events and confirm that the events have not been altered since the signer uploaded them.
 - The record was uploaded at a specific server-stamped time (`ingested_server_t`).
 - The producer that created the record declared a specific set of capabilities (e.g. timing, source attribution). Analyzers explicitly report when a capability is missing instead of penalising the record for it.
-- When the signer bound a document, a reader can check — in their own browser, with nothing uploaded — that a given text matches the signed one at the level of *wording*: letters and digits in order, ignoring spacing, punctuation, case, and number formatting. See [Bind and check a document](/docs/checking-a-document/).
+- When the signer bound a document, a reader can check (in their own browser, with nothing uploaded) that a given text matches the signed one at the level of *wording*: letters and digits in order, ignoring spacing, punctuation, case, and number formatting. See [Bind and check a document](/docs/checking-a-document/).
 
 ## We do not claim
 
@@ -22,6 +22,6 @@ summary: "A short, candid list of what the record means and what it deliberately
 
 ## Why this matters
 
-The temptation with a system like this is to ship a single number — a score, a percentage, a colour bar — and let readers infer "this was human." We do not.
+The temptation with a system like this is to ship a single number (a score, a percentage, a colour bar) and let readers infer "this was human." We do not.
 
-Aggregate human/AI scores are exactly the failure mode this product exists to avoid. Analyzer signals are presented as factual descriptors (counts, distributions, deltas), each with its own explanation, and never combined into a single verdict.
+This service never rolls its signals up into a single human/AI score. Analyzer signals are presented as factual descriptors (counts, distributions, deltas), each with its own explanation, and never combined into a verdict.

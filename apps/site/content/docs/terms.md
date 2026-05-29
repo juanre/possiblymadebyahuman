@@ -5,13 +5,13 @@ summary: "What you can expect from this service, and what the service expects fr
 
 This is a lightweight v0 statement of what `possiblymadebyahuman` is and isn't as a hosted service. It is intentionally short. The code that runs the service is [open source, MIT licensed](https://github.com/juanre/possiblymadebyahuman/blob/main/LICENSE), but the MIT licence covers the code; it does not by itself describe how the hosted service behaves. This page does.
 
-If you need formal terms — for an employer, an institution, or a use case where written assurance matters — this page is not those, and you should reach out via the [project issue tracker](https://github.com/juanre/possiblymadebyahuman/issues) to discuss before relying on the service.
+If you need formal terms (for an employer, an institution, or a use case where written assurance matters), this page is not those, and you should reach out via the [project issue tracker](https://github.com/juanre/possiblymadebyahuman/issues) to discuss before relying on the service.
 
 ## What the service is
 
 - A content-blind writing-record producer plus an ingest endpoint that stores those records and serves them at hash-addressed URLs.
 - The producer never reads the text of what you write; the public record contains only the shape of the editing (positions, lengths, timing, source attribution), a BLAKE3 hash chain over those events, and a small `capture_context` block you reviewed before signing. See the [privacy page](/docs/privacy/) for the full data inventory.
-- The service makes no claim about whether a human wrote anything. It is **not a detector** and not a verdict, score, badge, or certificate. The [claims page](/docs/claims/) lists exactly what is and is not asserted.
+- The service makes no claim about whether a human wrote anything. It is **not a detector**, and it does not issue a verdict, score, badge, or certificate. The [claims page](/docs/claims/) lists exactly what is and is not asserted.
 
 ## Service is provided as-is
 
@@ -35,7 +35,7 @@ If you need formal terms — for an employer, an institution, or a use case wher
 ## Identity and authorship assertions
 
 - The service does not validate identity. When you sign a record you are asserting, in your own name and on your own authority, that you produced the writing. The service stores your assertion alongside the record and gives the assertion a permanent, hash-addressed URL; it does not certify the assertion.
-- The product was built to make spoofing the writing process materially more work — committing chain tips at real wall-clock cadence makes after-the-fact fabrication take roughly as long as the original writing would have. That is a useful property; it is not a proof of authorship.
+- The product was built to make spoofing the writing process materially more work: committing chain tips at real wall-clock cadence makes after-the-fact fabrication take roughly as long as the original writing would have. That is a useful property; it is not a proof of authorship.
 
 ## Moderation and removal
 
@@ -54,7 +54,3 @@ If you need formal terms — for an employer, an institution, or a use case wher
 ## Contact
 
 The canonical channel for v0 is the [project issue tracker](https://github.com/juanre/possiblymadebyahuman/issues). There is no separate support email. The service operator is the maintainer named in the repository.
-
-## Open question
-
-Whether this lightweight v0 page is sufficient depends on the operator's jurisdiction, the audience the service ends up serving, and whether the human/operator decides a formal terms-of-service document is warranted before broader release. The maintainer's working assumption is that v0 ships under these notes and that a more formal document is a deliberate decision attached to a later release milestone, not a default. If you have a use case that requires more, open an issue.

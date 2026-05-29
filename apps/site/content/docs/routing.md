@@ -72,4 +72,4 @@ NODE_ENV=production
 LOG_LEVEL=info
 ```
 
-The single-container model means deploying a new build of either the Hugo site or the Vite record app rebuilds the same image — there is no separate static surface to keep in sync, and the routing contract above is the only thing the container has to honour.
+The single-container model means deploying a new build of either the Hugo site or the Vite record app rebuilds the same image; there is no separate static surface to keep in sync, and the routing contract above is the only thing the container has to honour.

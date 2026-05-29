@@ -5,7 +5,7 @@ summary: "How a buffer mutation log becomes a hash-addressed record with a short
 
 ## The primitive: a buffer mutation
 
-Producers do not capture raw keystrokes. They capture *buffer mutations*: a single change to the underlying field, recorded as positions and lengths only — never as the content of the change.
+Producers do not capture raw keystrokes. They capture *buffer mutations*: a single change to the underlying field, recorded as positions and lengths only, never as the content of the change.
 
 ```json
 {
@@ -21,13 +21,13 @@ Producers do not capture raw keystrokes. They capture *buffer mutations*: a sing
 
 - `seq` is monotonic and gap-free, starting at 0.
 - `t` is integer milliseconds since session start.
-- `pos`, `del_len`, `ins_len` are Unicode codepoint offsets and lengths — never UTF-16 units or bytes. Each is a number, or an explicit `null` when the producer cannot derive a value content-blindly (e.g. multi-node HTML paste into a rich-text editor). Producers must not guess.
+- `pos`, `del_len`, `ins_len` are Unicode codepoint offsets and lengths, never UTF-16 units or bytes. Each is a number, or an explicit `null` when the producer cannot derive a value content-blindly (e.g. multi-node HTML paste into a rich-text editor). Producers must not guess.
 - `op` is one of `insert`, `delete`, or `replace`.
 - `source` is one of `typing`, `paste`, `cut`, `drop`, `ime`, `autocomplete`, `programmatic`, or `unknown`. Producers must mark uncertain attribution as `unknown` rather than overclaiming `typing`.
 
 ## The manifest
 
-Every record carries a manifest with format version, BLAKE3 `record_hash`, session id, producer info, capture context, basic stats, and ingestion time. It may also carry an optional content-blind `text_binding` (a commitment to the signed document — see [Bind and check a document](/docs/checking-a-document/)). When no binding is present, the `record_hash` equals the final hash of the event log's hash chain; when a binding is present, the `record_hash` is sealed over it too, so the binding cannot be altered without changing the hash.
+Every record carries a manifest with format version, BLAKE3 `record_hash`, session id, producer info, capture context, basic stats, and ingestion time. It may also carry an optional content-blind `text_binding` (a commitment to the signed document; see [Bind and check a document](/docs/checking-a-document/)). When no binding is present, the `record_hash` equals the final hash of the event log's hash chain; when a binding is present, the `record_hash` is sealed over it too, so the binding cannot be altered without changing the hash.
 
 ## Hash chain
 
@@ -53,7 +53,7 @@ https://possiblymadebyahuman.com/<short_signature>
 
 - Short signatures use a URL-safe alphabet and start around 10–12 characters.
 - The backend collision-checks against the `records` table.
-- Reserved route prefixes — `api`, `docs`, `blog`, `write`, `assets`, `record-assets`, `images`, `health`, `ready`, `live`, and similar — are never emitted as short signatures. (`blog` stays reserved even after the public blog route was dropped, so the prefix stays safe to reintroduce.)
+- Reserved route prefixes (`api`, `docs`, `blog`, `write`, `assets`, `record-assets`, `images`, `health`, `ready`, `live`, and similar) are never emitted as short signatures.
 - The full `record_hash` is always shown on the record page and is what browser verification recomputes against.
 
 ## Why a short URL still verifies safely

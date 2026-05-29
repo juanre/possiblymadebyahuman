@@ -105,7 +105,7 @@ test("docs page for server-observed commitments anchors the load-bearing span de
   const body = await readFile(docPath, "utf8");
   // Verbatim load-bearing definition required by the v5 wording sketch.
   assert.ok(
-    body.includes("wall-clock distance between the first and last commitments — it does not count active typing, and it includes any idle gaps between commitments."),
+    body.includes("wall-clock distance between the first and last commitments; it does not count active typing, and it includes any idle gaps between commitments."),
     "load-bearing span definition must appear verbatim",
   );
   // Honest-family ban (already enforced by tests/copy-audit.test.mjs but locked here too).
