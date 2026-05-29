@@ -1,4 +1,4 @@
-import type { CaptureContext } from "../../../../packages/format/src/index.ts";
+import type { CaptureContext, TextBinding, TextBindingPolicy } from "../../../../packages/format/src/index.ts";
 import type {
   FieldDescriptor,
   FieldOrigin,
@@ -29,9 +29,34 @@ export type ContentToBackground =
       kind: "sign_session";
       session_id: SessionId;
       capture_context_overrides?: Partial<CaptureContext>;
+      // Content-blind binding object computed in the content script (the only
+      // context that holds field text). Never the text itself.
+      text_binding?: TextBinding;
     }
   | { kind: "retry_failed_upload"; session_id: SessionId }
   | { kind: "discard_session"; session_id: SessionId };
+
+/**
+ * Popup -> content-script channel (via chrome.tabs.sendMessage), used at sign
+ * time to compute the content-blind text binding in the only context that can
+ * read the field. The request carries no text; the response carries only the
+ * sealed binding object (or null when the field has nothing bindable). The
+ * field text is read transiently inside the content-script handler and never
+ * retained, messaged onward, or stored.
+ */
+export type ComputeBindingRequest = {
+  kind: "compute_binding";
+  session_id: SessionId;
+  policy: TextBindingPolicy;
+};
+
+export type ComputeBindingResponse =
+  | { kind: "binding_result"; text_binding: TextBinding | null }
+  | { kind: "binding_error"; reason: string };
+
+export function isComputeBindingRequest(value: unknown): value is ComputeBindingRequest {
+  return !!value && typeof value === "object" && (value as { kind?: unknown }).kind === "compute_binding";
+}
 
 export type RegisterFieldResult =
   | { kind: "registered"; session_id: SessionId; certainty: SessionRecord["identity_certainty"] }

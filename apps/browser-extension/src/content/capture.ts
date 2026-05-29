@@ -1,11 +1,22 @@
 import { buildTextFieldMutation, insertedCodepointsForInput, sourceFromInputType } from "../lib/codepoint.ts";
 import { extractDescriptor, isEligibleTag } from "../lib/descriptor.ts";
-import type { BackgroundResponse, ContentToBackground } from "../lib/messages.ts";
+import {
+  isComputeBindingRequest,
+  type BackgroundResponse,
+  type ComputeBindingResponse,
+  type ContentToBackground,
+} from "../lib/messages.ts";
 import type { PendingMutation } from "../../../../packages/producer-core/src/index.ts";
+import { canonicalizeTextForBinding, createTextBinding } from "../../../../packages/format/src/index.ts";
 
 declare const chrome: {
   runtime: {
     sendMessage(message: ContentToBackground): Promise<BackgroundResponse>;
+    onMessage: {
+      addListener(
+        listener: (message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean | void,
+      ): void;
+    };
     id?: string;
   };
 };
@@ -271,8 +282,28 @@ function scan(root: ParentNode): void {
   }
 }
 
+// Read a field's text transiently to compute the content-blind binding. The
+// text lives only in this function's scope and is discarded on return; only the
+// sealed {scheme, policy, canonical_length, commitment} object leaves here.
+function computeBindingForSession(session_id: string, policy: "exact" | "prefix"): ComputeBindingResponse {
+  const element = document.querySelector(`[${SESSION_ATTR}="${session_id}"]`);
+  if (!(element instanceof HTMLElement)) return { kind: "binding_result", text_binding: null };
+  const text = isTextField(element) ? element.value : isContentEditable(element) ? element.textContent ?? "" : "";
+  if (canonicalizeTextForBinding(text).length === 0) return { kind: "binding_result", text_binding: null };
+  return { kind: "binding_result", text_binding: createTextBinding(text, session_id, policy) };
+}
+
 function start(): void {
   if (typeof window === "undefined" || typeof document === "undefined") return;
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (!isComputeBindingRequest(message)) return false;
+    try {
+      sendResponse(computeBindingForSession(message.session_id, message.policy));
+    } catch (error) {
+      sendResponse({ kind: "binding_error", reason: error instanceof Error ? error.message : String(error) });
+    }
+    return false;
+  });
   scan(document);
   const observer = new MutationObserver((records) => {
     for (const record of records) {

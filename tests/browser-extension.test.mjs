@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { verifyRecord } from "../packages/format/src/index.ts";
+import { createTextBinding, verifyRecord, verifyTextBindingCandidate } from "../packages/format/src/index.ts";
 import {
   buildTextFieldMutation,
   codepointCount,
@@ -406,6 +406,41 @@ test("dispatcher: signed manifest passes packages/format.verifyRecord", async ()
   const payload = upload.calls[0];
   const result = verifyRecord({ manifest: payload.manifest, events: payload.events });
   assert.equal(result.valid, true, result.errors?.join("; "));
+});
+
+test("dispatcher: sign with a content-blind text binding seals it and stays verifiable", async () => {
+  const { dispatcher, upload } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({
+    kind: "append_mutation", session_id: sid,
+    mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 11, source: "typing" },
+  });
+  await dispatcher.registry.awaitObservationIdle(sid);
+
+  // The popup computes the binding in the content script and passes only the
+  // commitment object into sign_session — never the text.
+  const documentText = "Hello there, this is the field I actually wrote.";
+  const textBinding = createTextBinding(documentText, sid, "prefix");
+  await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: textBinding });
+
+  const payload = upload.calls[0];
+  assert.equal(payload.manifest.format_version, "0.2");
+  assert.deepEqual(payload.manifest.text_binding, textBinding);
+  // record_hash is sealed over the binding — the chain still verifies.
+  assert.equal(verifyRecord({ manifest: payload.manifest, events: payload.events }).valid, true);
+  // The bound text (and an appended line) verifies against the sealed commitment.
+  const check = verifyTextBindingCandidate(payload.manifest.text_binding, `${documentText}\n-- sig`, sid);
+  assert.equal(check.valid, true);
+  // The uploaded payload carries no plaintext, only the commitment.
+  const serialized = JSON.stringify(payload);
+  assert.equal(serialized.includes("Hello there"), false);
+  assert.equal(serialized.includes("field I actually wrote"), false);
 });
 
 test("dispatcher: line break event keeps extension record verifiable", async () => {

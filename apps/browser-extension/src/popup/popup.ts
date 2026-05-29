@@ -1,8 +1,10 @@
 import type { SessionRecord } from "../../../../packages/producer-core/src/index.ts";
-import type { BackgroundResponse, ContentToBackground } from "../lib/messages.ts";
+import type { TextBinding, TextBindingPolicy } from "../../../../packages/format/src/index.ts";
+import type { BackgroundResponse, ComputeBindingRequest, ComputeBindingResponse, ContentToBackground } from "../lib/messages.ts";
 
 declare const chrome: {
   runtime: { sendMessage(message: ContentToBackground): Promise<BackgroundResponse> };
+  tabs: { sendMessage(tabId: number, message: ComputeBindingRequest): Promise<unknown> };
 };
 
 const APP = document.getElementById("app")!;
@@ -112,9 +114,65 @@ function renderSession(session: SessionRecord): HTMLElement {
   return wrap;
 }
 
-async function onSign(session: SessionRecord): Promise<void> {
+function onSign(session: SessionRecord): void {
+  openSignConfirm(session);
+}
+
+// Sign confirmation: explicit affirmation, bind-by-default with an opt-out, and
+// a policy choice. The binding is computed in the field's content script (the
+// only context with the text); the popup receives only the commitment object.
+function openSignConfirm(session: SessionRecord): void {
+  const panel = document.createElement("div");
+  panel.className = "sign-confirm";
+  panel.innerHTML = `
+    <p class="sign-affirm">I affirm this is the text this record is meant to cover.</p>
+    <label><input type="checkbox" class="sign-bind" checked /> Bind the document I wrote</label>
+    <div class="sign-policy">
+      <label><input type="radio" name="sign-policy" value="prefix" checked /> Allow text after it — a signature line or reply footer</label>
+      <label><input type="radio" name="sign-policy" value="exact" /> Only this text — nothing after it</label>
+    </div>
+    <p class="sign-note">The check compares wording — letters and digits — not exact text.</p>
+    <div class="session-actions">
+      <button class="sign-confirm-go">Sign &amp; upload</button>
+      <button class="secondary sign-confirm-cancel">Cancel</button>
+    </div>`;
+  APP.prepend(panel);
+  const bindCb = panel.querySelector(".sign-bind") as HTMLInputElement;
+  const policyWrap = panel.querySelector(".sign-policy") as HTMLElement;
+  bindCb.addEventListener("change", () => { policyWrap.hidden = !bindCb.checked; });
+  (panel.querySelector(".sign-confirm-cancel") as HTMLElement).addEventListener("click", () => void refresh());
+  (panel.querySelector(".sign-confirm-go") as HTMLElement).addEventListener("click", () => {
+    const bind = bindCb.checked;
+    const policy: TextBindingPolicy =
+      (panel.querySelector('input[name="sign-policy"]:checked') as HTMLInputElement | null)?.value === "exact" ? "exact" : "prefix";
+    void performSign(session, bind, policy);
+  });
+}
+
+async function requestBinding(session: SessionRecord, policy: TextBindingPolicy): Promise<TextBinding | undefined> {
+  const tabId = session.origin.tab_id;
+  if (typeof tabId !== "number" || tabId < 0) return undefined;
+  try {
+    const res = (await chrome.tabs.sendMessage(tabId, {
+      kind: "compute_binding",
+      session_id: session.session_id,
+      policy,
+    })) as ComputeBindingResponse | undefined;
+    return res && res.kind === "binding_result" && res.text_binding ? res.text_binding : undefined;
+  } catch {
+    // Content script gone / tab closed — fall back to signing without a binding.
+    return undefined;
+  }
+}
+
+async function performSign(session: SessionRecord, bind: boolean, policy: TextBindingPolicy): Promise<void> {
   showToast("uploading…");
-  const response = await chrome.runtime.sendMessage({ kind: "sign_session", session_id: session.session_id });
+  const text_binding = bind ? await requestBinding(session, policy) : undefined;
+  if (bind && !text_binding) showToast("couldn't read the field to bind — signing the process only", true);
+  const message = text_binding
+    ? { kind: "sign_session" as const, session_id: session.session_id, text_binding }
+    : { kind: "sign_session" as const, session_id: session.session_id };
+  const response = await chrome.runtime.sendMessage(message);
   if (response.kind === "sign_session_result" && response.result.kind === "uploaded") {
     showToast(`uploaded · ${response.result.response.short_signature}`);
     try {

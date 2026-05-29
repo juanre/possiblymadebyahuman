@@ -1,4 +1,4 @@
-import type { CaptureContext } from "../../../../packages/format/src/index.ts";
+import type { CaptureContext, TextBinding } from "../../../../packages/format/src/index.ts";
 import { SessionRegistry, buildCaptureContext } from "../../../../packages/producer-core/src/index.ts";
 import type {
   ClockAdapter,
@@ -111,7 +111,7 @@ export class BackgroundDispatcher {
   }
 
   async #handleSign(message: Extract<ContentToBackground, { kind: "sign_session" }>): Promise<BackgroundResponse> {
-    const result = await this.#runSignUpload(message.session_id, message.capture_context_overrides);
+    const result = await this.#runSignUpload(message.session_id, message.capture_context_overrides, message.text_binding);
     return { kind: "sign_session_result", result };
   }
 
@@ -135,10 +135,10 @@ export class BackgroundDispatcher {
     return { kind: "discard_result", ok: true };
   }
 
-  async #runSignUpload(session_id: SessionRecord["session_id"], overrides?: Partial<CaptureContext>): Promise<SignSessionResult> {
+  async #runSignUpload(session_id: SessionRecord["session_id"], overrides?: Partial<CaptureContext>, textBinding?: TextBinding): Promise<SignSessionResult> {
     try {
       await this.registry.flushObservation(session_id);
-      const draft = this.registry.sign(session_id);
+      const draft = this.registry.sign(session_id, textBinding ? { textBinding } : {});
       if (overrides && draft.manifest.capture_context) {
         draft.manifest.capture_context = { ...draft.manifest.capture_context, ...overrides };
       }
