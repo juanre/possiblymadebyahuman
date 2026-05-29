@@ -30,7 +30,7 @@ const sectionsCoveringProductPromise = [
   { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system", "chrome.storage.local", "bearer", "Server-observed checkpoints", "GitHub issues"] },
   { file: "docs/terms.md", needs: ["MIT licensed", "provided as-is", "no public deletion API", "not a detector", "Identity and authorship assertions", "Moderation and removal", "project issue tracker"] },
   { file: "docs/records.md", needs: ["buffer mutation", "short_signature", "Hash chain", "Reserved route prefixes"] },
-  { file: "docs/verification.md", needs: ["Re-verify chain", "hash chain", "What verification does and does not mean"] },
+  { file: "docs/verification.md", needs: ["Signature & details", "Computed hash", "hash chain", "What this does and does not mean"] },
   { file: "docs/threat-model.md", needs: ["adversary", "Retype an AI draft", "hash chain detects any change"] },
   { file: "docs/conformance.md", needs: ["Canonicalization vectors", "Capability accuracy", "Content-blindness", "Capture-context preview"] },
   { file: "docs/routing.md", needs: ["/api/", "/docs/", "short_signature", "SITE_DIST_DIR"] },

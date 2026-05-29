@@ -5,7 +5,7 @@ summary: "What the server-observed checkpoints on a record mean — and the limi
 
 A writing record published by `possiblymadebyahuman` can carry a list of **server-observed commitments**. Each commitment is a short, content-blind message that the producer sent to the ingest service while the writing session was still open: it names a position in the event-chain (the commitment's `event_count`) and a chain-tip (a BLAKE3 prefix hash that depends on every event up to that point). The server timestamps each commitment as it arrives and stores it alongside the finalised record.
 
-The record page surfaces this as a one-line **Observation status** and a collapsible list of commitments inside the Verification panel. Below is what each public state name means.
+The record page surfaces this as a one-line **Observation status** and a collapsible list of commitments inside the **Signature & details** section. Below is what each public state name means.
 
 ## Observation status values
 
