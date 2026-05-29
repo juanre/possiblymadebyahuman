@@ -60,8 +60,12 @@ after."
 ### 2.2 Aggressive canonical form (`canon-letters/0.1`)
 
 Operation order, applied to a Unicode-codepoint sequence: **NFKC →
-casefold → keep only code points with Unicode property Letter, Number, or
-Mark**; drop everything else (punctuation, whitespace, symbols, case).
+full case folding → keep only code points with Unicode property Letter,
+Number, or Mark**; drop everything else (punctuation, whitespace, symbols,
+case). Case folding is Unicode Default Case Folding (full, language-neutral
+— e.g. `ß` → `ss`), **not** locale lowercasing, which diverges on forms
+such as Greek/polytonic. `canonical_length` and prefix slicing operate on
+the post-fold codepoint sequence.
 Digits are kept; separators and decimal points (punctuation) are dropped —
 so the canonical form compares letters and digits in order but not number
 *formatting*. Works for any script (Han ideographs are Letter; no ASCII
