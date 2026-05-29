@@ -192,6 +192,14 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 /* Distinct surface so the human-judgment card never reads as a continuation
    of the automated check above it. */
 .commensurability-card { background: #f6efe2; border-color: #e2d4ba; }
+.check-cta { margin: 0 0 18px; font-weight: 600; }
+.check-cta a {
+  color: #8b5e34;
+  text-decoration: none;
+  border-bottom: 1px solid #d9c8ad;
+  padding-bottom: 1px;
+}
+.check-cta a:hover, .check-cta a:focus-visible { color: #5a3819; border-bottom-color: #8b5e34; outline: none; }
 
 /* /write — canvas-first layout */
 .write-shell {

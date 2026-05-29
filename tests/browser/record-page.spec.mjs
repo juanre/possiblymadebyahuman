@@ -105,6 +105,18 @@ test.describe("public record page", () => {
     const card = page.locator("section.card", { hasText: "Document binding" });
     await expect(card).toContainText("No document was bound to this record.");
   });
+
+  test("a record with no binding shows no check-a-document link", async ({ page }) => {
+    await expect(page.locator("p.check-cta")).toHaveCount(0);
+  });
+
+  test("shows the server-observed started/ended window in quick facts", async ({ page }) => {
+    const quick = page.locator("section.card", { hasText: "Quick facts" });
+    await expect(quick).toContainText("Started (server-observed)");
+    await expect(quick).toContainText("2026-05-28 14:02 UTC");
+    await expect(quick).toContainText("Ended (server-observed)");
+    await expect(quick).toContainText("2026-05-28 14:34 UTC");
+  });
 });
 
 test.describe("text binding — bound record", () => {
@@ -151,6 +163,13 @@ test.describe("text binding — bound record", () => {
     await expect(result).toHaveClass(/error/);
     await expect(result).toContainText("don't match");
     await expect(result).toContainText("not a check of exact text");
+  });
+
+  test("offers a clear link that targets the check-a-document section", async ({ page }) => {
+    const cta = page.locator("p.check-cta a");
+    await expect(cta).toContainText("Check a document against this record");
+    await expect(cta).toHaveAttribute("href", "#check-a-document");
+    await expect(page.locator("#check-a-document")).toHaveCount(1);
   });
 
   test("commensurability is a separate card with facts, not a verdict", async ({ page }) => {

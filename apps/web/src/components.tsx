@@ -34,12 +34,20 @@ export function CaptureContextSummary({ record }: { record: RecordApiResponse })
 
 export function QuickStatsPanel({ record }: { record: RecordApiResponse }) {
   const stats = record.stats;
+  const observation = record.observation;
+  // The trusted start/end is the server-observed window — the times the server
+  // actually witnessed checkpoints. The client-claimed start (created_client_t)
+  // is from the author's own clock and is not headlined as fact.
+  const started = observation.first_observed_at ? formatUtcMinute(observation.first_observed_at) : "not server-observed";
+  const ended = observation.last_observed_at ? formatUtcMinute(observation.last_observed_at) : "not server-observed";
   return (
     <section className="card">
       <h2>Quick facts</h2>
       <div className="stats-grid">
         <Stat label="Events" value={stats.event_count} />
         <Stat label="Duration" value={formatDuration(stats.duration_ms)} />
+        <Stat label="Started (server-observed)" value={started} />
+        <Stat label="Ended (server-observed)" value={ended} />
         <Stat label="Observed length" value={stats.observed_final_length === null ? "unknown" : `${stats.observed_final_length} codepoints`} />
         <Stat label="Typing events" value={stats.typed_event_count} />
         <Stat label="Insert / delete / replace" value={`${stats.insert_op_count} / ${stats.delete_op_count} / ${stats.replace_op_count}`} />
@@ -355,7 +363,7 @@ export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
   const [candidate, setCandidate] = useState("");
   const [result, setResult] = useState<BindingCheckResult | null>(null);
   return (
-    <section className="card" aria-label="Check a document">
+    <section className="card" id="check-a-document" aria-label="Check a document">
       <h2>Check a document</h2>
       <p className="muted">Paste a document to check it against the text this record signed.</p>
       <textarea
@@ -422,6 +430,9 @@ export function RecordPage({ record }: { record: RecordApiResponse }) {
       <p className="eyebrow"><a className="eyebrow-home" href="/">← possiblymadebyahuman</a></p>
       <h1>Writing record</h1>
       <DisclaimerBanner />
+      {record.manifest.text_binding ? (
+        <p className="check-cta"><a href="#check-a-document">Check a document against this record ↓</a></p>
+      ) : null}
       <CaptureContextSummary record={record} />
       <QuickStatsPanel record={record} />
       <EditTimeline record={record} />
