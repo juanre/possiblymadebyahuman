@@ -59,11 +59,27 @@ after."
 
 ### 2.2 Aggressive canonical form (`canon-letters/0.1`)
 
-Unicode NFKC → casefold → keep only code points with Unicode property
-Letter, Number, or Mark; drop everything else (punctuation, whitespace,
-symbols, case). Works for any script (Han ideographs are Letter; no
-ASCII assumption). Pinned precisely in `docs/spec/canonicalization.md`
-with conformance vectors.
+Operation order, applied to a Unicode-codepoint sequence: **NFKC →
+casefold → keep only code points with Unicode property Letter, Number, or
+Mark**; drop everything else (punctuation, whitespace, symbols, case).
+Digits are kept; separators and decimal points (punctuation) are dropped —
+so the canonical form compares letters and digits in order but not number
+*formatting*. Works for any script (Han ideographs are Letter; no ASCII
+assumption).
+
+`docs/spec/canonicalization.md` is **normative** and must pin: the Unicode
+version baseline; the exact operation ordering above; codepoint-based
+prefix slicing semantics (the `prefix` policy slices the canonical form by
+*codepoint* count, never by UTF-16 unit or byte); and conformance vectors
+covering combining marks, NFKC compatibility forms, non-Latin casefold,
+surrogate handling, and the zero-length case.
+
+**Zero-length canonical form is unbindable.** A selection that reduces to
+nothing — symbol/emoji-only (`🎉🎉🎉`) or punctuation/whitespace only —
+yields `canonical_length == 0`. Producers must refuse to create a binding
+from it (sign without a binding, telling the user the selection has no
+letters or digits to bind); the backend rejects any `text_binding` with
+`canonical_length == 0`.
 
 This is the deliberately robust, lossy starting semantic: it survives
 the transformations a document suffers in transit — line rewrapping,
@@ -79,9 +95,9 @@ because we never claim identity**: the threat being closed is "a wholly
 different document published under this record," and a wholly different
 document has different letters. The match result must state plainly:
 
-> **Same wording as the signed text.** This compares letters in order and
-> ignores formatting, punctuation, numbers, and case — it is **not** a
-> check of exact text.
+> **Same wording as the signed text.** This compares letters and digits in
+> order and ignores spacing, punctuation, case, and number formatting — it
+> is **not** a check of exact text.
 
 Overclaiming (a bare "verified ✓", "identical", "authentic text") is
 forbidden. The disclaimer travels with the result, not in a tooltip.
@@ -144,6 +160,19 @@ to the commitment. `session_id` is a per-record UUID nonce, sufficient to
 defeat cross-record correlation and precomputed-dictionary attacks on the
 canonical form.
 
+**Verification dispatch.** `verifyRecord` reads `manifest.format_version`
+and branches:
+- `0.1`: recompute the chain with seed `format_version = "0.1"`; require
+  `record_hash == event_tip`; a `text_binding` on a `0.1` record is
+  invalid.
+- `0.2`: recompute the chain with seed `format_version = "0.2"`; require
+  `record_hash == event_tip` when no binding, else
+  `record_hash == b3(event_tip ‖ canon(binding))`.
+
+A producer that does not bind may keep emitting `0.1`; `0.2` is for
+binding-capable producers. The version is a clean capability cut-over, not
+a forced migration.
+
 ## 3. Verification (fully client-side)
 
 The record page offers a check box. Given candidate text `C`:
@@ -157,6 +186,11 @@ The record page offers a check box. Given candidate text `C`:
 
 `session_id` and the binding are public in the record, so the browser
 computes everything locally. The candidate text never leaves the page.
+
+A very short `canonical_length` under `prefix` is ambiguous — many
+documents share a short leading letter/digit sequence. The checker should
+warn when the bound canonical length is below a small threshold rather
+than present a confident prefix match.
 
 ## 4. UX
 
@@ -208,8 +242,8 @@ content-blind invariant.
 
 ## 6. Honest limits
 
-- A match means letters, not exact text (§2.2); a genuine reword fails by
-  design.
+- A match means letters and digits, not exact text (§2.2); a genuine
+  reword fails by design.
 - Interleaved replies can't be one contiguous selection; v1 answer is
   "sign the whole reply, rely on visible quoting + commensurability."
   Multi-span selection is a future nicety.
@@ -229,9 +263,12 @@ content-blind invariant.
    manifest field.
 3. **Checking UX** (`apps/web`): check box, exact/prefix/no-match
    results with the disclaimer, commensurability panel, no-binding state,
-   client-side verification.
-4. **Signing UX — `/write` first** (`apps/web` + `packages/producer-core`):
-   selection + affirmation + local commitment compute + upload.
+   client-side verification. May be built in parallel with stage 4, but
+   **must not ship to users ahead of `/write` signing** — a checker with
+   nothing to check against is meaningless.
+4. **Signing UX — `/write`** (`apps/web` + `packages/producer-core`):
+   selection + affirmation + local commitment compute + upload. Land this
+   together with (or before) stage 3 at user-visible launch.
 5. **Signing UX — extension and Emacs** (`apps/browser-extension`,
    `producers/emacs`): same flow on those producers; conformance pass.
 6. **Docs/site** (`apps/site`): explain signing and checking, update the
