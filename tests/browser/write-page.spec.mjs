@@ -52,7 +52,8 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
   await page.keyboard.type("A");
   await page.keyboard.insertText("🙂");
   await page.keyboard.type("B");
-  await page.getByRole("button", { name: "sign" }).click();
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
 
   await expect(page.getByText("open record →")).toBeVisible();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/writetest1" })).toBeVisible();
@@ -62,6 +63,14 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
   expect(uploadedPayload.manifest.capture_context.surface).toBe("web-draft");
   expect(uploadedPayload.observation.observed_session_id).toBeTruthy();
   expect(uploadedPayload.observation.token).toBe("t".repeat(32));
+
+  // bind-by-default sealed a content-blind text binding into the record.
+  expect(uploadedPayload.manifest.format_version).toBe("0.2");
+  expect(uploadedPayload.manifest.text_binding).toBeTruthy();
+  expect(uploadedPayload.manifest.text_binding.scheme).toBe("canon-letters/0.1");
+  expect(uploadedPayload.manifest.text_binding.policy).toBe("prefix");
+  // "A🙂B" canonicalizes to "ab" (emoji dropped, casefolded) -> 2 codepoints.
+  expect(uploadedPayload.manifest.text_binding.canonical_length).toBe(2);
 
   const serialized = JSON.stringify(uploadedPayload);
   for (const canary of canaries) {
@@ -117,7 +126,8 @@ test("/write captures Enter as a one-codepoint line break event", async ({ page 
   await page.keyboard.type("LineOne");
   await page.keyboard.press("Enter");
   await page.keyboard.type("LineTwo");
-  await page.getByRole("button", { name: "sign" }).click();
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/newline1" })).toBeVisible();
 
   expect(uploadedPayload, "record upload payload captured").toBeTruthy();
@@ -178,7 +188,8 @@ test("/write keeps a failed upload available for retry", async ({ page }) => {
   await page.goto("/write");
   await page.getByRole("textbox", { name: "Writing canvas" }).click();
   await page.keyboard.type("Retry me");
-  await page.getByRole("button", { name: "sign" }).click();
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
   // After a failed upload the mode line shows the short status + the full
   // technical detail is preserved in the title attribute on the error span.
   const errorSpan = page.locator(".ml-error");
@@ -188,4 +199,50 @@ test("/write keeps a failed upload available for retry", async ({ page }) => {
   await page.getByRole("button", { name: "retry" }).click();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/retrytest1" })).toBeVisible();
   expect(uploadAttempts).toBe(2);
+});
+
+test("/write can sign the process only, binding no document", async ({ page }) => {
+  let uploadedPayload;
+  await page.route("**/api/observed-sessions/*/checkpoints", async (route) => {
+    const request = route.request();
+    const body = request.postDataJSON();
+    const observedSessionId = new URL(request.url()).pathname.split("/").at(-2);
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        observed_session_id: observedSessionId,
+        token: "o".repeat(32),
+        checkpoint_id: "optout-cp",
+        event_count: body.event_count,
+        chain_tip: body.chain_tip,
+        server_t: "2026-05-28T00:00:00.000Z",
+        created: true,
+      }),
+    });
+  });
+  await page.route("**/api/records", async (route) => {
+    uploadedPayload = route.request().postDataJSON();
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        record_hash: uploadedPayload.manifest.record_hash,
+        short_signature: "optout1",
+        url: "http://127.0.0.1:4173/optout1",
+        created: true,
+      }),
+    });
+  });
+
+  await page.goto("/write");
+  await page.getByRole("textbox", { name: "Writing canvas" }).click();
+  await page.keyboard.type("Process only, no binding here.");
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("checkbox").uncheck();
+  await page.getByRole("button", { name: "sign & upload" }).click();
+  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/optout1" })).toBeVisible();
+
+  expect(uploadedPayload.manifest.text_binding, "process-only sign must not bind a document").toBeUndefined();
+  expect(verifyRecord({ manifest: uploadedPayload.manifest, events: uploadedPayload.events }).valid).toBe(true);
 });

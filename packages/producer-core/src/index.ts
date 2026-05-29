@@ -32,6 +32,7 @@ export type {
   SessionRecord,
   SessionState,
   SignedRecordDraft,
+  SignOptions,
 } from "./types.ts";
 
 export { buildCaptureContext, redactCaptureContext, stripQueryAndHash } from "./capture-context.ts";

@@ -1,4 +1,5 @@
 import {
+  computeRecordHash,
   FORMAT_VERSION,
   verifyEventHashChain,
 } from "../../format/src/index.ts";
@@ -8,6 +9,7 @@ import type {
   BufferMutation,
   CaptureContext,
   RecordManifest,
+  TextBinding,
 } from "../../format/src/index.ts";
 import type {
   CheckpointAdapter,
@@ -33,6 +35,7 @@ import type {
   SessionRecord,
   SessionState,
   SignedRecordDraft,
+  SignOptions,
 } from "./types.ts";
 
 export class UnknownSessionError extends Error {
@@ -211,13 +214,18 @@ export class SessionRegistry {
       : "partial";
   }
 
-  sign(session_id: SessionId): SignedRecordDraft {
+  sign(session_id: SessionId, options: SignOptions = {}): SignedRecordDraft {
     const record = this.#requireSignable(session_id);
     if (record.events.length === 0) {
       throw new Error(`cannot sign session ${session_id} with no events`);
     }
     const events: BufferMutation[] = record.events.map((event) => ({ ...event }));
-    const record_hash = record.last_event_chain_tip ?? this.#chainHeadFromEvents(events, record.session_id);
+    const textBinding = options.textBinding;
+    // When a binding is present the record hash is sealed over it; otherwise
+    // it is the plain event-chain tip (the cached tip when available).
+    const record_hash = textBinding
+      ? computeRecordHash(events, record.session_id, record.format_version, textBinding)
+      : record.last_event_chain_tip ?? this.#chainHeadFromEvents(events, record.session_id);
     const attestations: Attestation[] = [];
     const manifest: RecordManifest = {
       format_version: record.format_version,
@@ -225,6 +233,7 @@ export class SessionRegistry {
       session_id: record.session_id,
       producer: { ...record.producer, capabilities: [...record.producer.capabilities] },
       capture_context: record.capture_context,
+      ...(textBinding ? { text_binding: textBinding } : {}),
       event_count: events.length,
       duration_ms: durationMs(events),
       created_client_t: new Date(record.base_wall_ms).toISOString(),

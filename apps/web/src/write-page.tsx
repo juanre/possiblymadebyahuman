@@ -14,6 +14,7 @@ import {
   type SessionRecord,
   type SignedRecordDraft,
 } from "../../../packages/producer-core/src/index.ts";
+import { canonicalizeTextForBinding, createTextBinding, type TextBindingPolicy } from "../../../packages/format/src/index.ts";
 import { deriveMutationFromMeasuredInput } from "./write-capture.ts";
 
 const STORAGE_KEY = "pmbah.write.sessions.v1";
@@ -87,6 +88,10 @@ export function WritePage() {
   const [message, setMessage] = useState<string>("Preparing a local writing session…");
   const [uploaded, setUploaded] = useState<IngestRecordResponse | null>(null);
   const signedDraft = useRef<SignedRecordDraft | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [policy, setPolicy] = useState<TextBindingPolicy>("prefix");
+  const [bindDocument, setBindDocument] = useState(true);
+  const [canBind, setCanBind] = useState(false);
 
   const refreshSession = useCallback((sessionId: string) => {
     const next = registry.get(sessionId);
@@ -183,7 +188,20 @@ export function WritePage() {
     setMessage("Flushing server-observed checkpoints, then uploading the content-blind record…");
     try {
       await registry.flushObservation(session.session_id);
-      const draft = signedDraft.current ?? registry.sign(session.session_id);
+      let draft = signedDraft.current;
+      if (!draft) {
+        let options = {};
+        if (bindDocument) {
+          const text = textareaRef.current?.value ?? "";
+          // The binding is computed locally from the final text and discarded;
+          // only the content-blind {scheme, policy, canonical_length, commitment}
+          // is sealed into the record and uploaded.
+          if (canonicalizeTextForBinding(text).length > 0) {
+            options = { textBinding: createTextBinding(text, session.session_id, policy) };
+          }
+        }
+        draft = registry.sign(session.session_id, options);
+      }
       signedDraft.current = draft;
       const observation = registry.getObservationEnvelope(session.session_id);
       registry.markUploading(session.session_id);
@@ -210,7 +228,15 @@ export function WritePage() {
       setStatus("error");
       setMessage(`Upload failed: ${reason}. The local event log is still available for retry.`);
     }
-  }, [refreshSession, registry, session]);
+  }, [bindDocument, policy, refreshSession, registry, session]);
+
+  const openSignConfirm = useCallback(() => {
+    const text = textareaRef.current?.value ?? "";
+    const bindable = canonicalizeTextForBinding(text).length > 0;
+    setCanBind(bindable);
+    setBindDocument(bindable);
+    setConfirming(true);
+  }, []);
 
   const reset = useCallback(async () => {
     signedDraft.current = null;
@@ -240,13 +266,13 @@ export function WritePage() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Enter") return;
       if (!(event.metaKey || event.ctrlKey)) return;
-      if (!canSign && !canRetry) return;
-      event.preventDefault();
-      void signAndUpload();
+      if (confirming) { event.preventDefault(); setConfirming(false); void signAndUpload(); return; }
+      if (canRetry) { event.preventDefault(); void signAndUpload(); return; }
+      if (canSign) { event.preventDefault(); openSignConfirm(); return; }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [canSign, canRetry, signAndUpload]);
+  }, [canSign, canRetry, confirming, openSignConfirm, signAndUpload]);
 
   return <div className="write-shell">
     <a className="write-home" href="/">← possiblymadebyahuman</a>
@@ -267,6 +293,46 @@ export function WritePage() {
       <div className="write-result" role="status" aria-live="polite">
         <a className="write-result-link" href={uploaded.url}>{uploaded.url}</a>
         <span className="write-result-arrow">open record →</span>
+      </div>
+    ) : null}
+
+    {confirming && !uploaded ? (
+      <div className="write-sign-sheet" role="dialog" aria-label="Sign this record">
+        <p className="write-sign-affirm">I affirm this is the text this record is meant to cover.</p>
+        <label className="write-sign-option">
+          <input
+            type="checkbox"
+            checked={bindDocument}
+            disabled={!canBind}
+            onChange={(event) => setBindDocument(event.target.checked)}
+          />
+          <span>{canBind ? "Bind the document I wrote" : "Nothing to bind — this text has no letters or digits"}</span>
+        </label>
+        {bindDocument ? (
+          <fieldset className="write-sign-policy">
+            <label>
+              <input type="radio" name="bind-policy" checked={policy === "prefix"} onChange={() => setPolicy("prefix")} />
+              <span>Allow appended text after it (prefix)</span>
+            </label>
+            <label>
+              <input type="radio" name="bind-policy" checked={policy === "exact"} onChange={() => setPolicy("exact")} />
+              <span>Exactly this text, nothing after (exact)</span>
+            </label>
+            <p className="write-sign-note">The check compares wording — letters and digits — not exact text.</p>
+          </fieldset>
+        ) : (
+          <p className="write-sign-note">Signing the writing process only; no document is bound to this record.</p>
+        )}
+        <div className="write-sign-actions">
+          <button className="ml-button" type="button" onClick={() => setConfirming(false)}>cancel</button>
+          <button
+            className="ml-button ml-primary"
+            type="button"
+            onClick={() => { setConfirming(false); void signAndUpload(); }}
+          >
+            sign &amp; upload
+          </button>
+        </div>
       </div>
     ) : null}
 
@@ -293,7 +359,7 @@ export function WritePage() {
             className="ml-button ml-primary"
             type="button"
             disabled={!canSign && !canRetry}
-            onClick={signAndUpload}
+            onClick={canRetry ? signAndUpload : openSignConfirm}
             title="sign (⌘↵ / Ctrl↵)"
           >
             {canRetry ? "retry" : "sign"}

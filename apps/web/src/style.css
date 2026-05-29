@@ -327,3 +327,26 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   outline: 2px solid #202124;
   outline-offset: 2px;
 }
+
+.write-sign-sheet {
+  flex: 0 0 auto;
+  margin: 0 auto 8px;
+  width: 100%;
+  max-width: 560px;
+  box-sizing: border-box;
+  background: #fffaf2;
+  border: 1px solid #d9c8ad;
+  border-radius: 12px;
+  padding: 16px 18px;
+  display: grid;
+  gap: 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  color: #514a40;
+}
+.write-sign-affirm { margin: 0; color: #202124; font-weight: 700; }
+.write-sign-option { display: flex; align-items: flex-start; gap: 8px; }
+.write-sign-policy { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; }
+.write-sign-policy label { display: flex; align-items: flex-start; gap: 8px; }
+.write-sign-note { margin: 4px 0 0; color: #756b60; }
+.write-sign-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }

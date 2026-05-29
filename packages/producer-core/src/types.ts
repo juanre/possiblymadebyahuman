@@ -7,6 +7,7 @@ import type {
   Operation,
   RecordManifest,
   Source,
+  TextBinding,
 } from "../../format/src/index.ts";
 
 export type SessionId = string;
@@ -127,4 +128,11 @@ export type SessionRecord = {
 export type SignedRecordDraft = {
   manifest: RecordManifest;
   events: BufferMutation[];
+};
+
+export type SignOptions = {
+  // A content-blind text binding to seal into the signed record. The
+  // producer computes this from the final text locally and passes only the
+  // {scheme, policy, canonical_length, commitment} object — never the text.
+  textBinding?: TextBinding;
 };
