@@ -27,6 +27,7 @@ function recordRow(record, shortSignature = "abc123def4") {
     producer_version: record.manifest.producer.version,
     producer_capabilities: record.manifest.producer.capabilities,
     capture_context: record.manifest.capture_context,
+    text_binding: record.manifest.text_binding ?? null,
     event_count: record.manifest.event_count,
     duration_ms: record.manifest.duration_ms,
     observed_final_length: 8,

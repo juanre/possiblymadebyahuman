@@ -14,6 +14,11 @@ async function fixtureRecord() {
   return clone(golden.record);
 }
 
+async function textBindingRecord() {
+  const [, golden] = await readJson("packages/conformance/vectors/golden-records.json");
+  return clone(golden.record);
+}
+
 function makeApi(options = {}) {
   const store = new InMemoryRecordStore();
   const api = createIngestApi({
@@ -64,7 +69,10 @@ test("Postgres migration defines records, stats, and analysis-results tables", a
   assert.match(migration, /records_observation_state/i);
   assert.match(migration, /token_hash\s+text not null/i);
   assert.match(migration, /observed_checkpoints_chain_tip_format/i);
-  assert.doesNotMatch(migration, /plaintext|observed_token|final_text\s+text|final_text_hash|final_text_length/i);
+  const textBindingMigration = await readFile("packages/storage/migrations/002_text_binding.sql", "utf8");
+  assert.match(textBindingMigration, /add column if not exists text_binding jsonb null/i);
+  assert.match(textBindingMigration, /records_text_binding_object/i);
+  assert.doesNotMatch(`${migration}\n${textBindingMigration}`, /plaintext|observed_token|final_text\s+text|final_text_hash|final_text_length/i);
 });
 
 test("POST /api/records ingests a valid content-blind record", async () => {
@@ -118,6 +126,62 @@ test("GET /api/records/:id supports short signature and full hash lookup", async
   const byHash = await api.getRecord(record.manifest.record_hash);
   assert.equal(byHash.status, 200);
   assert.deepEqual(byHash.body, byShort.body);
+});
+
+test("POST and GET preserve a sealed text_binding without plaintext", async () => {
+  const { api } = makeApi();
+  const record = await textBindingRecord();
+  const response = await api.postRecord(record);
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body.record_hash, record.manifest.record_hash);
+
+  const fetched = await api.getRecord(response.body.short_signature);
+  assert.equal(fetched.status, 200);
+  assert.deepEqual(fetched.body.manifest.text_binding, record.manifest.text_binding);
+  assert.equal(JSON.stringify(fetched.body).includes("Hello, World!"), false);
+});
+
+test("ingest rejects text_binding tampering that breaks the sealed record_hash", async () => {
+  const { api } = makeApi();
+  const record = await textBindingRecord();
+  record.manifest.text_binding.policy = "exact";
+
+  const response = await api.postRecord(record);
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, "verification_failed");
+  assert.ok(response.body.details.some((detail) => detail.includes("record_hash mismatch")));
+});
+
+test("ingest rejects zero-length text bindings as unbindable", async () => {
+  const { api } = makeApi();
+  const record = await textBindingRecord();
+  record.manifest.text_binding.canonical_length = 0;
+
+  const response = await api.postRecord(record);
+  assert.equal(response.status, 400);
+  assert.equal(response.body.error, "verification_failed");
+  assert.ok(response.body.details.some((detail) => detail.includes("canonical_length must be greater than 0")));
+});
+
+test("format 0.2 records without text_binding ingest and read back without binding", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  const vectors = await readJson("packages/conformance/vectors/hash-chain.json");
+  const vector = vectors.find((candidate) => candidate.name === "format 0.2 no-binding hash chain");
+  record.manifest.format_version = "0.2";
+  record.manifest.session_id = vector.session_id;
+  record.events = clone(vector.events);
+  record.manifest.record_hash = vector.record_hash;
+  record.manifest.event_count = record.events.length;
+  record.manifest.duration_ms = 0;
+  delete record.manifest.text_binding;
+
+  const response = await api.postRecord(record);
+  assert.equal(response.status, 201);
+  const fetched = await api.getRecord(response.body.short_signature);
+  assert.equal(fetched.status, 200);
+  assert.equal("text_binding" in fetched.body.manifest, false);
 });
 
 test("ingest rejects invalid record hashes", async () => {

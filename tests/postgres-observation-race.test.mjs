@@ -22,10 +22,29 @@ async function fixtureRecord() {
   return clone(golden.record);
 }
 
+async function textBindingFixtureRecord() {
+  const [, golden] = await readJson("packages/conformance/vectors/golden-records.json");
+  return clone(golden.record);
+}
+
 test("Postgres observed-session finalization validates the exact public checkpoint set", async (t) => {
   const harness = await startPostgresHarness(t);
   if (!harness) return;
   const { api, pool } = harness;
+
+  await t.test("text_binding persists and reads back through real Postgres", async () => {
+    const record = await textBindingFixtureRecord();
+    const ingest = await api.postRecord(record);
+    assert.equal(ingest.status, 201);
+
+    const fetched = await api.getRecord(ingest.body.short_signature);
+    assert.equal(fetched.status, 200);
+    assert.deepEqual(fetched.body.manifest.text_binding, record.manifest.text_binding);
+
+    const row = (await pool.query("select text_binding from records where record_hash = $1", [record.manifest.record_hash])).rows[0];
+    assert.deepEqual(row.text_binding, record.manifest.text_binding);
+    assert.equal(JSON.stringify(fetched.body).includes("Hello, World!"), false);
+  });
 
   await t.test("concurrent bad checkpoint during finalization does not publish", async () => {
     const trials = 50;
