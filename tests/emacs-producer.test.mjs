@@ -305,3 +305,40 @@ test("Emacs helper handles large content-blind event shapes without text replay"
   assert.equal(serialized.includes("final_text"), false);
   assert.equal(serialized.includes("a".repeat(100)), false);
 });
+
+test("Emacs helper seals a content-blind text binding from transient final text without leaking plaintext", () => {
+  const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
+  const marker = "EMACSBINDCANARY777";
+  const payload = {
+    session_id: "00000000-0000-4000-8000-000000000033",
+    producer: { id: "emacs", version: "0.1.0", capabilities: ["timing", "pause_fidelity"] },
+    capture_context: { surface: "emacs" },
+    events: [
+      { seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 5, source: "typing" },
+      { seq: 1, t: 90, op: "insert", pos: 5, del_len: 0, ins_len: 6, source: "typing" },
+    ],
+    duration_ms: 90,
+    final_text: `Hello there, ${marker} — this is the buffer text.`,
+    bind_policy: "prefix",
+    created_client_t: "2026-05-28T00:00:00.000Z",
+  };
+  const result = spawnSync(process.execPath, [helperPath], {
+    cwd: resolve("."),
+    encoding: "utf8",
+    input: JSON.stringify(payload),
+    maxBuffer: 10 * 1024 * 1024,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const output = JSON.parse(result.stdout);
+  assert.equal(verifyRecord(output.record).valid, true);
+  const binding = output.record.manifest.text_binding;
+  assert.equal(output.record.manifest.format_version, "0.2");
+  assert.equal(binding.scheme, "canon-letters/0.1");
+  assert.equal(binding.policy, "prefix");
+  assert.ok(binding.canonical_length > 0);
+  // The transient final text must not survive into the helper output anywhere.
+  const serialized = JSON.stringify(output);
+  assert.equal(serialized.includes(marker), false);
+  assert.equal(serialized.includes("Hello there"), false);
+  assert.equal(serialized.includes("final_text"), false);
+});

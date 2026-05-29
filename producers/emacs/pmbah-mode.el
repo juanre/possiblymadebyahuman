@@ -182,7 +182,17 @@ callers and must be a JSON-serializable plist."
   (when (= pmbah--next-seq 0)
     (user-error "No PMBAH events captured for this buffer"))
   (let* ((context (or capture-context (pmbah-review-capture-context)))
-         (record (pmbah-build-record-for-current-buffer context))
+         (bind (and (not noninteractive) (yes-or-no-p "Bind the document text to this record? ")))
+         (final-text (when bind
+                       (if (use-region-p)
+                           (buffer-substring-no-properties (region-beginning) (region-end))
+                         (buffer-substring-no-properties (point-min) (point-max)))))
+         (bind-policy (when bind
+                        (if (yes-or-no-p "Allow appended text after it (e.g. a signature line)? ")
+                            "prefix" "exact")))
+         (_affirm (when (and bind (not (y-or-n-p "Affirm this is the text this record is meant to cover? ")))
+                    (user-error "Signing aborted")))
+         (record (pmbah-build-record-for-current-buffer context final-text bind-policy))
          (response (pmbah--post-record record))
          (url (or (alist-get 'url response) (alist-get 'record_hash response))))
     (when url
@@ -218,26 +228,33 @@ Absolute file paths are shown as omitted and are not included by default."
     (setq include-major-mode (yes-or-no-p (format "Include major mode `%s` in capture context? " mode-label)))
     (pmbah--capture-context include-buffer-name include-major-mode)))
 
-(defun pmbah-build-record-for-current-buffer (&optional capture-context)
+(defun pmbah-build-record-for-current-buffer (&optional capture-context final-text bind-policy)
   "Build and locally verify a public PMBAH record for the current buffer.
-The returned alist contains only the public `manifest` and `events` shape."
-  (alist-get 'record (pmbah--build-record-result capture-context)))
+The returned alist contains only the public `manifest` and `events` shape.
+FINAL-TEXT, when non-nil, is handed to the local helper transiently so it can
+compute the content-blind text binding; it is never stored or uploaded."
+  (alist-get 'record (pmbah--build-record-result capture-context final-text bind-policy)))
 
-(defun pmbah--build-record-result (&optional capture-context)
-  "Return the helper result for the current buffer, including verification facts."
+(defun pmbah--build-record-result (&optional capture-context final-text bind-policy)
+  "Return the helper result for the current buffer, including verification facts.
+FINAL-TEXT, when a non-empty string, is passed to the local helper SOLELY to
+compute the content-blind text binding and is never persisted or uploaded."
   (unless pmbah--session-id
     (user-error "No active PMBAH session"))
   (when (= pmbah--next-seq 0)
     (user-error "No PMBAH events captured for this buffer"))
-  (let* ((payload (list :format_version pmbah-format-version
-                        :session_id pmbah--session-id
-                        :producer (list :id "emacs"
-                                        :version pmbah-producer-version
-                                        :capabilities ["timing" "pause_fidelity"])
-                        :capture_context (or capture-context (pmbah--capture-context nil nil))
-                        :events (vconcat (pmbah--session-events))
-                        :duration_ms (pmbah--elapsed-ms)
-                        :created_client_t (format-time-string "%FT%T%z" (current-time) t))))
+  (let* ((payload (append
+                   (list :format_version pmbah-format-version
+                         :session_id pmbah--session-id
+                         :producer (list :id "emacs"
+                                         :version pmbah-producer-version
+                                         :capabilities ["timing" "pause_fidelity"])
+                         :capture_context (or capture-context (pmbah--capture-context nil nil))
+                         :events (vconcat (pmbah--session-events))
+                         :duration_ms (pmbah--elapsed-ms)
+                         :created_client_t (format-time-string "%FT%T%z" (current-time) t))
+                   (when (and final-text (stringp final-text) (> (length final-text) 0))
+                     (list :final_text final-text :bind_policy (or bind-policy "prefix"))))))
     (pmbah--run-helper payload)))
 
 (defun pmbah--run-helper (payload)

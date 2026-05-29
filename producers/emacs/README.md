@@ -18,8 +18,14 @@ to the kill ring.
   captured suffix alone.
 - Public uploads contain mutation shape, timing, source labels, manifest metadata,
   and public process hashes. They do **not** include plaintext insertion text.
-- The local helper payload contains process metadata only. The mode does not pass
-  buffer text to the helper, compute text hashes, or require text reconstruction.
+- The local helper payload contains process metadata only, with one exception: when
+  you choose to bind the document at sign time, the mode passes the selected text to
+  the **local** helper transiently, solely so the helper can compute the content-blind
+  text binding (the `canon-letters/0.1` commitment) via the shared format
+  implementation. The helper discards that text immediately — it is never stored,
+  logged, hashed for anything else, uploaded, or reconstructed; only the sealed binding
+  object (`scheme`, `policy`, `canonical_length`, `commitment`) survives. The text never
+  leaves your machine. This is a local-compute exception, not a storage exception.
 - Absolute local file paths are shown in the preview as omitted and are not
   uploaded by default.
 - Emacs buffer names and major modes can identify a document or workflow; the
@@ -239,8 +245,9 @@ The repository test suite includes Emacs batch tests that:
 - verify codepoint offsets/lengths;
 - verify the generated record with `packages/format` structure/hash-chain logic;
 - confirm public events do not contain plaintext fields;
-- confirm the helper payload does not contain buffer text, inserted text, final
-  text, text hashes, or text replay fixtures;
+- confirm the helper output and uploaded record contain no buffer text, inserted
+  text, text hashes, or replay fixtures, and that text passed transiently to
+  compute the content-blind binding does not leak into the output;
 - confirm non-empty buffers start, later absolute positions are retained, and no
   plaintext canaries are uploaded;
 - confirm default capture context avoids absolute file paths.

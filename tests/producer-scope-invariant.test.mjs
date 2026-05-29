@@ -30,19 +30,29 @@ test("Emacs production path allows non-empty starts and helper receives no text 
   assert.doesNotMatch(mode, /refuses to start in a non-empty buffer/);
   assert.doesNotMatch(mode, /initial_observed_length/);
   assert.doesNotMatch(helper, /initial_observed_length/);
-  assert.match(readme, /does not pass\s+buffer text to the helper/);
+  // SOT 3.10 local transient-binding exception: the helper MAY receive the
+  // final text on stdin solely to compute the content-blind binding, but must
+  // never store/upload it. The README documents the exception; the runtime
+  // no-leak guarantee is enforced by the helper canary in
+  // tests/emacs-producer.test.mjs ("seals a content-blind text binding ...
+  // without leaking plaintext").
+  assert.match(readme, /transiently/);
+  assert.match(readme, /content-blind\s+text binding/);
+  assert.match(readme, /never stored/);
   assert.match(readme, /non-empty buffer/);
   assert.match(readme, /ERR_MODULE_NOT_FOUND/);
   assert.match(readme, /https:\/\/possiblymadebyahuman\.com/);
   assert.match(readme, /localhost:8000/);
   assert.doesNotMatch(readme, /localhost:8787/);
 
+  // The helper must still never echo, replay, or hash-for-anything-else the
+  // text it transiently receives. `final_text` (the stdin input field) is
+  // permitted; output/replay symbols are not.
   for (const banned of [
-    /final_text/i,
     /ins_text/i,
     /ins_hash/i,
+    /final_text_hash/i,
     /replay_insertions_by_seq/i,
-    /buffer-substring-no-properties\s*\([^)]*point-min/i,
   ]) {
     assert.doesNotMatch(helper, banned, `Emacs helper contains banned text/replay contract ${banned}`);
   }
