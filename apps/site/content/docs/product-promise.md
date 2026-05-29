@@ -3,7 +3,7 @@ title: "Product promise"
 summary: "What this record is, and what it deliberately is not."
 ---
 
-`possiblymadebyahuman` records the shape of a writing process and gives someone an inspectable, hash-addressed process record. The record never contains, stores, or reconstructs the text that was written.
+`possiblymadebyahuman` records the shape of a writing process and gives someone an inspectable, hash-addressed process record. The record never contains, stores, or reconstructs the text that was written; if the signer binds a document, it carries only a content-blind commitment to that text — computed locally, with the text discarded — never the text itself.
 
 The product is **not** a detector and must not become one.
 
@@ -16,7 +16,7 @@ That sentence is the standing disclaimer rendered on every record page. It is th
 ## Hard rules
 
 1. **No verdicts.** No human/AI label, no confidence percentage, no badge implying certification of humanity, no aggregate authorship score.
-2. **Process, not content.** The public service stores edit structure, metadata, and statistics. It does not store plaintext document content.
+2. **Process, not content.** The public service stores edit structure, metadata, and statistics. It does not store plaintext document content. An optional document binding adds only a content-blind commitment to the signed text — computed locally, with the text discarded — never the text.
 3. **Hash-addressed records.** A record URL is a short signature that resolves to a record whose full hash is always shown and browser-verifiable.
 4. **Tone matters.** The UI is candid, lightweight, and self-aware: "we cannot prove it, but here is us caring enough to show the work."
 

@@ -9,6 +9,7 @@ summary: "A short, candid list of what the record means and what it deliberately
 - The record is hash-addressed. Anyone with the URL can recompute the BLAKE3 hash chain from the stored events and confirm that the events have not been altered since the signer uploaded them.
 - The record was uploaded at a specific server-stamped time (`ingested_server_t`).
 - The producer that created the record declared a specific set of capabilities (e.g. timing, source attribution). Analyzers explicitly report when a capability is missing instead of penalising the record for it.
+- When the signer bound a document, a reader can check — in their own browser, with nothing uploaded — that a given text matches the signed one at the level of *wording*: letters and digits in order, ignoring spacing, punctuation, case, and number formatting. See [Bind and check a document](/docs/checking-a-document/).
 
 ## We do not claim
 
@@ -17,6 +18,7 @@ summary: "A short, candid list of what the record means and what it deliberately
 - That the writer did or did not consult an external AI, source, or notebook.
 - That a careful retype of an AI draft from another screen can be detected. It cannot, and any system claiming otherwise is overselling itself.
 - That the absence of pastes, long pauses, or revisions means "this was a human." It does not.
+- That a document-binding match proves authorship, or even exact text. A match confirms a document is the wording the signer committed to; it says nothing about who wrote it, an author can bind a document they did not originate, and it ignores punctuation, case, and number formatting (so e.g. `$1,000.00` and `$100,000` would match).
 
 ## Why this matters
 

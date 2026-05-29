@@ -8,3 +8,5 @@ These docs explain what `possiblymadebyahuman` is and is not, how the writing-re
 Start with **Product promise** and **What we claim — and do not claim** if you only have a few minutes.
 
 If you're looking for the producers themselves, write in the browser with the [`/write` page](/write) or in [Emacs with `pmbah-mode`](/docs/emacs/).
+
+To tie a record to the specific text you wrote — and let a reader check a document against it — see [Bind and check a document](/docs/checking-a-document/).

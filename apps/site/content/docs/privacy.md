@@ -3,7 +3,7 @@ title: "Content-blind privacy model"
 summary: "What public records store, what they deliberately do not, and what the signer controls before upload."
 ---
 
-The default mode of `possiblymadebyahuman` is **content-blind**. Public records describe the shape of an editing process. They do not contain, store, hash, upload, or reconstruct the document's text.
+The default mode of `possiblymadebyahuman` is **content-blind**. Public records describe the shape of an editing process. They do not contain, store, upload, or reconstruct the document's text. If the signer chooses to bind a document, the producer computes a content-blind commitment to it locally and uploads only that commitment — a salted hash of the text's canonical letters and digits, which cannot be turned back into the text. See [Bind and check a document](/docs/checking-a-document/).
 
 ## What public records contain
 

@@ -11,7 +11,7 @@ A producer is **conformant** if it passes:
 2. **Hash-chain vectors** — given a vector event log and session id, the producer computes the same BLAKE3 chain over the canonical public events and the same final `record_hash`. The chain hash is over process events only — never over text.
 3. **Process-length vectors** — given a vector event log, the producer computes the same observed process length and follows the same rules for emitting explicit `null` in `pos`, `del_len`, or `ins_len` when a value cannot be derived content-blindly.
 4. **Capability accuracy** — the producer's declared capability set matches what it actually delivers. If `timing` is declared, every event has a real `t`. If `source_attribution` is declared, every event has a real `source`. If a capability is genuinely unavailable in a given runtime, the producer must omit it from `capabilities`; downstream analyzers then report "not applicable" rather than penalising the record.
-5. **Content-blindness on public uploads** — `POST /api/records` must not include text fields, inserted text, final text, or text-derived hashes. The ingest API rejects unexpected manifest fields and content-bearing fields, and a conformant producer must not surface a "ship text" path in its public flow. Producers may transiently inspect text in-memory to derive a numeric process field, but the string must be discarded in the same statement and never recorded, hashed, logged, persisted, or uploaded.
+5. **Content-blindness on public uploads** — `POST /api/records` must not include text fields, inserted text, or final text. The ingest API rejects unexpected manifest fields and content-bearing fields, and a conformant producer must not surface a "ship text" path in its public flow. The single permitted text-derived value is the optional format `0.2` `text_binding` commitment (a salted hash of the canonical letters/digits), which a producer computes locally at sign time and after which it discards the text; only the commitment is uploaded, never the text. Apart from that, producers may transiently inspect text in-memory to derive a numeric process field, but the string must be discarded in the same statement and never recorded, hashed, logged, persisted, or uploaded.
 6. **Capture-context preview** — the producer must show the signer the exact `capture_context` that will be uploaded, and let them edit or remove fields before submission.
 
 ## Source attribution accuracy
@@ -29,7 +29,7 @@ Dressing `unknown` up as `typing` because it produces a "more impressive" record
 
 ## Transient inspection versus retention
 
-A producer may transiently inspect editor text only when necessary to derive numeric process metadata such as position or length. It must discard the string immediately. It must not store, hash, log, upload, reconstruct, or pass document text to helper processes.
+A producer may transiently inspect editor text only when necessary to derive numeric process metadata such as position or length. It must discard the string immediately. It must not store, log, upload, reconstruct, or retain document text. The one sanctioned exception is computing the optional `text_binding` at sign time: the producer (the Emacs producer may hand the final text to its local helper for this) computes the content-blind commitment, discards the text, and uploads only the commitment — never the text, and never any other text-derived value.
 
 ## How to actually run the conformance suite
 

@@ -31,7 +31,7 @@ Verification confirms:
 
 Verification does **not** confirm:
 
-- That the signer authored the words. The system does not store, hash, or reconstruct the text; it has no way to check what was written.
+- That the signer authored the words. Chain verification never inspects the text. A signer may separately **bind** a document so a reader can check that a given text is the one signed (see [Bind and check a document](/docs/checking-a-document/)) — but even a match confirms *wording*, not authorship.
 - That a human typed the events instead of a script driving the producer.
 - That the `capture_context` is true — that field is metadata the signer chose to include, not a sworn attribution.
 

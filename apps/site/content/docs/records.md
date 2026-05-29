@@ -27,19 +27,21 @@ Producers do not capture raw keystrokes. They capture *buffer mutations*: a sing
 
 ## The manifest
 
-Every record carries a manifest with format version, BLAKE3 `record_hash`, session id, producer info, capture context, basic stats, and ingestion time. The manifest's `record_hash` equals the final hash of the event log's hash chain.
+Every record carries a manifest with format version, BLAKE3 `record_hash`, session id, producer info, capture context, basic stats, and ingestion time. It may also carry an optional content-blind `text_binding` (a commitment to the signed document — see [Bind and check a document](/docs/checking-a-document/)). When no binding is present, the `record_hash` equals the final hash of the event log's hash chain; when a binding is present, the `record_hash` is sealed over it too, so the binding cannot be altered without changing the hash.
 
 ## Hash chain
 
 The chain is computed deterministically over canonical JSON of each event, salted with the format version and session id at `seq=0`:
 
 ```text
-chain[0] = BLAKE3(format_version || session_id || canonical(event[0]))
-chain[i] = BLAKE3(chain[i-1]      || canonical(event[i]))   for i > 0
-record_hash = chain[N-1]
+chain[0]   = BLAKE3(format_version || session_id || canonical(event[0]))
+chain[i]   = BLAKE3(chain[i-1]      || canonical(event[i]))   for i > 0
+event_tip  = chain[N-1]
+record_hash = event_tip                                   # when no text_binding
+record_hash = BLAKE3(event_tip || canonical(text_binding))  # when a binding is present
 ```
 
-Any single-byte change to the events or manifest changes the chain, and the verifier shows a mismatch.
+Any single-byte change to the events, or to a present binding, changes the hash, and the verifier shows a mismatch.
 
 ## Short signatures
 

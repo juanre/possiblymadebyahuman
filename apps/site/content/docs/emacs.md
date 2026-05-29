@@ -15,7 +15,7 @@ eyebrow: "Producer"
 
 ## What it does not capture
 
-- Your document text. No plaintext leaves the producer; the local Node helper that builds the public record is passed numeric process metadata only, never the buffer text.
+- Your document text. No plaintext leaves the producer. The local Node helper that builds the public record is passed numeric process metadata only — with one sanctioned exception: if you choose to bind the document at sign time, the helper receives the selected text transiently so it can compute the content-blind binding commitment, then discards it. Only the commitment is uploaded; the text never leaves your machine. See [Bind and check a document](/docs/checking-a-document/).
 - Absolute local file paths. The capture-context review preview shows the path as omitted by default.
 - Anything outside the buffer `pmbah-mode` is attached to. The mode is per-buffer.
 
