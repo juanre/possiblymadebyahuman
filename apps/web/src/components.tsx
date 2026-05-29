@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildTimelinePoints, formatDuration, formatServerObservedSpan, formatUtcMinute, sourceClass, verifyRecordChain } from "./record-utils.ts";
+import { buildTimelinePoints, formatDuration, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "./record-utils.ts";
 import type { RecordApiResponse } from "./types.ts";
 
 export function DisclaimerBanner() {
@@ -56,38 +56,127 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
 }
 
+const TIMELINE_VB_W = 1200;
+const TIMELINE_VB_H = 220;
+const TIMELINE_PAD_L = 50;
+const TIMELINE_PAD_R = 20;
+const TIMELINE_PAD_T = 28;
+const TIMELINE_PAD_B = 48;
+
+function sourceFill(source: string): string {
+  switch (source) {
+    case "typing": return "#2f80ed";
+    case "paste": return "#d9822b";
+    case "cut": return "#bf3f3f";
+    case "delete": return "#bf3f3f";
+    case "ime": return "#7c3aed";
+    case "autocomplete": return "#0f766e";
+    case "drop": return "#16a34a";
+    case "programmatic": return "#64748b";
+    default: return "#a89a82";
+  }
+}
+
+function formatTimelineTick(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return s === 0 ? `${m}:00` : `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
   const knownLengths = points.map((point) => point.documentLength).filter((length): length is number => length !== null);
   const maxLength = Math.max(1, ...knownLengths, record.stats.observed_final_length ?? 0);
+  const observedDurationMs = record.manifest.duration_ms || (points.length > 0 ? points[points.length - 1]!.t : 0);
+  const duration = Math.max(1, observedDurationMs);
+  const plotW = TIMELINE_VB_W - TIMELINE_PAD_L - TIMELINE_PAD_R;
+  const plotH = TIMELINE_VB_H - TIMELINE_PAD_T - TIMELINE_PAD_B;
+  const baseline = TIMELINE_PAD_T + plotH;
+  const tx = (t: number) => TIMELINE_PAD_L + (Math.min(duration, Math.max(0, t)) / duration) * plotW;
+  const ly = (len: number) => baseline - (Math.min(maxLength, Math.max(0, len)) / maxLength) * plotH;
+
+  // Document length over time, as a filled area under the curve.
+  const areaCommands: string[] = [`M ${TIMELINE_PAD_L} ${baseline}`];
+  for (const point of points) {
+    areaCommands.push(`L ${tx(point.t)} ${ly(point.documentLength ?? 0)}`);
+  }
+  areaCommands.push(`L ${tx(duration)} ${baseline} Z`);
+  const areaPath = areaCommands.join(" ");
+
+  const pauseSpans = points.filter((point) => point.isLongPause && point.delayFromPreviousMs > 0);
+  const seenSources = new Set(points.map((point) => point.source));
+  const hasLargeInsert = points.some((point) => point.isLargeInsert);
+  const hasLongPause = pauseSpans.length > 0;
+
+  const totalSeconds = duration / 1000;
+  const tickEverySeconds = totalSeconds < 60 ? 10 : totalSeconds < 300 ? 30 : totalSeconds < 1200 ? 60 : 300;
+  const ticks: number[] = [];
+  for (let seconds = 0; seconds <= totalSeconds; seconds += tickEverySeconds) ticks.push(seconds);
+  if (ticks.at(-1) !== Math.floor(totalSeconds)) ticks.push(totalSeconds);
+
   return (
-    <section className="card">
+    <section className="card timeline-card">
       <h2>Edit timeline</h2>
-      <p className="muted">Operation shape only: observed length, edit position, operation size, source, large inserts, and long pauses. No text is stored, hashed, or reconstructed.</p>
-      <div className="timeline" role="img" aria-label="Content-blind edit timeline">
+      <p className="muted">Document length and event activity over time. Bars above the curve are events colored by source; vertical bands are long pauses. No text is stored, hashed, or reconstructed.</p>
+      <svg className="timeline-chart" viewBox={`0 0 ${TIMELINE_VB_W} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
+        {pauseSpans.map((point) => {
+          const startT = Math.max(0, point.t - point.delayFromPreviousMs);
+          const x = tx(startT);
+          const width = Math.max(2, tx(point.t) - x);
+          return <rect key={`pause-${point.seq}`} x={x} y={TIMELINE_PAD_T} width={width} height={plotH} fill="#ead9b8" opacity={0.45} />;
+        })}
+        <line x1={TIMELINE_PAD_L} y1={baseline} x2={TIMELINE_VB_W - TIMELINE_PAD_R} y2={baseline} stroke="#d8c8a6" strokeWidth={0.6} />
+        <path d={areaPath} fill="rgba(139, 94, 52, 0.18)" stroke="#8b5e34" strokeWidth={1.2} strokeLinejoin="round" />
         {points.map((point) => {
-          const left = point.pos === null ? "0%" : `${Math.min(100, (point.pos / maxLength) * 100)}%`;
+          const x = tx(point.t);
           const operationSize = (point.ins_len ?? 0) + (point.del_len ?? 0);
-          const width = operationSize === 0 ? "4px" : `${Math.max(1.5, Math.min(18, (operationSize / maxLength) * 100))}%`;
+          const tickHeight = point.isLargeInsert ? 14 : operationSize > 1 ? 8 : 4;
+          const curveY = ly(point.documentLength ?? 0);
+          const top = Math.max(TIMELINE_PAD_T, curveY - tickHeight - 2);
+          const height = Math.max(2, curveY - 2 - top);
           return (
-            <div key={point.seq} className="timeline-row">
-              <span className="timeline-label">#{point.seq}</span>
-              <div className="timeline-bar">
-                <span
-                  className={`event-marker ${sourceClass(point.source)} ${point.isLargeInsert ? "large" : ""} ${point.isLongPause ? "pause" : ""}`}
-                  style={{ left, width }}
-                  title={`seq ${point.seq}: ${point.source}, +${point.ins_len ?? "unknown"}/-${point.del_len ?? "unknown"}, observed length ${point.documentLength ?? "unknown"}`}
-                />
-              </div>
-              <span className="timeline-meta">len {point.documentLength ?? "?"}</span>
-            </div>
+            <rect
+              key={point.seq}
+              x={x - 0.6}
+              y={top}
+              width={1.2}
+              height={height}
+              fill={sourceFill(point.source)}
+              opacity={0.85}
+            >
+              <title>{`seq ${point.seq} · ${point.source} · +${point.ins_len ?? "unknown"}/-${point.del_len ?? "unknown"} · len ${point.documentLength ?? "unknown"} · t=${point.t}ms`}</title>
+            </rect>
           );
         })}
+        <text x={TIMELINE_PAD_L - 6} y={TIMELINE_PAD_T + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">{maxLength} cp</text>
+        <text x={TIMELINE_PAD_L - 6} y={baseline + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">0</text>
+        {ticks.map((seconds) => {
+          const x = tx(seconds * 1000);
+          return (
+            <g key={`tick-${seconds}`}>
+              <line x1={x} y1={baseline} x2={x} y2={baseline + 4} stroke="#a89a82" strokeWidth={0.6} />
+              <text x={x} y={baseline + 18} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="middle">{formatTimelineTick(seconds)}</text>
+            </g>
+          );
+        })}
+        <text x={TIMELINE_VB_W - TIMELINE_PAD_R} y={baseline + 34} fontSize={10} fill="#a89a82" fontFamily="ui-monospace, monospace" textAnchor="end">time →</text>
+      </svg>
+      <div className="legend">
+        {seenSources.has("typing") && <><span className="dot source-typing" /> typing </>}
+        {seenSources.has("paste") && <><span className="dot source-paste" /> paste </>}
+        {seenSources.has("cut") && <><span className="dot source-cut" /> cut </>}
+        {seenSources.has("ime") && <><span className="dot source-ime" /> IME </>}
+        {seenSources.has("autocomplete") && <><span className="dot source-autocomplete" /> autocomplete </>}
+        {seenSources.has("drop") && <><span className="dot source-drop" /> drop </>}
+        {seenSources.has("programmatic") && <><span className="dot source-programmatic" /> programmatic </>}
+        {seenSources.has("unknown") && <><span className="dot source-unknown" /> unknown </>}
+        {hasLargeInsert && <><span className="dot large" /> large insert </>}
+        {hasLongPause && <><span className="dot pause" /> long pause</>}
       </div>
-      <div className="legend"><span className="dot source-typing" /> typing <span className="dot source-paste" /> paste <span className="dot source-cut" /> cut <span className="dot source-unknown" /> unknown <span className="dot large" /> large insert <span className="dot pause" /> long pause</div>
     </section>
   );
 }
+
 
 export function SignalList({ signals }: { signals: Signal[] }) {
   return <section className="card"><h2>Analyzer signals as facts</h2>{signals.length === 0 ? <p className="muted">No analyzer signals were stored.</p> : signals.map((signal) => <SignalCard key={`${signal.analyzer_id}:${signal.analyzer_version}`} signal={signal} />)}</section>;
@@ -250,9 +339,9 @@ export function RecordPage({ record }: { record: RecordApiResponse }) {
       <DisclaimerBanner />
       <CaptureContextSummary record={record} />
       <QuickStatsPanel record={record} />
-      <EditTimeline record={record} />
       <SignalList signals={record.signals} />
       <VerificationPanel record={record} />
+      <EditTimeline record={record} />
     </main>
   );
 }

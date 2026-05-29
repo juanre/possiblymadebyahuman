@@ -27,9 +27,16 @@ test.describe("public record page", () => {
 
   test("renders the edit timeline without document text", async ({ page }) => {
     const timeline = page.locator("section.card", { hasText: "Edit timeline" });
-    await expect(timeline).toContainText("Operation shape only");
+    await expect(timeline).toContainText("Document length and event activity over time");
     await expect(timeline).toContainText("No text is stored");
-    await expect(page.locator(".timeline .timeline-row")).toHaveCount(4);
+    const chart = timeline.locator("svg.timeline-chart");
+    await expect(chart).toHaveCount(1);
+    await expect(chart).toHaveAttribute("role", "img");
+    // One <rect> tick per timeline event (the fixture commits 4 events).
+    // Pause bands are drawn first and would also count as <rect>, so filter
+    // by <title> children which only the per-event ticks carry.
+    const eventTicks = chart.locator("rect:has(title)");
+    await expect(eventTicks).toHaveCount(4);
     const html = await page.content();
     for (const plaintext of plaintextFixtures) {
       expect(html.includes(plaintext), `record page leaked plaintext: ${plaintext}`).toBe(false);
