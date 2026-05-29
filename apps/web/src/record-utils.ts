@@ -100,7 +100,7 @@ export function formatServerObservedSpan(ms: number): string {
 export const SHORT_BINDING_CANONICAL_LENGTH = 64;
 
 export const TEXT_BINDING_DISCLAIMER =
-  "Compares letters and digits in order; ignores spacing, punctuation, case, and number formatting — it is not a check of exact text.";
+  "Compares letters and digits in order; ignores spacing, punctuation, case, and number formatting. It checks the wording — not who wrote it — and is not a check of exact text.";
 
 export type BindingCheckResult = {
   ok: boolean;

@@ -9,7 +9,7 @@ const plaintextFixtures = ["Hi there!", "Hi ther!", " there", "\"Hi\""];
 test.describe("public record page", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(`/${slug}`);
-    await page.getByRole("heading", { name: "Writing record" }).waitFor();
+    await page.getByRole("heading", { name: "Signed writing record" }).waitFor();
   });
 
   test("renders the standing disclaimer as a signed-record statement", async ({ page }) => {
@@ -29,16 +29,16 @@ test.describe("public record page", () => {
 
   test("renders the edit timeline without document text", async ({ page }) => {
     const timeline = page.locator("section.card", { hasText: "Edit timeline" });
-    await expect(timeline).toContainText("Document length and event activity over time");
-    await expect(timeline).toContainText("Bars above the curve are events colored by source");
+    await expect(timeline).toContainText("Document length over time");
+    await expect(timeline).toContainText("Pastes, cuts, and large inserts are marked on the curve");
     const chart = timeline.locator("svg.timeline-chart");
     await expect(chart).toHaveCount(1);
     await expect(chart).toHaveAttribute("role", "img");
-    // One <rect> tick per timeline event (the fixture commits 4 events).
-    // Pause bands are drawn first and would also count as <rect>, so filter
-    // by <title> children which only the per-event ticks carry.
-    const eventTicks = chart.locator("rect:has(title)");
-    await expect(eventTicks).toHaveCount(4);
+    // Only NOTABLE events get a marker dot — pastes, cuts/deletes, drops, large
+    // inserts. The fixture has one paste and one cut, so two <circle> markers
+    // carry the per-event <title>; the rising curve carries the typing itself.
+    const eventDots = chart.locator("circle:has(title)");
+    await expect(eventDots).toHaveCount(2);
     const html = await page.content();
     for (const plaintext of plaintextFixtures) {
       expect(html.includes(plaintext), `record page leaked plaintext: ${plaintext}`).toBe(false);
@@ -57,14 +57,11 @@ test.describe("public record page", () => {
     }
   });
 
-  test("verification panel reaches success state after Re-verify chain", async ({ page }) => {
-    const verification = page.locator("section.card", { hasText: "Verification" });
-    await expect(verification).toContainText("Hash chain verified against the full record hash.");
-    const button = verification.getByRole("button", { name: "Re-verify chain" });
-    await button.click();
-    await expect(verification).toContainText("Hash chain verified against the full record hash.");
-    await expect(verification).toContainText("Full record hash");
-    await expect(verification).toContainText("Computed hash");
+  test("signature panel shows the record hash and the reader's recomputed hash", async ({ page }) => {
+    const panel = page.locator("section.card", { hasText: "Signature & details" });
+    await expect(panel).toContainText("Full record hash");
+    await expect(panel).toContainText("Computed hash");
+    await expect(panel).toContainText("Server metadata");
   });
 
   test("observation status line shows public state copy without overclaim", async ({ page }) => {
@@ -81,7 +78,7 @@ test.describe("public record page", () => {
   });
 
   test("server-observed commitments list discloses every chain tip via title attribute", async ({ page }) => {
-    const verification = page.locator("section.card", { hasText: "Verification" });
+    const verification = page.locator("section.card", { hasText: "Signature & details" });
     await expect(verification).toContainText("Server metadata");
     await expect(verification).not.toContainText("Attestations");
     const details = verification.locator("details.observation-commitments");
@@ -106,23 +103,32 @@ test.describe("public record page", () => {
     await expect(card).toContainText("No document was bound to this record.");
   });
 
-  test("a record with no binding shows no check-a-document link", async ({ page }) => {
-    await expect(page.locator("p.check-cta")).toHaveCount(0);
+  test("signet states it signs the writing process (no document bound here)", async ({ page }) => {
+    const signet = page.locator("header.signet");
+    await expect(signet).toContainText("Signed writing record");
+    await expect(signet).toContainText("shape of the writing process");
+    await expect(signet).not.toContainText("text it produced");
   });
 
-  test("shows the server-observed started/ended window in quick facts", async ({ page }) => {
-    const quick = page.locator("section.card", { hasText: "Quick facts" });
-    await expect(quick).toContainText("Started (server-observed)");
-    await expect(quick).toContainText("2026-05-28 14:02 UTC");
-    await expect(quick).toContainText("Ended (server-observed)");
-    await expect(quick).toContainText("2026-05-28 14:34 UTC");
+  test("renders a footer with the candid tagline and nav", async ({ page }) => {
+    const footer = page.locator("footer.record-footer");
+    await expect(footer).toContainText("We cannot prove a human wrote it");
+    await expect(footer.getByRole("link", { name: "Verify a record" })).toHaveAttribute("href", "/docs/verification/");
+  });
+
+  test("shows the began/ended writing window in capture context", async ({ page }) => {
+    const capture = page.locator("section.card", { hasText: "Capture context" });
+    await expect(capture).toContainText("Began");
+    await expect(capture).toContainText("2026-05-28 14:02 UTC");
+    await expect(capture).toContainText("Ended");
+    await expect(capture).toContainText("2026-05-28 14:34 UTC");
   });
 });
 
 test.describe("text binding — bound record", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/bound");
-    await page.getByRole("heading", { name: "Writing record" }).waitFor();
+    await page.getByRole("heading", { name: "Signed writing record" }).waitFor();
   });
 
   test("exact paste of the signed text matches as same wording", async ({ page }) => {
@@ -165,11 +171,31 @@ test.describe("text binding — bound record", () => {
     await expect(result).toContainText("not a check of exact text");
   });
 
-  test("offers a clear link that targets the check-a-document section", async ({ page }) => {
-    const cta = page.locator("p.check-cta a");
-    await expect(cta).toContainText("Check a document against this record");
-    await expect(cta).toHaveAttribute("href", "#check-a-document");
-    await expect(page.locator("#check-a-document")).toHaveCount(1);
+  test("signet states it signs the process and the text when bound", async ({ page }) => {
+    const signet = page.locator("header.signet");
+    await expect(signet).toContainText("shape of the writing process");
+    await expect(signet).toContainText("text it produced");
+  });
+
+  test("a match shows an affirmative check mark, scoped to wording not authorship", async ({ page }) => {
+    const card = page.locator("section.card", { hasText: "Check a document" });
+    await card.getByLabel("document to check").fill(BOUND_TEXT);
+    await card.getByRole("button", { name: "Check" }).click();
+    const result = card.locator(".binding-result");
+    await expect(result).toHaveClass(/ok/);
+    await expect(result.locator(".binding-result-mark svg")).toHaveCount(1);
+    await expect(result).toContainText("not who wrote it");
+  });
+
+  test("editing the box clears a stale result and Check stamps a time", async ({ page }) => {
+    const card = page.locator("section.card", { hasText: "Check a document" });
+    const box = card.getByLabel("document to check");
+    await box.fill(BOUND_TEXT);
+    await card.getByRole("button", { name: "Check" }).click();
+    await expect(card.locator(".binding-result")).toBeVisible();
+    await expect(card).toContainText("Checked at");
+    await box.fill(`${BOUND_TEXT} extra words`);
+    await expect(card.locator(".binding-result")).toHaveCount(0);
   });
 
   test("commensurability is a separate card with facts, not a verdict", async ({ page }) => {

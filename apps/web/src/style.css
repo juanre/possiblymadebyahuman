@@ -4,7 +4,15 @@
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
-body { margin: 0; }
+body {
+  margin: 0;
+  background-color: #fbf8f2;
+  /* Faint graph-paper grid — the paper this record is written on. */
+  background-image:
+    linear-gradient(rgba(139, 94, 52, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(139, 94, 52, 0.045) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
 button { font: inherit; }
 button:disabled { cursor: not-allowed; opacity: 0.55; }
 
@@ -94,6 +102,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 .source-drop { background: #16a34a; }
 .source-programmatic { background: #64748b; }
 .source-unknown { background: #a89a82; }
+.dot.curve { background: #8b5e34; }
 .dot.large { background: transparent; outline: 2px solid #202124; outline-offset: 1px; }
 .dot.pause { background: #ead9b8; outline: 1px dashed #a89a82; }
 .legend { color: #675f56; display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; align-items: center; font-size: 0.9rem; }
@@ -176,15 +185,34 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   margin-top: 12px;
 }
 .binding-check-privacy { font-size: 0.9rem; }
+/* The result is a strong, obvious affirmative for a match (green hand-drawn
+   check) and an equally clear red cross for a miss. It asserts TEXT IDENTITY
+   only — "the wording that was signed" — never humanness; the disclaimer below
+   and the signet's "not a human/AI score" keep that scope. */
 .binding-result {
-  margin-top: 14px;
-  border-top: 1px solid #eadfce;
-  padding-top: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px 18px;
+  border-radius: 14px;
 }
-/* The match headline is a statement about wording, not a pass/fail verdict,
-   so it uses neutral ink — never the verification green — to avoid reading
-   as an authenticity certificate. A no-match keeps a quiet warning red. */
-.binding-result-headline { margin: 0; font-weight: 700; color: #202124; }
+.binding-result.ok { background: #eaf6ec; border: 1px solid #b7dcc0; }
+.binding-result.error { background: #fbeeee; border: 1px solid #e6c3c3; }
+.binding-result-mark { flex: 0 0 auto; line-height: 0; }
+.binding-mark-svg { width: 42px; height: 42px; display: block; }
+.binding-mark-svg path { fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.binding-result.ok .binding-mark-svg path {
+  stroke: #166534;
+  stroke-dasharray: 46;
+  stroke-dashoffset: 46;
+  animation: draw-mark 0.45s ease-out forwards;
+}
+.binding-result.error .binding-mark-svg path { stroke: #a12a2a; }
+@keyframes draw-mark { to { stroke-dashoffset: 0; } }
+.binding-result-body { min-width: 0; }
+.binding-result-headline { margin: 0; font-weight: 800; font-size: 1.15rem; }
+.binding-result.ok .binding-result-headline { color: #14532d; }
 .binding-result.error .binding-result-headline { color: #a12a2a; }
 .binding-result-note { margin: 6px 0 0; font-size: 0.9rem; }
 .binding-result-warning { margin: 8px 0 0; color: #6e5631; font-size: 0.92rem; }
@@ -200,6 +228,95 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   padding-bottom: 1px;
 }
 .check-cta a:hover, .check-cta a:focus-visible { color: #5a3819; border-bottom-color: #8b5e34; outline: none; }
+
+/* Signet — the stamped header that tells a newcomer what this is and signs
+   the process (and text). */
+.signet { margin-bottom: 26px; }
+.signet-head { display: flex; align-items: center; gap: 18px; margin: 6px 0 14px; }
+.signet-seal { flex: 0 0 auto; line-height: 0; }
+.signet-seal-svg { width: 62px; height: 62px; display: block; transform: rotate(-7deg); }
+.signet-seal-svg .seal-edge { fill: none; stroke: #8b5e34; stroke-width: 1.6; stroke-linejoin: round; opacity: 0.9; }
+.signet-seal-svg .seal-ring { fill: none; stroke: #8b5e34; stroke-width: 1; opacity: 0.5; }
+.signet-seal-svg .seal-mark { fill: none; stroke: #3d2f17; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.signet-titles h1 { margin: 0; font-size: clamp(2rem, 6vw, 3.4rem); line-height: 1.03; }
+.signet-statement { margin: 6px 0 0; font-size: 1.05rem; color: #3d2f17; }
+.signet-statement strong { color: #202124; }
+
+/* The document check is the hero action — give it a warmer, raised frame. */
+section.card[aria-label="Check a document"] {
+  border: 2px solid #d9b56f;
+  box-shadow: 0 14px 36px rgb(60 40 10 / 0.10);
+}
+
+.record-footer { margin-top: 44px; text-align: center; color: #6e665d; }
+.record-footer-rule {
+  height: 0;
+  max-width: 240px;
+  margin: 0 auto 18px;
+  border-top: 2px dashed #d9c8ad;
+}
+.record-footer-mark { margin: 0; font-weight: 800; letter-spacing: 0.05em; color: #3d2f17; text-transform: lowercase; }
+.record-footer-seal { color: #8b5e34; }
+.record-footer-tagline {
+  font-family: 'Iowan Old Style', 'New York', ui-serif, Georgia, serif;
+  font-style: italic;
+  color: #514a40;
+  margin: 8px auto 14px;
+  max-width: 42ch;
+}
+.record-footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; margin: 0 0 10px; }
+.record-footer-links a { color: #8b5e34; text-decoration: none; }
+.record-footer-links a:hover, .record-footer-links a:focus-visible { text-decoration: underline; outline: none; }
+.record-footer-note { font-size: 0.85rem; margin: 0; }
+
+/* Writing-rhythm fingerprint — log-bucketed inter-edit delay histogram. */
+.fingerprint-chart { display: block; width: 100%; height: auto; margin: 10px 0 4px; }
+.fp-area { fill: rgba(47, 128, 237, 0.16); }
+.fp-line { fill: none; stroke: #2f80ed; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.fp-tick-line { stroke: #e3d7c0; stroke-width: 1; }
+.fp-label { fill: #8a8073; font-size: 10px; text-anchor: middle; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.fingerprint-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; margin: 8px 0 0; }
+.fingerprint-stats div { background: #fbf3e8; border-radius: 12px; padding: 10px 12px; }
+.fingerprint-stats dt { color: #756b60; font-size: 0.82rem; margin: 0; }
+.fingerprint-stats dd { margin: 3px 0 0; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* Scope of the document-check result reads at full weight, not fine print. */
+.binding-result-note { color: #3d2f17; }
+.signet-orient { margin: 10px 0 0; color: #514a40; font-size: 1.02rem; line-height: 1.5; }
+.signet-orient a { color: #8b5e34; }
+.verify-intro { margin: 0 0 8px; color: #3d2f17; }
+.binding-check-privacy { color: #514a40; font-size: 0.92rem; margin: 6px 0 10px; }
+
+/* Definitions for jargon measure keys: a small "?" with a click popover. */
+.measure-term { position: relative; display: inline-flex; align-items: center; gap: 5px; }
+.measure-info {
+  border: 1px solid #c9bda9;
+  background: #fffaf2;
+  color: #756b60;
+  width: 15px;
+  height: 15px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.measure-info:hover, .measure-info:focus-visible { border-color: #8b5e34; color: #3d2f17; outline: none; }
+.measure-popover {
+  position: absolute;
+  top: 135%;
+  left: 0;
+  z-index: 5;
+  width: max-content;
+  max-width: 260px;
+  background: #202124;
+  color: #fbf8f2;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.18);
+}
 
 /* /write — canvas-first layout */
 .write-shell {

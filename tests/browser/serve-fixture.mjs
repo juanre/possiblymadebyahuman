@@ -137,20 +137,81 @@ const fixtureRecord = { manifest: record.manifest, events: record.events, stats,
 // the chain still verifies in the browser.
 const boundSessionId = record.manifest.session_id;
 const boundBinding = createTextBinding(BOUND_TEXT, boundSessionId, "prefix");
+
+// A richer synthetic process for the demo so the writing-rhythm fingerprint has
+// real shape: a typing cadence (~60-200ms gaps), a couple of pastes, small
+// thinking gaps, and two long pauses (8s, 45s) to exercise the log-scale tail.
+// Deterministic (no randomness) so the fixture is stable.
+const typingGaps = [70, 95, 120, 80, 150, 60, 110, 90, 200, 75, 130, 85, 160, 100];
+const boundEvents = [];
+let bt = 0;
+let bpos = 0;
+for (let i = 0; i < 64; i += 1) {
+  let gap = typingGaps[i % typingGaps.length];
+  if (i === 21) gap = 45_000;
+  else if (i === 44) gap = 8_000;
+  else if (i === 6 || i === 33) gap = 1_500;
+  if (i > 0) bt += gap;
+  const paste = i === 12 || i === 50;
+  const insLen = paste ? 38 : 1;
+  boundEvents.push({ seq: i, t: bt, op: "insert", pos: bpos, del_len: 0, ins_len: insLen, source: paste ? "paste" : "typing" });
+  bpos += insLen;
+}
+const boundDelays = boundEvents.slice(1).map((event, index) => event.t - boundEvents[index].t);
+const sortedDelays = [...boundDelays].sort((a, b) => a - b);
+const percentile = (p) => sortedDelays.length === 0 ? null : sortedDelays[Math.min(sortedDelays.length - 1, Math.floor((p / 100) * sortedDelays.length))];
 const boundManifest = {
   ...record.manifest,
   format_version: "0.2",
   text_binding: boundBinding,
-  record_hash: computeRecordHash(record.events, boundSessionId, "0.2", boundBinding),
+  event_count: boundEvents.length,
+  duration_ms: boundEvents[boundEvents.length - 1].t,
+  record_hash: computeRecordHash(boundEvents, boundSessionId, "0.2", boundBinding),
 };
-const boundStats = { ...stats, record_hash: boundManifest.record_hash };
+const boundStats = {
+  ...stats,
+  record_hash: boundManifest.record_hash,
+  event_count: boundEvents.length,
+  duration_ms: boundManifest.duration_ms,
+  observed_final_length: bpos,
+  insert_op_count: boundEvents.length,
+  delete_op_count: 0,
+  replace_op_count: 0,
+  typed_event_count: boundEvents.filter((event) => event.source === "typing").length,
+  paste_event_count: boundEvents.filter((event) => event.source === "paste").length,
+  cut_event_count: 0,
+  inserted_codepoints_total: bpos,
+  largest_atomic_insert_codepoints: 38,
+  inter_event_delay_min_ms: sortedDelays[0] ?? null,
+  inter_event_delay_p50_ms: percentile(50),
+  inter_event_delay_p90_ms: percentile(90),
+  inter_event_delay_p95_ms: percentile(95),
+  inter_event_delay_p99_ms: percentile(99),
+  inter_event_delay_max_ms: sortedDelays[sortedDelays.length - 1] ?? null,
+  active_time_ms: boundDelays.filter((delay) => delay < 30_000).reduce((sum, delay) => sum + delay, 0),
+  idle_time_ms: boundDelays.filter((delay) => delay >= 30_000).reduce((sum, delay) => sum + delay, 0),
+  long_pause_count: boundDelays.filter((delay) => delay >= 30_000).length,
+};
 const boundObservation = {
   ...observation,
   commitments: observation.commitments.map((commitment) =>
-    commitment.event_count === 4 ? { ...commitment, chain_tip: boundManifest.record_hash } : commitment,
+    commitment.event_count === 4
+      ? { ...commitment, event_count: boundEvents.length, chain_tip: boundManifest.record_hash }
+      : commitment,
   ),
 };
-const boundRecord = { manifest: boundManifest, events: record.events, stats: boundStats, signals, observation: boundObservation };
+const boundRecord = { manifest: boundManifest, events: boundEvents, stats: boundStats, signals, observation: boundObservation };
+
+// Optional: serve a real fetched record (content-blind public JSON) at
+// /api/records/real for local design review. Inert unless PMBAH_REAL_RECORD is set.
+let realRecord = null;
+if (process.env.PMBAH_REAL_RECORD) {
+  try {
+    realRecord = JSON.parse(await readFile(process.env.PMBAH_REAL_RECORD, "utf8"));
+  } catch {
+    realRecord = null;
+  }
+}
 
 const server = createServer(async (req, res) => {
   try {
@@ -158,9 +219,14 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname.startsWith("/api/records/")) {
       const requestedSlug = url.pathname.slice("/api/records/".length);
-      const body = requestedSlug === "bound" ? boundRecord : fixtureRecord;
+      const body = requestedSlug === "bound"
+        ? boundRecord
+        : requestedSlug === "real" && realRecord
+        ? realRecord
+        : fixtureRecord;
       res.statusCode = 200;
       res.setHeader("content-type", "application/json; charset=utf-8");
+      res.setHeader("cache-control", "no-store");
       res.end(JSON.stringify(body));
       return;
     }
@@ -190,6 +256,7 @@ async function serveFile(res, path) {
     if (!info.isFile()) throw new Error("not a file");
     res.statusCode = 200;
     res.setHeader("content-type", contentType(path));
+    res.setHeader("cache-control", "no-store");
     createReadStream(path).pipe(res);
   } catch {
     res.statusCode = 404;

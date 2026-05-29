@@ -58,7 +58,6 @@ test("RecordPage source defines required public record sections without verdict 
     "SignalList",
     "SignalCard",
     "VerificationPanel",
-    "ChainVerificationButton",
     "ManifestDetails",
     "ObservationStatusLine",
     "ObservationCommitmentsList",
