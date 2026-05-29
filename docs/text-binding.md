@@ -199,6 +199,13 @@ than present a confident prefix match.
 Common shape across producers: the signer **selects** the final text and
 **affirms an explicit claim** before the binding is computed.
 
+**Binding is on by default.** Signing computes a binding from the
+selection (default selection = the whole document); an explicit opt-out
+("sign the process only — don't bind a document") covers the case where
+the author is still editing or deliberately won't pin the text. A
+selection whose canonical form is empty (§2.2) is unbindable: the producer
+disables binding and offers process-only signing.
+
 - The affirmation copy: *"I affirm this is the text this record is meant
   to cover."* with the chosen policy shown (`exact` / `prefix`) and the
   honest note that the binding compares wording, not exact text.
@@ -221,8 +228,11 @@ content-blind invariant.
   document; the browser reports `exact` match / `prefix` match (with the
   count of appended characters) / no match, each carrying the §2.2
   "not exact text" disclaimer. A prominent "checked in your browser —
-  nothing is uploaded" line. Separately and always shown: the
-  commensurability facts (§2.3), visually distinct from the match result.
+  nothing is uploaded" line. Separately and always shown, in a visually
+  distinct card headed **"How this was written"**: the commensurability
+  facts (§2.3) — signed-text size next to the process facts, closing with
+  *"What counts as 'enough' is yours to read."* Never merged with the
+  match result into one verdict.
 - **No binding present** (legacy `0.1` records, and any record signed
   without binding): show plainly *"No document was bound to this
   record."* Do not hide the section; absence is honest information.
