@@ -1,12 +1,17 @@
 # Text binding
 
-Status: **proposal, not approved.** Needs coordinator and reviewer
-sign-off before any implementation. If accepted it amends spec `§3.4`
-(content opacity boundary) to permit one text-derived commitment in the
-public manifest, and adds a verification surface to the record app
-(`§11`). It does **not** change the product promise: still content-blind
-in storage, still no humanness verdict, score, or badge. The binding is
-artifact provenance, not detection.
+Status: **approved direction, design detail under review.** Coordinator
+has signed off on the direction (bind a visible artifact to a record;
+two separate claims; aggressive canonicalization as the starting
+semantic; seal the binding into the signed surface). This document is the
+implementation spec; the epic `default-aaaa.59` tracks the work. It does
+not change the product promise: still content-blind in storage, still no
+humanness verdict, score, or badge. The binding is artifact provenance,
+not detection.
+
+If accepted it amends spec `§3.4` (content opacity boundary) to permit
+one text-derived commitment in the public manifest, and bumps the format
+to `0.2` (the binding is sealed into `record_hash`).
 
 ---
 
@@ -22,137 +27,207 @@ document.
 ## 2. Design
 
 Two cleanly separated claims. The system makes the first; the human
-makes the second.
+makes the second. The UI must never collapse them into a single
+"verified" state.
 
-### 2.1 Text binding — an automated claim of text identity
+### 2.1 Text binding — an automated claim of *wording*, not identity
 
 At sign time the user selects the final text. The producer computes the
-**aggressive canonical form** of the selection, hashes it salted with
-`record_hash`, and embeds the commitment in the manifest (covered by the
-existing chain). The text itself is never uploaded or stored.
+**aggressive canonical form** of the selection, hashes it, and the
+commitment is sealed into `record_hash` (§2.4). The text itself is never
+uploaded or stored.
 
 ```jsonc
 "text_binding": {
   "scheme": "canon-letters/0.1",
   "policy": "prefix",          // "exact" | "prefix"
   "canonical_length": 1840,    // codepoints of the canonical form
-  "commitment": "b3:..."       // b3(record_hash ‖ canonical_selection)
+  "commitment": "b3:..."       // b3(session_id ‖ canonical_form)
 }
 ```
 
-- `exact`: the published text's canonical form must equal the
-  committed one.
+- `exact`: the candidate's canonical form must equal the committed one.
 - `prefix`: the committed canonical form must be a prefix of the
-  published text's canonical form. Covers the motivating case — sign a
-  mail, then append `possiblymadebyahuman.com/<sig>`; the appended line
-  is trailing material after the signed body.
+  candidate's canonical form. Covers the motivating case — sign a mail,
+  then append `possiblymadebyahuman.com/<sig>`; the appended line is
+  trailing material after the signed body.
 
-**Aggressive canonical form.** Unicode NFKC → casefold → keep only code
-points with Unicode property Letter, Number, or Mark; drop everything
-else (punctuation, whitespace, symbols, case). This is what makes the
-binding robust to the transformations a document suffers in transit —
-line rewrapping, smart-quote substitution, collapsed/added spaces,
-non-breaking spaces — none of which touch letters. It works for any
-script (Han ideographs are Letter; no ASCII assumption).
+**Default policy: `prefix`.** It tolerates appended footers/signatures
+and trailing whitespace, which `exact` would reject; the producer lets
+the signer choose `exact` when they mean "exactly this and nothing
+after."
 
-The honest meaning of "match" under this canonicalization: *the same
-sequence of letters and digits, in order, ignoring punctuation, spacing,
-and case* — not byte-identical text. A genuine reword changes letters
-and will correctly fail to verify.
+### 2.2 Aggressive canonical form (`canon-letters/0.1`)
 
-### 2.2 Verification — fully client-side
+Unicode NFKC → casefold → keep only code points with Unicode property
+Letter, Number, or Mark; drop everything else (punctuation, whitespace,
+symbols, case). Works for any script (Han ideographs are Letter; no
+ASCII assumption). Pinned precisely in `docs/spec/canonicalization.md`
+with conformance vectors.
 
-The record page offers a "check a document against this record" box. The
-browser canonicalizes the pasted text, recomputes the salted hash (or
-the prefix hash at `canonical_length`), and reports match / no-match plus
-the signed text's size. The candidate text never leaves the page.
+This is the deliberately robust, lossy starting semantic: it survives
+the transformations a document suffers in transit — line rewrapping,
+smart-quote substitution, collapsed/added spaces, non-breaking spaces,
+case changes — because none of them touch letters.
+
+**The honest meaning of a match is the load-bearing part of this whole
+feature.** A match means *the same letters and digits, in order* — it is
+**not** a check of exact text. Materially different texts that share an
+ordered letter/digit sequence (e.g. `$1,000.00` and `$100,000` both
+reduce to `100000`) verify as matching. That is acceptable **only
+because we never claim identity**: the threat being closed is "a wholly
+different document published under this record," and a wholly different
+document has different letters. The match result must state plainly:
+
+> **Same wording as the signed text.** This compares letters in order and
+> ignores formatting, punctuation, numbers, and case — it is **not** a
+> check of exact text.
+
+Overclaiming (a bare "verified ✓", "identical", "authentic text") is
+forbidden. The disclaimer travels with the result, not in a tooltip.
 
 ### 2.3 Commensurability — a human judgment, not an automated check
 
-The binding proves text identity; it says nothing about whether the
-recorded process plausibly *produced* that much text. That second
-question is inherently contextual — a forum comment, an email reply, and
-an essay carry different expectations — so it is left to the reader.
-
-The record already publishes the raw materials: duration, event count,
-typed codepoints, paste counts, largest atomic insert. The record page
-presents the signed text's size alongside these so a reader can judge
-for themselves whether the writing process is commensurate with the
-text. No threshold, no automated verdict, no badge.
+The binding proves wording; it says nothing about whether the recorded
+process plausibly *produced* that much text. That question is contextual
+(a forum comment, an email reply, and an essay differ), so it is left to
+the reader. The record already publishes the raw materials — duration,
+event count, typed codepoints, paste counts, largest atomic insert. The
+record page presents the signed text's size alongside these. No
+threshold, no automated verdict, no badge.
 
 This handles quoted email cleanly: sign the whole reply, quotes included;
 the binding proves "this is the email," the process stats show only a
 fraction was actively written, and a quoted email visibly reads as
 quoted — the reader reconciles it without the system pretending to.
 
-## 3. Why this works on every surface that matters
+### 2.4 Commitment model — sealing the binding into `record_hash`
 
-The binding reads the **final selection at sign time** and is therefore
-independent of capture fidelity. On rich-text surfaces (e.g. a Gmail
-reply) where positional/length capture degrades to `null` ("partial
-capture"), the binding is unaffected — we read the selected text
-directly. Commensurability also degrades gracefully there: the timing
-and event count survive even when exact lengths do not, so
-"~340 words" vs "18 minutes across ~1,900 edits, no large pastes" remains
-a judgment a human can make.
+The current `record_hash` commits to the **event log only** (the BLAKE3
+chain seeded with `format_version ‖ session_id`); other manifest fields
+are stored but not hash-committed. So a binding placed in the manifest
+would be **server-mutable** — anyone storing or serving the record could
+swap in a binding for a different text and the chain would still verify.
+For something called a signature, that is unacceptable.
 
-Google Docs remains unsupported: it renders to canvas, so there is no
-process to record and no DOM selection to bind. The extension should
-declare itself inapplicable there rather than fake a record.
+Therefore the binding is sealed into the record's identity hash:
 
-## 4. Two claims must not be collapsed
+```
+event_tip = chain[last]                       // computed as today (format 0.1 rules)
+record_hash = event_tip                        // when no text_binding is present (identical to 0.1)
+record_hash = b3(event_tip ‖ canon(binding))   // when a text_binding is present
+```
 
-The UI must keep these visually distinct and never merge them into one
-"verified" state:
+where `canon(binding)` is the existing canonical-JSON serialization of
+the binding's `{scheme, policy, canonical_length, commitment}`.
 
-- **Text identity** (binding): automated, robust to formatting, catches
-  the swap.
-- **Commensurability** (process vs text size): human judgment, no
-  automated check.
+Consequences:
+- The short signature / URL derives from `record_hash`, so the URL
+  commits to the bound text exactly as it commits to the events. The
+  bound text cannot be changed without changing the URL.
+- `verifyRecord` recomputes the event chain, then re-applies the seal
+  when a binding is present, and compares to `manifest.record_hash`.
+  Browser-verifiable, same as the event chain today.
+- **Format version → `0.2`.** Records with no binding compute an
+  identical `record_hash` to `0.1`. New conformance vectors cover the
+  sealed case.
 
-Collapsing them into a single green checkmark would manufacture exactly
-the certification-of-effort claim the product refuses to make.
+**Circularity note:** the commitment is salted with `session_id`
+(`b3(session_id ‖ canonical_form)`), **not** with `record_hash` —
+`record_hash` now depends on the binding, so it cannot also be an input
+to the commitment. `session_id` is a per-record UUID nonce, sufficient to
+defeat cross-record correlation and precomputed-dictionary attacks on the
+canonical form.
+
+## 3. Verification (fully client-side)
+
+The record page offers a check box. Given candidate text `C`:
+
+- compute `canon(C)`;
+- **exact**: pass iff `len(canon(C)) == canonical_length` and
+  `b3(session_id ‖ canon(C)) == commitment`;
+- **prefix**: pass iff `len(canon(C)) >= canonical_length` and
+  `b3(session_id ‖ canon(C)[0:canonical_length]) == commitment`; the
+  remainder is reported as appended material.
+
+`session_id` and the binding are public in the record, so the browser
+computes everything locally. The candidate text never leaves the page.
+
+## 4. UX
+
+### 4.1 Signing flow (producers)
+
+Common shape across producers: the signer **selects** the final text and
+**affirms an explicit claim** before the binding is computed.
+
+- The affirmation copy: *"I affirm this is the text this record is meant
+  to cover."* with the chosen policy shown (`exact` / `prefix`) and the
+  honest note that the binding compares wording, not exact text.
+- `/write`: after writing, "Sign" → selection defaults to the whole
+  document (user may narrow) → affirmation + policy → sign.
+- Browser extension sign modal: select text in the field (default whole
+  field) → affirmation + policy → sign.
+- Emacs `pmbah-sign-buffer`: use the active region if any, else whole
+  buffer → affirmation + policy → sign.
+
+Plaintext boundary: the producer reads the selection **locally**,
+computes the canonical form and commitment, discards the text, and
+uploads only `{scheme, policy, canonical_length, commitment}`. No
+plaintext and no reversible text reaches the server, consistent with the
+content-blind invariant.
+
+### 4.2 Checking flow (record page, near the verification area)
+
+- **Binding present:** a "Check a document" box; the reader pastes a
+  document; the browser reports `exact` match / `prefix` match (with the
+  count of appended characters) / no match, each carrying the §2.2
+  "not exact text" disclaimer. A prominent "checked in your browser —
+  nothing is uploaded" line. Separately and always shown: the
+  commensurability facts (§2.3), visually distinct from the match result.
+- **No binding present (the common case — most records will have none):**
+  show plainly *"No document was bound to this record."* Do not hide the
+  section; absence is honest information.
 
 ## 5. Explicitly out of scope
 
-Dropped after analysis as effort that does not pay for itself here:
-
-- An **automated length/consistency check** at sign time — fragile on
-  rich-text surfaces, confused by quoted/pre-seeded text, and a poor fit
-  for a contextual question. Replaced by §2.3 human judgment.
-- **Content-defined chunking / per-chunk leaf hashes** for mid-document
-  diffs — aggressive canonicalization plus `exact`/`prefix` covers the
-  real cases (same letters, optionally with an appended tail). Internal
-  mid-document edit tolerance is not a requirement.
-- **Process anchoring** (per-checkpoint buffer commitments, all-surviving
-  reconstruction) — larger architectural jump with empirical unknowns;
-  not needed for the binding to stand on its own.
-- **Server-mediated verification** — unnecessary; verification is
-  client-side and text never reaches the server.
+- Automated sign-time length/consistency checking — fragile on rich-text,
+  confused by quoted text; replaced by §2.3 human judgment.
+- Content-defined chunking / per-chunk leaf hashes / mid-document diffs —
+  aggressive canon + `exact`/`prefix` covers the real cases.
+- Process anchoring (per-checkpoint buffer commitments) — separate, larger
+  effort with empirical unknowns.
+- Server-mediated verification — verification is client-side; text never
+  reaches the server.
+- Google Docs producer — canvas-rendered; no process to record and no DOM
+  selection to bind. The extension declares itself inapplicable there.
 
 ## 6. Honest limits
 
-- "Match" means letters, not formatting (§2.1); a genuine reword fails by
+- A match means letters, not exact text (§2.2); a genuine reword fails by
   design.
-- Interleaved replies (writing between quote blocks) can't be one
-  contiguous selection. v1 answer: sign the whole reply, rely on visible
-  quoting plus commensurability. Multi-span selection is a future
-  nicety, not now.
+- Interleaved replies can't be one contiguous selection; v1 answer is
+  "sign the whole reply, rely on visible quoting + commensurability."
+  Multi-span selection is a future nicety.
 - Commensurability needs an engaged reader; it is a judgment aid, not a
   guarantee.
 - Google Docs is unsupported.
 
-## 7. What needs sign-off before code
+## 7. Rollout stages
 
-1. Accept the §3.4 amendment: one salted, aggressive-canonical
-   text-of-selection commitment (plus its canonical length) may enter the
-   public manifest. This is a whole-selection hash, not per-chunk leaf
-   hashes; confirming a guess requires already possessing the whole
-   selection, so leakage is bounded to "confirm a hypothesis."
-2. Approve adding `text_binding` to the manifest (chain-covered) and a
-   client-side verification surface to the record app.
-3. Pin the aggressive canonicalization precisely in
-   `docs/spec/canonicalization.md` and add conformance vectors for it.
-4. Confirm the two-claims separation (§4) as a UI invariant.
-
-No implementation until 1–4 are settled.
+1. **Format core** (`packages/format`, `packages/conformance`): the
+   `text_binding` type, `canon-letters/0.1` canonicalization, sealed
+   `record_hash` (format `0.2`), `verifyRecord` update, conformance
+   vectors. Everything else depends on this.
+2. **Backend** (`apps/ingest-api`, `packages/storage`): accept and
+   validate `text_binding` on `POST /api/records` (recompute and check
+   the seal), persist it, return it on `GET`. DB migration for the new
+   manifest field.
+3. **Checking UX** (`apps/web`): check box, exact/prefix/no-match
+   results with the disclaimer, commensurability panel, no-binding state,
+   client-side verification.
+4. **Signing UX — `/write` first** (`apps/web` + `packages/producer-core`):
+   selection + affirmation + local commitment compute + upload.
+5. **Signing UX — extension and Emacs** (`apps/browser-extension`,
+   `producers/emacs`): same flow on those producers; conformance pass.
+6. **Docs/site** (`apps/site`): explain signing and checking, update the
+   threat model, state plainly what a match does and does not mean.
