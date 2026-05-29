@@ -708,7 +708,7 @@ export class PostgresRecordStore implements RecordStore {
 type RecordRow = Record<string, unknown> & {
   record_hash: B3Hash;
   short_signature: string;
-  format_version: "0.1";
+  format_version: RecordManifest["format_version"];
   session_id: string;
   producer_id: string;
   producer_version: string;

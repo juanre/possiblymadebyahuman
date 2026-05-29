@@ -247,7 +247,7 @@ test("7. sign chain matches packages/format computeRecordHash", () => {
   registry.appendMutation(session.session_id, { op: "insert", pos: 7, del_len: 0, ins_len: 1, source: "typing" });
 
   const draft = registry.sign(session.session_id);
-  const recomputed = computeRecordHash(draft.events, session.session_id, "0.1");
+  const recomputed = computeRecordHash(draft.events, session.session_id, draft.manifest.format_version);
   assert.equal(draft.manifest.record_hash, recomputed);
   assert.deepEqual(validateManifest(draft.manifest), []);
 });
@@ -356,7 +356,7 @@ test("12. canonicalizeEvent round-trip matches the bytes feeding computeRecordHa
     assert.ok(line.startsWith("{") && line.endsWith("}"));
     assert.doesNotMatch(line, /\s/);
   }
-  const recomputed = computeRecordHash(draft.events, session.session_id, "0.1");
+  const recomputed = computeRecordHash(draft.events, session.session_id, draft.manifest.format_version);
   assert.equal(draft.manifest.record_hash, recomputed);
 });
 

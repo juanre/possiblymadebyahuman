@@ -1,0 +1,57 @@
+[
+  {
+    "name": "punctuation whitespace and case are stripped",
+    "input": " Hello, World! 123 ",
+    "canonical": "helloworld123"
+  },
+  {
+    "name": "CJK Han letters and fullwidth digits are kept",
+    "input": "漢 字 １２３",
+    "canonical": "漢字123"
+  },
+  {
+    "name": "combining marks in non-Latin scripts are kept",
+    "input": "किरण",
+    "canonical": "किरण"
+  },
+  {
+    "name": "mixed scripts preserve letters numbers and marks in order",
+    "input": "Hi Καλημέρα １２ 東京",
+    "canonical": "hiκαλημέρα12東京"
+  },
+  {
+    "name": "NFKC compatibility forms normalize before filtering",
+    "input": "ﬃ ① Ａ",
+    "canonical": "ffi1a"
+  },
+  {
+    "name": "non-Latin casefold maps sigma variants together",
+    "input": "ΟΣ ς Σ",
+    "canonical": "οσσσ"
+  },
+  {
+    "name": "full casefold expands Greek iota dialytika tonos",
+    "input": "ΐ",
+    "canonical": "ΐ"
+  },
+  {
+    "name": "full casefold expands Greek upsilon dialytika tonos",
+    "input": "ΰ",
+    "canonical": "ΰ"
+  },
+  {
+    "name": "full casefold expands polytonic Greek alpha with ypogegrammeni",
+    "input": "ᾷ",
+    "canonical": "ᾶι"
+  },
+  {
+    "name": "surrogate-pair codepoints are processed as codepoints",
+    "input": "A𝟘🙂B",
+    "canonical": "a0b"
+  },
+  {
+    "name": "zero-length canonical form is possible but unbindable",
+    "input": "🎉 — !!",
+    "canonical": ""
+  }
+]

@@ -5,13 +5,16 @@ import test from "node:test";
 import {
   b3HashText,
   canonicalizeJson,
+  canonicalizeTextForBinding,
   codepointLength,
   computeEventHashChain,
   computeObservedLength,
   computeRecordHash,
+  createTextBinding,
   validateEvent,
   validateManifest,
   verifyRecord,
+  verifyTextBindingCandidate,
 } from "../packages/format/src/index.ts";
 import { runConformanceVectors } from "../packages/conformance/src/index.ts";
 
@@ -35,6 +38,8 @@ test("conformance vectors pass", async () => {
     processLengths: await readJson("packages/conformance/vectors/process-length.json"),
     goldenRecords: await readJson("packages/conformance/vectors/golden-records.json"),
     capabilityAccuracy: await readJson("packages/conformance/vectors/capability-accuracy.json"),
+    textCanonicalization: await readJson("packages/conformance/vectors/text-canonicalization.json"),
+    textBindings: await readJson("packages/conformance/vectors/text-binding.json"),
   };
   const result = runConformanceVectors(vectors);
   assert.deepEqual(result.results.filter((check) => !check.passed), []);
@@ -43,8 +48,72 @@ test("conformance vectors pass", async () => {
 
 test("hash-chain helpers reproduce the hash-chain vector", async () => {
   const [vector] = await readJson("packages/conformance/vectors/hash-chain.json");
-  assert.deepEqual(computeEventHashChain(vector.events, vector.session_id), vector.chain);
-  assert.equal(computeRecordHash(vector.events, vector.session_id), vector.record_hash);
+  assert.deepEqual(computeEventHashChain(vector.events, vector.session_id, vector.format_version), vector.chain);
+  assert.equal(computeRecordHash(vector.events, vector.session_id, vector.format_version, vector.text_binding), vector.record_hash);
+});
+
+test("canon-letters/0.1 normalizes local text without retaining plaintext", () => {
+  assert.equal(canonicalizeTextForBinding(" Hello, World! 123 "), "helloworld123");
+  assert.equal(canonicalizeTextForBinding("漢 字 １２３"), "漢字123");
+  assert.equal(canonicalizeTextForBinding("ﬃ ① Ａ"), "ffi1a");
+  assert.equal(canonicalizeTextForBinding("ΟΣ ς Σ"), "οσσσ");
+  assert.equal(canonicalizeTextForBinding("ΐ ΰ ᾷ ῇ"), "ΐΰᾶιῆι");
+  assert.equal(canonicalizeTextForBinding("A𝟘🙂B"), "a0b");
+  assert.equal(canonicalizeTextForBinding("🎉 — !!"), "");
+  assert.throws(
+    () => createTextBinding("🎉 — !!", "123e4567-e89b-42d3-a456-426614174002", "prefix"),
+    /canonical form must not be empty/,
+  );
+});
+
+test("text binding exact and prefix verification uses local candidate text only", () => {
+  const sessionId = "123e4567-e89b-42d3-a456-426614174002";
+  const prefixBinding = createTextBinding("Hello, World!", sessionId, "prefix");
+  const prefixMatch = verifyTextBindingCandidate(prefixBinding, "hello world!!! appended", sessionId);
+  assert.equal(prefixMatch.valid, true, prefixMatch.errors.join("; "));
+  assert.equal(prefixMatch.appendedCanonicalLength, 8);
+  assert.equal(verifyTextBindingCandidate(prefixBinding, "hullo world", sessionId).valid, false);
+
+  const exactBinding = createTextBinding("Straße 123", sessionId, "exact");
+  assert.equal(verifyTextBindingCandidate(exactBinding, "STRASSE-123", sessionId).valid, true);
+  assert.equal(verifyTextBindingCandidate(exactBinding, "STRASSE-123-extra", sessionId).valid, false);
+});
+
+test("format 0.2 seals text binding into record_hash and detects tampering", () => {
+  const sessionId = "123e4567-e89b-42d3-a456-426614174002";
+  const events = [{ seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 5, source: "typing" }];
+  const textBinding = createTextBinding("Hello, World!", sessionId, "prefix");
+  const record = {
+    manifest: {
+      format_version: "0.2",
+      record_hash: computeRecordHash(events, sessionId, "0.2", textBinding),
+      session_id: sessionId,
+      producer: { id: "fixture", version: "0.2.0", capabilities: ["timing"] },
+      capture_context: null,
+      text_binding: textBinding,
+      event_count: events.length,
+      duration_ms: 0,
+      created_client_t: null,
+      ingested_server_t: null,
+      parent_record: null,
+      attestations: [],
+    },
+    events,
+  };
+  assert.equal(verifyRecord(record).valid, true);
+
+  const tampered = JSON.parse(JSON.stringify(record));
+  tampered.manifest.text_binding.policy = "exact";
+  const tamperedVerification = verifyRecord(tampered);
+  assert.equal(tamperedVerification.valid, false);
+  assert.ok(tamperedVerification.errors.some((error) => error.includes("record_hash mismatch")));
+
+  const legacy = JSON.parse(JSON.stringify(record));
+  legacy.manifest.format_version = "0.1";
+  legacy.manifest.record_hash = computeRecordHash(events, sessionId, "0.1");
+  const legacyVerification = verifyRecord(legacy);
+  assert.equal(legacyVerification.valid, false);
+  assert.ok(legacyVerification.errors.some((error) => error.includes("text_binding is not valid for format_version 0.1")));
 });
 
 test("process length math uses Unicode codepoint counts supplied by producers", () => {
@@ -73,7 +142,7 @@ test("positions beyond inferred length make final observed length unknown withou
   record.events = [{ seq: 0, t: 0, op: "insert", pos: 5, del_len: 0, ins_len: 1, source: "typing" }];
   record.manifest.event_count = record.events.length;
   record.manifest.duration_ms = 0;
-  record.manifest.record_hash = computeRecordHash(record.events, record.manifest.session_id);
+  record.manifest.record_hash = computeRecordHash(record.events, record.manifest.session_id, record.manifest.format_version);
   const verification = verifyRecord(record);
   assert.equal(verification.valid, true, verification.errors.join("; "));
 });

@@ -1,0 +1,30 @@
+[
+  {
+    "name": "prefix binding tolerates appended canonical material",
+    "session_id": "123e4567-e89b-42d3-a456-426614174002",
+    "policy": "prefix",
+    "input": "Hello, World!",
+    "binding": {
+      "scheme": "canon-letters/0.1",
+      "policy": "prefix",
+      "canonical_length": 10,
+      "commitment": "b3:5b529348dcf566686e8a10595122f011f040a3cdd2f84e096303cfb3a2d4a140"
+    },
+    "matching_candidate": "hello world!!! appended",
+    "nonmatching_candidate": "hullo world"
+  },
+  {
+    "name": "exact binding requires the same full canonical form",
+    "session_id": "123e4567-e89b-42d3-a456-426614174002",
+    "policy": "exact",
+    "input": "Straße 123",
+    "binding": {
+      "scheme": "canon-letters/0.1",
+      "policy": "exact",
+      "canonical_length": 10,
+      "commitment": "b3:1e8a5a00248b24ba0452fafaeddb945b2e692aad8f3c9bf6b5c4ad85b521eeb3"
+    },
+    "matching_candidate": "STRASSE-123",
+    "nonmatching_candidate": "STRASSE-123-extra"
+  }
+]
