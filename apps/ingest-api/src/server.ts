@@ -182,7 +182,14 @@ async function route(
     return;
   }
 
-  if (requestUrl.pathname.startsWith("/images/")) {
+  if (requestUrl.pathname.startsWith("/images/") || requestUrl.pathname.startsWith("/og/")) {
+    await serveStatic(res, options.siteDistDir ?? SITE_DIST_DIR, requestUrl.pathname.slice(1));
+    return;
+  }
+
+  // Hugo-owned SEO / favicon / manifest / sitemap files at the site root.
+  // The React record viewer fallback below would otherwise swallow them.
+  if (SITE_ROOT_STATIC_FILES.has(requestUrl.pathname)) {
     await serveStatic(res, options.siteDistDir ?? SITE_DIST_DIR, requestUrl.pathname.slice(1));
     return;
   }
@@ -195,6 +202,21 @@ async function route(
 
   await serveStatic(res, options.webDistDir ?? WEB_DIST_DIR, "index.html");
 }
+
+// Files that live at the root of the Hugo site (apps/site/static/) and would
+// otherwise fall through to the React record viewer's `index.html`. Crawlers
+// and browsers fetch these by exact path; the set is small and stable.
+const SITE_ROOT_STATIC_FILES = new Set<string>([
+  "/sitemap.xml",
+  "/robots.txt",
+  "/site.webmanifest",
+  "/favicon.svg",
+  "/favicon.ico",
+  "/favicon-32.png",
+  "/apple-touch-icon.png",
+  "/icon-192.png",
+  "/icon-512.png",
+]);
 
 export async function toFetchRequest(req: IncomingMessage, url: URL, maxBodyBytes = DEFAULT_RECORD_BODY_LIMIT_BYTES): Promise<Request> {
   const contentLength = req.headers["content-length"];
