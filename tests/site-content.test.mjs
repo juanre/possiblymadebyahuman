@@ -24,7 +24,7 @@ const requiredDocPages = [
 
 const sectionsCoveringProductPromise = [
   { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/write", "/docs/emacs/"] },
-  { file: "docs/emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open an **empty** writing buffer", "refuses to start in a non-empty buffer"] },
+  { file: "docs/emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open a writing buffer", "length-derived stats may be unknown"] },
   { file: "docs/product-promise.md", needs: ["No verdicts", "Process, not content", "Hash-addressed records"] },
   { file: "docs/claims.md", needs: ["We claim", "We do not claim"] },
   { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system", "chrome.storage.local", "bearer", "Server-observed checkpoints", "GitHub issues"] },

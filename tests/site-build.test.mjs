@@ -123,7 +123,7 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
     const emacs = readFileSync(join(out, "docs/emacs/index.html"), "utf8");
     assert.ok(emacs.includes("pmbah-mode"), "emacs page missing pmbah-mode reference");
     assert.ok(emacs.includes("GNU Emacs 29.1"), "emacs page missing GNU Emacs 29.1 requirement");
-    assert.ok(emacs.includes("refuses to start in a non-empty buffer"), "emacs page missing the empty-buffer rule");
+    assert.ok(emacs.includes("length-derived stats may be unknown"), "emacs page missing the non-empty-start length caveat");
     assert.ok(!/chromewebstore\.google\.com|chrome\.google\.com\/webstore/i.test(emacs), "emacs page must not publish a Chrome Web Store URL before approval");
 
     const plaintextFixtures = [" there", "Hi ther!"];

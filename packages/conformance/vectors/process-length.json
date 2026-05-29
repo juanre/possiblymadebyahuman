@@ -1,12 +1,20 @@
 [
   {
-    "name": "content-opaque insert delete replace length math",
+    "name": "content-blind insert delete replace length math",
     "events": [
       { "seq": 0, "t": 0, "op": "insert", "pos": 0, "del_len": 0, "ins_len": 3, "source": "typing" },
       { "seq": 1, "t": 10, "op": "delete", "pos": 1, "del_len": 1, "ins_len": 0, "source": "typing" },
       { "seq": 2, "t": 20, "op": "replace", "pos": 1, "del_len": 1, "ins_len": 2, "source": "unknown" }
     ],
     "observed_final_length": 3
+  },
+  {
+    "name": "positions beyond inferred length make observed final length unknown",
+    "events": [
+      { "seq": 0, "t": 0, "op": "insert", "pos": 5, "del_len": 0, "ins_len": 2, "source": "typing" },
+      { "seq": 1, "t": 10, "op": "delete", "pos": 1, "del_len": 1, "ins_len": 0, "source": "typing" }
+    ],
+    "observed_final_length": null
   },
   {
     "name": "unknown process measurements make observed final length unknown",

@@ -125,25 +125,29 @@ test("Emacs producer records newline insertion as one codepoint", { skip: emacs 
   }
 });
 
-test("Emacs producer refuses non-empty buffers by default", { skip: emacs ? false : "emacs binary not available" }, async () => {
+test("Emacs producer starts in non-empty buffers without text or baseline fields", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-nonempty-"));
   const outputPath = join(temp, "nonempty.json");
   const scriptPath = join(temp, "nonempty.el");
   const modePath = resolve("producers/emacs/pmbah-mode.el");
+  const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
 
-  await writeFile(scriptPath, `;;; nonempty.el --- PMBAH non-empty refusal test -*- lexical-binding: t; -*-
+  await writeFile(scriptPath, `;;; nonempty.el --- PMBAH non-empty start test -*- lexical-binding: t; -*-
 (load ${JSON.stringify(modePath)})
+(setq pmbah-helper-script ${JSON.stringify(helperPath)})
 (with-temp-buffer
-  (insert "PREEXISTING-CANARY")
-  (let ((message nil))
-    (condition-case err
-        (pmbah-mode 1)
-      (error (setq message (error-message-string err))))
-    (let ((output (list :message message
-                        :enabled (if pmbah-mode t :json-false)
-                        :session pmbah--session-id
-                        :events pmbah--events
-                        :event_count pmbah--next-seq)))
+  (text-mode)
+  (insert "PREEXISTING-CANARY🙂")
+  (let ((start-pos (1- (point-max))))
+    (pmbah-mode 1)
+    (goto-char (point-max))
+    (insert "X")
+    (let* ((record (pmbah-build-record-for-current-buffer (list :surface "emacs")))
+           (output (list :enabled (if pmbah-mode t :json-false)
+                         :start_pos start-pos
+                         :session pmbah--session-id
+                         :event_count pmbah--next-seq
+                         :record record)))
       (with-temp-file ${JSON.stringify(outputPath)}
         (insert (pmbah--json-encode output))))))
 `);
@@ -152,18 +156,27 @@ test("Emacs producer refuses non-empty buffers by default", { skip: emacs ? fals
     const result = runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(await readFile(outputPath, "utf8"));
-    assert.match(output.message, /refuses to start in a non-empty buffer/);
-    assert.equal(output.enabled, false);
-    assert.equal(output.session, null);
-    assert.equal(output.events, null);
-    assert.equal(output.event_count, 0);
-    assert.equal(JSON.stringify(output).includes("PREEXISTING-CANARY"), false);
+    const { record } = output;
+    assert.equal(output.enabled, true);
+    assert.equal(output.event_count, 1);
+    assert.equal("initial_observed_length" in record.manifest, false);
+    assert.deepEqual(record.events.map(({ op, pos, del_len, ins_len }) => ({ op, pos, del_len, ins_len })), [
+      { op: "insert", pos: output.start_pos, del_len: 0, ins_len: 1 },
+    ]);
+    const verification = verifyRecord(record);
+    assert.equal(verification.valid, true, verification.errors.join("; "));
+    assert.equal("final_text_hash" in record.manifest, false);
+    assert.equal("final_text_length" in record.manifest, false);
+    const serialized = JSON.stringify(record);
+    assert.equal(serialized.includes("PREEXISTING-CANARY"), false);
+    assert.equal(serialized.includes("🙂"), false);
+    assert.equal(serialized.includes("X"), false);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
 });
 
-test("Emacs producer disables capture after successful upload in a non-empty buffer", { skip: emacs ? false : "emacs binary not available" }, async () => {
+test("Emacs producer starts a fresh session after successful upload", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-post-upload-"));
   const outputPath = join(temp, "post-upload.json");
   const scriptPath = join(temp, "post-upload.el");
@@ -198,11 +211,11 @@ test("Emacs producer disables capture after successful upload in a non-empty buf
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(await readFile(outputPath, "utf8"));
     assert.equal(output.response.url, "http://localhost:8000/stub");
-    assert.equal(output.enabled, false);
-    assert.equal(output.session, null);
+    assert.equal(output.enabled, true);
+    assert.equal(typeof output.session, "string");
     assert.equal(output.events, null);
     assert.equal(output.event_count, 0);
-    assert.equal(output.hook_present, false);
+    assert.equal(output.hook_present, true);
     assert.equal(JSON.stringify(output).includes("PostUploadCanary"), false);
   } finally {
     await rm(temp, { recursive: true, force: true });
@@ -254,6 +267,7 @@ test("Emacs helper payload contains only process metadata", { skip: emacs ? fals
     ]) {
       assert.equal(serialized.includes(forbidden), false, `helper payload leaked ${forbidden}`);
     }
+    assert.equal("initial_observed_length" in payload, false);
     assert.equal(Array.isArray(payload.events), true);
     assert.equal(payload.events.length, 3);
     assert.deepEqual(payload.events.map(({ op, pos, del_len, ins_len }) => ({ op, pos, del_len, ins_len })), [

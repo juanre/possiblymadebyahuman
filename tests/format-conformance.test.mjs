@@ -62,6 +62,22 @@ test("process length math uses Unicode codepoint counts supplied by producers", 
   ]), null);
 });
 
+test("positions beyond inferred length make final observed length unknown without invalidating the record", async () => {
+  assert.equal(computeObservedLength([
+    { seq: 0, t: 0, op: "insert", pos: 5, del_len: 0, ins_len: 2, source: "typing" },
+    { seq: 1, t: 1, op: "delete", pos: 1, del_len: 1, ins_len: 0, source: "typing" },
+  ]), null);
+
+  const [golden] = await readJson("packages/conformance/vectors/golden-records.json");
+  const record = JSON.parse(JSON.stringify(golden.record));
+  record.events = [{ seq: 0, t: 0, op: "insert", pos: 5, del_len: 0, ins_len: 1, source: "typing" }];
+  record.manifest.event_count = record.events.length;
+  record.manifest.duration_ms = 0;
+  record.manifest.record_hash = computeRecordHash(record.events, record.manifest.session_id);
+  const verification = verifyRecord(record);
+  assert.equal(verification.valid, true, verification.errors.join("; "));
+});
+
 test("unknown process measurements are explicit null, not omitted", () => {
   assert.deepEqual(validateEvent({
     seq: 0,

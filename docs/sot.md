@@ -271,7 +271,7 @@ Owns:
 
 All v0 producers record the writing process captured after a user starts a session. They do not silently wrap pre-existing document content into a new record scope.
 
-- **Emacs** refuses to enable `pmbah-mode` in a non-empty buffer by default. Its helper receives only process metadata (`events`, producer info, capture context, duration), not buffer text, inserted text, final text, text hashes, or text replay fixtures.
+- **Emacs** may enable `pmbah-mode` in a non-empty buffer. It records only mutations after capture starts, using Emacs' absolute positions and lengths for those later mutations. Its helper receives only process metadata (`events`, producer info, capture context, duration), not buffer text, inserted text, final text, text hashes, initial snapshots/baselines, or text replay fixtures.
 - **Browser extension** treats a fresh non-empty field as ineligible unless it can resume an existing PMBAH session for the same field. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths, but it must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
 - **`/write` first-party page** starts from an empty textarea and clears/discards the visible canvas independently of the persisted content-blind session record.
 - **`packages/producer-core`** accepts only public mutation shapes and session metadata. It must not require plaintext, final text, inserted text, text hashes, or text replay to sign/verify a record.
@@ -328,6 +328,7 @@ Manifest includes:
   "attestations": []
 }
 ```
+
 
 `parent_record` is the public manifest field for multi-session documents. It may be null for v0 records. It lets a record say “this session continues from that earlier signed record” without pretending one capture covers all writing. `parent_record_hash` is reserved for future storage/database column naming and is not part of public manifest input.
 

@@ -138,7 +138,7 @@ Notes:
 
 ### 3.2 Process-structure requirement
 
-Applying the public mutations in `seq` order to an observed length counter must remain structurally valid: positions cannot exceed the current observed length, deletes cannot remove beyond it, and each event updates length as `length - del_len + ins_len`. Verification does **not** reconstruct text or compare a final text hash. It checks manifest/events structure and the public event hash chain.
+Applying the public mutations in `seq` order to an observed length counter should remain structurally valid when the verifier can infer the current length. If a producer starts observing a non-empty buffer, absolute positions may exceed the verifier's inferred length from captured events alone; in that case verification preserves the event positions/lengths and reports `observed_final_length` as unknown rather than inventing a baseline or rejecting the record. Verification does **not** reconstruct text or compare a final text hash. It checks manifest/events structure and the public event hash chain.
 
 Producers are responsible for deriving `pos`, `del_len`, and `ins_len` without retaining text. Transient synchronous text inspection is allowed only when necessary to compute these numeric process facts.
 
@@ -212,6 +212,7 @@ A **Record** = one event log + a manifest. The manifest is content-free metadata
   "attestations": []              // §4.3
 }
 ```
+
 
 ### 4.2 Capabilities — the field that makes heterogeneous inputs comparable
 

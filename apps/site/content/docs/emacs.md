@@ -8,7 +8,8 @@ eyebrow: "Producer"
 
 ## What it captures
 
-- Buffer mutations recorded after `pmbah-mode` starts — not raw keystrokes, not OS-level input, and not pre-existing buffer contents. By default the mode refuses to start in a non-empty buffer; clear the buffer or start in an empty draft so capture begins from a fresh boundary.
+- Buffer mutations recorded after `pmbah-mode` starts — not raw keystrokes, not OS-level input, and not pre-existing buffer contents.
+- If the buffer is already non-empty, the mode still records only later mutation positions/lengths/timing. It does not store a starting buffer length, snapshot, hash, or replay fixture. Some length-derived stats may be `unknown` because the verifier cannot infer total document length from the captured suffix alone.
 - Codepoint-anchored process metadata: insert, delete, and replace operations with zero-based Unicode codepoint offsets and lengths. Wall-clock timing relative to the session start.
 - Source attribution where reliable. Common Emacs commands (`self-insert-command`, `yank`, `kill-region`, and so on) map to typing / paste / cut / etc.; ambiguous cases fall back to `unknown` rather than guess.
 
@@ -115,7 +116,7 @@ Use the path printed by `command -v node` in the shell where the repository test
 
 ## Usage
 
-1. Open an **empty** writing buffer.
+1. Open a writing buffer. It may already contain text; PMBAH records only later mutation metadata.
 2. Enable capture: `M-x pmbah-mode`. The mode line shows `PMBAH:N`, where `N` is the local event count.
 3. Write normally.
 4. Check status when desired: `M-x pmbah-show-session-status`.
@@ -129,7 +130,7 @@ After a successful upload, the local event log is cleared and a fresh session st
 A quick local check:
 
 1. Start the API: `make local-container`.
-2. In Emacs, open a new empty buffer and run `M-x pmbah-mode`.
+2. In Emacs, open a buffer and run `M-x pmbah-mode`.
 3. Type a short draft.
 4. Run `M-x pmbah-show-session-status`; confirm the event count is non-zero and the API URL is the one you expect.
 5. Run `M-x pmbah-sign-buffer`; review the capture context preview, upload, and confirm a short URL is copied to the kill ring.
@@ -156,7 +157,7 @@ It then asks separately whether to include `emacs.buffer_name` and `emacs.major_
 - Emacs supplies `after-change-functions` arguments `(beg end len)` in character positions. `pmbah-mode` records zero-based Unicode codepoint offsets and lengths.
 - `insert`, `delete`, and `replace` are derived from the Emacs mutation.
 - Source attribution: the mode identifies a few common commands (`self-insert-command`, `yank`, `kill-region`, and so on) and falls back to `unknown` when attribution is uncertain. It declares the `timing` and `pause_fidelity` capabilities; it does not claim `source_attribution` or `keystroke_level`.
-- The mode refuses to start in a non-empty buffer by default. The producer does not silently baseline an existing document or include pre-existing buffer length, hash, or structure in a record.
+- The mode can start in a non-empty buffer. It records absolute positions and lengths for later mutations only. It does not upload a starting length, text, a text hash, or a replay fixture; length-derived stats may be unknown when capture starts after existing content.
 
 ## Troubleshooting
 
@@ -165,7 +166,6 @@ It then asks separately whether to include `emacs.buffer_name` and `emacs.major_
 - **`Searching for program: No such file or directory, node`** — GUI Emacs cannot find Node. Set `PMBAH_NODE` or `pmbah-node-command` to an absolute Node path.
 - **`generated record failed verification`** — keep the local session and report the sequence; the helper rejected an internally inconsistent public process record before upload.
 - **Upload HTTP errors** — confirm `pmbah-api-base-url` points to an ingest service with `POST /api/records`, and that `/ready` is healthy (usually `http://localhost:8000` for `make local-container`).
-- **`PMBAH refuses to start in a non-empty buffer`** — this is intentional. Start in an empty draft so pre-existing text is not included in the record scope.
 - **No URL copied** — upload did not complete; the local session is retained for retry.
 
 ## Sibling producers

@@ -78,7 +78,6 @@ hashed, passed to the helper, or uploaded."
   (if pmbah-mode
       (condition-case error
           (progn
-            (pmbah--assert-empty-buffer-for-start)
             (pmbah--start-session)
             (add-hook 'after-change-functions #'pmbah--after-change nil t))
         (error
@@ -86,12 +85,6 @@ hashed, passed to the helper, or uploaded."
          (remove-hook 'after-change-functions #'pmbah--after-change t)
          (signal (car error) (cdr error))))
     (remove-hook 'after-change-functions #'pmbah--after-change t)))
-
-(defun pmbah--assert-empty-buffer-for-start ()
-  "Refuse to start capture when the buffer already contains text."
-  (unless (= (point-min) (point-max))
-    (user-error
-     "PMBAH refuses to start in a non-empty buffer; start in an empty draft before writing so existing text is not silently included")))
 
 (defun pmbah--start-session ()
   "Start a fresh per-buffer PMBAH session."
@@ -165,26 +158,15 @@ declare source_attribution."
 
 ;;;###autoload
 (defun pmbah-discard-session ()
-  "Discard the current local PMBAH event log.
-No data is uploaded.  If the buffer is empty, start a fresh session.  If the
-buffer is non-empty, disable capture so existing text is not silently included in
-a new record scope."
+  "Discard the current local PMBAH event log without uploading.
+Capture remains enabled and a fresh session starts from the next edit."
   (interactive)
   (unless pmbah-mode
     (user-error "pmbah-mode is not active"))
   (when (or (not (called-interactively-p 'interactive))
             (yes-or-no-p "Discard this local PMBAH session without uploading? "))
-    (if (= (point-min) (point-max))
-        (progn
-          (pmbah--start-session)
-          (message "PMBAH session discarded; new session %s started" pmbah--session-id))
-      (remove-hook 'after-change-functions #'pmbah--after-change t)
-      (setq pmbah-mode nil
-            pmbah--session-id nil
-            pmbah--session-start-time nil
-            pmbah--events nil
-            pmbah--next-seq 0)
-      (message "PMBAH session discarded; capture disabled because buffer is non-empty"))))
+    (pmbah--start-session)
+    (message "PMBAH session discarded; new session %s started" pmbah--session-id)))
 
 ;;;###autoload
 (defun pmbah-sign-buffer (&optional capture-context)
@@ -204,17 +186,10 @@ callers and must be a JSON-serializable plist."
          (url (or (alist-get 'url response) (alist-get 'record_hash response))))
     (when url
       (kill-new url))
-    (if (= (point-min) (point-max))
-        (pmbah--start-session)
-      (remove-hook 'after-change-functions #'pmbah--after-change t)
-      (setq pmbah-mode nil
-            pmbah--session-id nil
-            pmbah--session-start-time nil
-            pmbah--events nil
-            pmbah--next-seq 0))
-    (message "PMBAH record uploaded; copied %s%s"
+    (pmbah--start-session)
+    (message "PMBAH record uploaded; copied %s; new session %s started"
              url
-             (if pmbah-mode "" "; capture disabled because buffer is non-empty"))
+             pmbah--session-id)
     response))
 
 (defun pmbah-review-capture-context ()

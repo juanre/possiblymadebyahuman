@@ -11,12 +11,15 @@ to the kill ring.
 
 - Captures **buffer mutations after `pmbah-mode` starts**, not physical
   keystrokes, OS-level input, or pre-existing buffer contents.
+- If the buffer is already non-empty, the mode still records only later
+  mutation positions/lengths/timing. It does not store a starting buffer length,
+  snapshot, hash, or replay fixture. Some public length-derived stats may be
+  `unknown` because the verifier cannot infer total document length from the
+  captured suffix alone.
 - Public uploads contain mutation shape, timing, source labels, manifest metadata,
   and public process hashes. They do **not** include plaintext insertion text.
 - The local helper payload contains process metadata only. The mode does not pass
   buffer text to the helper, compute text hashes, or require text reconstruction.
-- By default, `pmbah-mode` refuses to start in a non-empty buffer. Start in an
-  empty draft or discard/finish existing text outside PMBAH before enabling it.
 - Absolute local file paths are shown in the preview as omitted and are not
   uploaded by default.
 - Emacs buffer names and major modes can identify a document or workflow; the
@@ -141,7 +144,8 @@ Use the path printed by `command -v node` in the shell where the repo tests pass
 
 ## Usage
 
-1. Open an **empty** writing buffer.
+1. Open a writing buffer. It may already contain text; PMBAH records only later
+   mutation metadata.
 2. Enable capture:
 
    ```elisp
@@ -168,17 +172,16 @@ Use the path printed by `command -v node` in the shell where the repo tests pass
    M-x pmbah-discard-session
    ```
 
-After a successful upload, the local event log is cleared. If the current buffer
-is still non-empty, capture is disabled so a new record is not silently started
-against existing text; open a new empty buffer for another record. If upload
-fails, the local event log remains so you can retry.
+After a successful upload, the local event log is cleared and a fresh session is
+started for the current buffer. If upload fails, the local event log remains so
+you can retry.
 
 ## Verify the installation
 
 A quick local check:
 
 1. Start the API: `make local-container`.
-2. In Emacs, open a new empty buffer and run `M-x pmbah-mode`.
+2. In Emacs, open a buffer and run `M-x pmbah-mode`.
 3. Type a short draft.
 4. Run `M-x pmbah-show-session-status`; confirm the event count is non-zero and
    the API URL is the one you expect.
@@ -215,10 +218,10 @@ It then asks separately whether to include `emacs.buffer_name` and
   `kill-region`, etc.) but falls back to `unknown` when attribution is uncertain.
   It therefore declares `timing` and `pause_fidelity`, not `source_attribution`
   or `keystroke_level`.
-- By default, `pmbah-mode` refuses to start in a non-empty buffer. PMBAH records
-  captured writing after capture starts; it does not silently baseline an
-  existing document or include pre-existing buffer length/hash/structure in a
-  record.
+- `pmbah-mode` may start in a non-empty buffer. It records absolute positions
+  and lengths for later mutations only. It does not upload a starting length,
+  text, a text hash, or a replay fixture; length-derived stats may be unknown
+  when capture starts after existing content.
 - Emacs hooks describe buffer changes, not every author intention, macro step,
   editor decision, or external cause.
 
@@ -233,7 +236,8 @@ The repository test suite includes Emacs batch tests that:
 - confirm public events do not contain plaintext fields;
 - confirm the helper payload does not contain buffer text, inserted text, final
   text, text hashes, or text replay fixtures;
-- confirm non-empty buffers are refused by default;
+- confirm non-empty buffers start, later absolute positions are retained, and no
+  plaintext canaries are uploaded;
 - confirm default capture context avoids absolute file paths.
 
 Run them with:
@@ -264,7 +268,5 @@ make check
 - Upload HTTP errors: ensure `pmbah-api-base-url` points to an ingest API with
   `POST /api/records`, usually `http://localhost:8000` for `make local-container`,
   and that `/ready` is healthy.
-- `PMBAH refuses to start in a non-empty buffer`: this is intentional. Start in
-  an empty draft so pre-existing text is not included in the record scope.
 - No URL copied: upload did not complete; the local session is retained for
   retry.

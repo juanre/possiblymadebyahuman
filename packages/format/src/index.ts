@@ -249,11 +249,9 @@ export function computeObservedLength(events: EventLog): number | null {
       length = null;
       continue;
     }
-    if (event.pos > length) {
-      throw new RangeError(`event ${event.seq} position ${event.pos} exceeds observed length ${length}`);
-    }
-    if (event.pos + event.del_len > length) {
-      throw new RangeError(`event ${event.seq} deletes beyond observed length ${length}`);
+    if (event.pos > length || event.pos + event.del_len > length) {
+      length = null;
+      continue;
     }
     length = length - event.del_len + event.ins_len;
   }

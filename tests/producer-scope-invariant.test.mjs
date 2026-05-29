@@ -21,14 +21,17 @@ test("producer scope invariant is documented for every first-party producer", as
   }
 });
 
-test("Emacs production path refuses pre-existing content and helper receives no text contract", async () => {
+test("Emacs production path allows non-empty starts and helper receives no text contract", async () => {
   const mode = await text("producers/emacs/pmbah-mode.el");
   const helper = await text("producers/emacs/scripts/build-record.mjs");
   const readme = await text("producers/emacs/README.md");
 
-  assert.match(mode, /pmbah--assert-empty-buffer-for-start/);
-  assert.match(mode, /refuses to start in a non-empty buffer/);
+  assert.doesNotMatch(mode, /pmbah--assert-empty-buffer-for-start/);
+  assert.doesNotMatch(mode, /refuses to start in a non-empty buffer/);
+  assert.doesNotMatch(mode, /initial_observed_length/);
+  assert.doesNotMatch(helper, /initial_observed_length/);
   assert.match(readme, /does not pass\s+buffer text to the helper/);
+  assert.match(readme, /non-empty buffer/);
   assert.match(readme, /ERR_MODULE_NOT_FOUND/);
   assert.match(readme, /localhost:8000/);
   assert.doesNotMatch(readme, /localhost:8787/);
