@@ -219,6 +219,54 @@ test("content-script ambiguous fallback emits null pos/del_len rather than retai
   });
 });
 
+test("content-script binding uses selected text or all field content", async () => {
+  const module = await import("../apps/browser-extension/src/content/capture.ts");
+  const { bindingTextForElement } = module.__test;
+  const field = {
+    tagName: "TEXTAREA",
+    value: "quoted header\nSigned body\nfooter",
+    selectionStart: 14,
+    selectionEnd: 25,
+  };
+  assert.equal(bindingTextForElement(field), "Signed body");
+  field.selectionStart = 0;
+  field.selectionEnd = 0;
+  assert.equal(bindingTextForElement(field), "quoted header\nSigned body\nfooter");
+});
+
+test("content-script binding uses contenteditable selection when it stays inside the editor", async () => {
+  const module = await import("../apps/browser-extension/src/content/capture.ts");
+  const { bindingTextForElement } = module.__test;
+  const previousWindow = globalThis.window;
+  const previousNode = globalThis.Node;
+  const editor = {
+    tagName: "DIV",
+    isContentEditable: true,
+    textContent: "quoted header Signed body footer",
+    contains(node) { return node === editor || node?.parentElement === editor; },
+  };
+  const anchorNode = { nodeType: 3, parentElement: editor };
+  const focusNode = { nodeType: 3, parentElement: editor };
+  try {
+    globalThis.Node = { ELEMENT_NODE: 1 };
+    globalThis.window = {
+      getSelection: () => ({
+        isCollapsed: false,
+        rangeCount: 1,
+        anchorNode,
+        focusNode,
+        toString: () => "Signed body",
+      }),
+    };
+    assert.equal(bindingTextForElement(editor), "Signed body");
+    globalThis.window = { getSelection: () => ({ isCollapsed: true, rangeCount: 1 }) };
+    assert.equal(bindingTextForElement(editor), "quoted header Signed body footer");
+  } finally {
+    globalThis.window = previousWindow;
+    globalThis.Node = previousNode;
+  }
+});
+
 test("policy: fresh empty field is eligible; non-empty without resumable session is INELIGIBLE", () => {
   const baseOrigin = { origin: "https://a.test", path: "/post", tab_id: 1, frame_id: 0 };
   const baseDescriptor = {

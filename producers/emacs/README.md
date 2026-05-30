@@ -172,8 +172,8 @@ Use the path printed by `command -v node` in the shell where the repo tests pass
    M-x pmbah-show-session-status
    ```
 
-5. Freeze, optionally bind the document text, answer capture-context prompts,
-   upload, and copy the short URL:
+5. Freeze, optionally bind the active region or whole buffer, answer y/n
+   capture-context prompts, upload, and copy the short URL:
 
    ```elisp
    M-x pmbah-sign-buffer
@@ -197,8 +197,9 @@ A quick public-service check:
 2. Type a short draft.
 3. Run `M-x pmbah-show-session-status`; confirm the API URL is
    `https://possiblymadebyahuman.com`.
-4. Run `M-x pmbah-sign-buffer`; answer the binding and capture-context prompts,
-   upload, and confirm a short URL is copied to the kill ring.
+4. Run `M-x pmbah-sign-buffer`; answer the y/n binding and capture-context
+   prompts (RET accepts the default `y`), upload, and confirm a short URL is
+   copied to the kill ring.
 
 For a local development check instead, start with `make local-container` (or
 `PMBAH_PORT=18800 make local-container`) and set `PMBAH_API_BASE_URL` /
@@ -206,8 +207,9 @@ For a local development check instead, start with `make local-container` (or
 
 ## Sign-time binding and capture context
 
-`pmbah-sign-buffer` asks whether to bind the document text to the record. If you
-bind it, the text used is:
+`pmbah-sign-buffer` asks whether to bind the selected region or the whole buffer
+to the record, depending on what is active when you sign. All sign-time questions
+are y/n prompts where RET accepts the default `y`. If you bind, the text used is:
 
 - the active, non-empty region when `use-region-p` is true; or
 - the whole buffer when there is no active region.
@@ -232,6 +234,11 @@ declined, the uploaded `capture_context` is:
 
 That `capture_context` is separate from the optional `manifest.text_binding`; a
 record can have minimal capture context and still include a document binding.
+
+Use `C-u M-x pmbah-sign-buffer` to skip the prompts and accept the default yes
+answers: include buffer name and major mode, bind the selected region if active
+or the whole buffer otherwise, use the "allow extra text before or after it"
+policy, and affirm the binding.
 
 ## Event semantics and limitations
 

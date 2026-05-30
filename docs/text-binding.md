@@ -210,20 +210,24 @@ than present a confident prefix match.
 Common shape across producers: the signer **selects** the final text and
 **affirms an explicit claim** before the binding is computed.
 
-**Binding is on by default.** Signing computes a binding from the
-selection (default selection = the whole document); an explicit opt-out
-("sign the process only — don't bind a document") covers the case where
-the author is still editing or deliberately won't pin the text. A
-selection whose canonical form is empty (§2.2) is unbindable: the producer
-disables binding and offers process-only signing.
+**Binding is on by default.** Signing computes a binding from the user's
+selected text when the producer has an active selection, otherwise from the
+producer's whole current writing surface; an explicit opt-out ("sign the
+process only — don't bind a document") covers the case where the author is
+still editing or deliberately won't pin the text. A selection/fallback text
+whose canonical form is empty (§2.2) is unbindable: the producer disables
+binding and offers process-only signing.
 
 - The affirmation copy: *"I affirm this is the text this record is meant
   to cover."* with the chosen policy shown (`exact` / `prefix`) and the
   honest note that the binding compares wording, not exact text.
-- `/write`: after writing, "Sign" → selection defaults to the whole
-  document (user may narrow) → affirmation + policy → sign.
-- Browser extension sign modal: select text in the field (default whole
-  field) → affirmation + policy → sign.
+- `/write`: after writing, "Sign" → bind selected text in the writing
+  canvas if present, otherwise all current canvas content → affirmation +
+  policy → sign.
+- Browser extension sign modal: bind selected text inside the active
+  field/editor if present (for example, just the body text in Gmail),
+  otherwise all current content of that field/editor → affirmation + policy
+  → sign.
 - Emacs `pmbah-sign-buffer`: use the active region if any, else whole
   buffer → affirmation + policy → sign.
 

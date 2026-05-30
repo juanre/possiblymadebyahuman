@@ -13,11 +13,15 @@ In `/write`, the browser extension, and Emacs, signing offers to **bind the docu
 
 - You affirm: *"this is the text this record is meant to cover."*
 - Binding is on by default; you can opt out and sign the **process only** (no document bound), for example while you are still editing.
+- The text being bound is producer-specific:
+  - `/write`: selected text in the writing canvas if there is a selection; otherwise all current canvas content.
+  - Browser extension: selected text in the active field/editor if there is a selection; otherwise all current content of that field/editor. This is the path to sign only the body of an email or reply in a larger page such as Gmail.
+  - Emacs: active region when `use-region-p` is true; otherwise the whole buffer.
 - You choose a policy:
   - **Allow extra text before or after it** (the default): tolerates a quoted header pasted above your text or a signature line appended below.
   - **Only this text**: strict; nothing added.
 
-The producer computes the binding **locally** from the final text and **discards the text**. Only a content-blind commitment is uploaded: a salted hash of the text's canonical letters and digits, plus its length and policy. The text itself never leaves your machine, and the commitment cannot be turned back into the text.
+The producer computes the binding **locally** from that selected-or-fallback text and **discards the text**. Only a content-blind commitment is uploaded: a salted hash of the text's canonical letters and digits, plus its length and policy. The text itself never leaves your machine, and the commitment cannot be turned back into the text.
 
 A selection with no letters or digits (for example emoji or punctuation only) cannot be bound; signing falls back to process-only.
 

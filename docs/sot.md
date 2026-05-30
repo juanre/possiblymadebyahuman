@@ -252,7 +252,7 @@ Owns:
 - local unsigned capture TTL
 - sign/freeze/upload/copy-link flow
 - local clear after upload
-- capture-context preview/redaction before upload
+- capture-context prompt review before upload
 
 ### 3.9 `producers/emacs`
 
@@ -272,8 +272,8 @@ Owns:
 All v0 producers record the writing process captured after a user starts a session. They do not silently wrap pre-existing document content into a new record scope.
 
 - **Emacs** may enable `pmbah-mode` in a non-empty buffer. It records only mutations after capture starts, using Emacs' absolute positions and lengths for those later mutations. Its helper receives only process metadata (`events`, producer info, capture context, duration), not inserted text, text hashes-for-anything-else, initial snapshots/baselines, or text replay fixtures. **Local transient-binding exception:** at sign time the helper may receive the active region when `use-region-p` is true, otherwise the whole buffer, *solely* to compute the approved content-blind text binding (the `canon-letters/0.1` commitment) locally via the shared `packages/format` implementation. The helper must discard that text without persisting, logging, replaying, uploading, or passing it onward; only the sealed binding object (`scheme`, `policy`, `canonical_length`, `commitment`) and the record survive. The text never leaves the user's machine — this is a local-compute exception, not a storage-policy exception, and plaintext storage/upload remains forbidden.
-- **Browser extension** treats a fresh non-empty field as ineligible unless it can resume an existing PMBAH session for the same field. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths, but it must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
-- **`/write` first-party page** starts from an empty textarea and clears/discards the visible canvas independently of the persisted content-blind session record.
+- **Browser extension** treats a fresh non-empty field as ineligible unless it can resume an existing PMBAH session for the same field. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths. At sign time, if binding is enabled, the content script may transiently read selected text in the active field/editor, or all current content of that field/editor when no in-field selection is available, solely to compute the content-blind binding commitment; only the binding object may cross to the service worker/upload. It must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
+- **`/write` first-party page** starts from an empty textarea and clears/discards the visible canvas independently of the persisted content-blind session record. At sign time, if binding is enabled, it binds selected text in the writing canvas, or all current canvas content when nothing is selected.
 - **`packages/producer-core`** accepts only public mutation shapes and session metadata. It must not require plaintext, final text, inserted text, text hashes, or text replay to sign/verify a record.
 
 Tests and audits for each producer must cover this invariant before release.
@@ -1022,7 +1022,7 @@ Rules:
 
 - Capture text fields/contenteditable.
 - Local session store and TTL.
-- Capture-context preview/redaction.
+- Capture-context prompt review.
 - Sign/freeze/upload/copy-link flow.
 - Conformance pass.
 
@@ -1030,7 +1030,7 @@ Rules:
 
 - Minor mode capture.
 - Sign-buffer/upload flow.
-- Capture-context preview/redaction.
+- Capture-context prompt review.
 - Conformance pass.
 
 ---

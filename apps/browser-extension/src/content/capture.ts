@@ -282,15 +282,47 @@ function scan(root: ParentNode): void {
   }
 }
 
-// Read a field's text transiently to compute the content-blind binding. The
-// text lives only in this function's scope and is discarded on return; only the
-// sealed {scheme, policy, canonical_length, commitment} object leaves here.
+// Read a field's text transiently to compute the content-blind binding. If the
+// user has selected text inside the field/editor at sign time, bind that
+// selection; otherwise bind all current field/editor content. The text lives
+// only in this function's scope and is discarded on return; only the sealed
+// {scheme, policy, canonical_length, commitment} object leaves here.
 function computeBindingForSession(session_id: string, policy: "exact" | "prefix"): ComputeBindingResponse {
   const element = document.querySelector(`[${SESSION_ATTR}="${session_id}"]`);
   if (!(element instanceof HTMLElement)) return { kind: "binding_result", text_binding: null };
-  const text = isTextField(element) ? element.value : isContentEditable(element) ? element.textContent ?? "" : "";
+  const text = bindingTextForElement(element);
   if (canonicalizeTextForBinding(text).length === 0) return { kind: "binding_result", text_binding: null };
   return { kind: "binding_result", text_binding: createTextBinding(text, session_id, policy) };
+}
+
+function bindingTextForElement(element: HTMLElement): string {
+  return selectedTextForElement(element) ?? allTextForElement(element);
+}
+
+function allTextForElement(element: HTMLElement): string {
+  if (isTextField(element)) return element.value;
+  if (isContentEditable(element)) return element.textContent ?? "";
+  return "";
+}
+
+function selectedTextForElement(element: HTMLElement): string | null {
+  if (isTextField(element)) {
+    const start = element.selectionStart;
+    const end = element.selectionEnd;
+    if (typeof start !== "number" || typeof end !== "number" || start === end) return null;
+    return element.value.slice(Math.min(start, end), Math.max(start, end));
+  }
+  if (!isContentEditable(element)) return null;
+  const selection = window.getSelection?.();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+  if (!nodeIsInsideElement(selection.anchorNode, element) || !nodeIsInsideElement(selection.focusNode, element)) return null;
+  const text = selection.toString();
+  return text.length > 0 ? text : null;
+}
+
+function nodeIsInsideElement(node: Node | null, element: HTMLElement): boolean {
+  if (!node) return false;
+  return node === element || element.contains(node.nodeType === Node.ELEMENT_NODE ? node as Element : node.parentElement);
 }
 
 function start(): void {
@@ -320,6 +352,7 @@ start();
 export const __test = {
   isEligibleElement,
   ambiguousMutation,
+  bindingTextForElement,
 };
 
 export const CONTENT_ENTRYPOINT = "capture";

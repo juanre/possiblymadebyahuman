@@ -60,6 +60,16 @@ class FetchCheckpointAdapter implements CheckpointAdapter {
   }
 }
 
+function currentBindingText(textarea: HTMLTextAreaElement | null): string {
+  if (!textarea) return "";
+  const start = textarea.selectionStart;
+  const end = textarea.selectionEnd;
+  if (typeof start === "number" && typeof end === "number" && start !== end) {
+    return textarea.value.slice(Math.min(start, end), Math.max(start, end));
+  }
+  return textarea.value;
+}
+
 async function uploadRecord(payload: UploadPayload): Promise<IngestRecordResponse> {
   const response = await fetch("/api/records", {
     method: "POST",
@@ -193,10 +203,11 @@ export function WritePage() {
       if (!draft) {
         let options = {};
         if (bindDocument) {
-          const text = textareaRef.current?.value ?? "";
-          // The binding is computed locally from the final text and discarded;
-          // only the content-blind {scheme, policy, canonical_length, commitment}
-          // is sealed into the record and uploaded.
+          const text = currentBindingText(textareaRef.current);
+          // The binding is computed locally from selected text, or all canvas
+          // content when nothing is selected, then discarded; only the
+          // content-blind {scheme, policy, canonical_length, commitment} is
+          // sealed into the record and uploaded.
           if (canonicalizeTextForBinding(text).length > 0) {
             options = { textBinding: createTextBinding(text, session.session_id, policy) };
           }
@@ -232,7 +243,7 @@ export function WritePage() {
   }, [bindDocument, policy, refreshSession, registry, session]);
 
   const openSignConfirm = useCallback(() => {
-    const text = textareaRef.current?.value ?? "";
+    const text = currentBindingText(textareaRef.current);
     const bindable = canonicalizeTextForBinding(text).length > 0;
     setCanBind(bindable);
     setBindDocument(bindable);
@@ -315,7 +326,7 @@ export function WritePage() {
             disabled={!canBind}
             onChange={(event) => setBindDocument(event.target.checked)}
           />
-          <span>{canBind ? "Bind the document I wrote" : "Nothing to bind — this text has no letters or digits"}</span>
+          <span>{canBind ? "Bind selected text, or all canvas content if nothing is selected" : "Nothing to bind — this text has no letters or digits"}</span>
         </label>
         {bindDocument ? (
           <fieldset className="write-sign-policy">

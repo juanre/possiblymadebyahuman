@@ -126,7 +126,7 @@ Use the path printed by `command -v node` in a shell where Node is available.
 2. Enable capture: `M-x pmbah-mode`. The mode line shows `PMBAH:N`, where `N` is the local event count.
 3. Write normally.
 4. Check status when desired: `M-x pmbah-show-session-status`.
-5. Freeze, optionally bind the document text, answer capture-context prompts, upload, and copy the record URL: `M-x pmbah-sign-buffer`.
+5. Freeze, optionally bind the active region or whole buffer, answer y/n capture-context prompts, upload, and copy the record URL: `M-x pmbah-sign-buffer`.
 6. If you want to throw away the local session without uploading: `M-x pmbah-discard-session`.
 
 After a successful upload, the local event log is cleared and a fresh session starts for the current buffer. If upload fails, the local event log is retained so you can retry.
@@ -138,13 +138,13 @@ A quick public-service check:
 1. In Emacs, open a buffer and run `M-x pmbah-mode`.
 2. Type a short draft.
 3. Run `M-x pmbah-show-session-status`; confirm the API URL is `https://possiblymadebyahuman.com`.
-4. Run `M-x pmbah-sign-buffer`; answer the binding and capture-context prompts, upload, and confirm a short URL is copied to the kill ring.
+4. Run `M-x pmbah-sign-buffer`; answer the y/n binding and capture-context prompts (RET accepts the default `y`), upload, and confirm a short URL is copied to the kill ring.
 
 For a local development check instead, start with `make local-container` (or `PMBAH_PORT=18800 make local-container`) and set `PMBAH_API_BASE_URL` / `pmbah-api-base-url` to the matching local origin.
 
 ## Sign-time binding and capture context
 
-`pmbah-sign-buffer` asks whether to bind the document text to the record. If you bind it, the text used is:
+`pmbah-sign-buffer` asks whether to bind the selected region or the whole buffer to the record, depending on what is active when you sign. All sign-time questions are y/n prompts where RET accepts the default `y`. If you bind, the text used is:
 
 - the active, non-empty region when `use-region-p` is true; or
 - the whole buffer when there is no active region.
@@ -160,6 +160,8 @@ For capture context, `pmbah-sign-buffer` does not open a preview buffer. It prom
 ```
 
 That `capture_context` is separate from the optional `manifest.text_binding`; a record can have minimal capture context and still include a document binding.
+
+Use `C-u M-x pmbah-sign-buffer` to skip the prompts and accept the default yes answers: include buffer name and major mode, bind the selected region if active or the whole buffer otherwise, use the "allow extra text before or after it" policy, and affirm the binding.
 
 ## Event semantics
 

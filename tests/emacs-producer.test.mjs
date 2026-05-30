@@ -234,7 +234,8 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
 
 (defun pmbah-test-sign-final-text (activate-region)
   (let ((captured nil)
-        (answers '(t t)))
+        (prompts nil)
+        (answers '(t t t)))
     (with-temp-buffer
       (text-mode)
       (insert "alpha beta gamma")
@@ -249,11 +250,11 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
         (activate-mark)
         (unless (use-region-p)
           (error "expected active region")))
-      (cl-letf (((symbol-function 'yes-or-no-p)
-                 (lambda (_prompt)
+      (cl-letf (((symbol-function 'pmbah--y-or-n-p-default-yes)
+                 (lambda (prompt)
+                   (push prompt prompts)
                    (prog1 (car answers)
                      (setq answers (cdr answers)))))
-                ((symbol-function 'y-or-n-p) (lambda (_prompt) t))
                 ((symbol-function 'pmbah--run-helper)
                  (lambda (payload)
                    (setq captured payload)
@@ -262,21 +263,56 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
                  (lambda (_record) (list :url "https://example.test/record"))))
         (let ((noninteractive nil))
           (pmbah-sign-buffer (list :surface "emacs"))))
-      (plist-get captured :final_text))))
+      (list :final_text (plist-get captured :final_text)
+            :prompts (vconcat (nreverse prompts))))))
+
+(defun pmbah-test-prefix-sign-no-prompts ()
+  (let ((captured nil))
+    (with-temp-buffer
+      (rename-buffer "prefix-buffer")
+      (text-mode)
+      (insert "prefix ")
+      (pmbah-mode 1)
+      (insert "body")
+      (cl-letf (((symbol-function 'pmbah--y-or-n-p-default-yes)
+                 (lambda (prompt)
+                   (error "unexpected prompt: %s" prompt)))
+                ((symbol-function 'pmbah--run-helper)
+                 (lambda (payload)
+                   (setq captured payload)
+                   (list :record (list :manifest (list :record_hash "b3:stub") :events []))))
+                ((symbol-function 'pmbah--post-record)
+                 (lambda (_record) (list :url "https://example.test/record"))))
+        (let ((noninteractive nil)
+              (current-prefix-arg '(4)))
+          (call-interactively #'pmbah-sign-buffer)))
+      captured)))
 
 (when (get-buffer "*PMBAH capture context*")
   (kill-buffer "*PMBAH capture context*"))
 (let ((context nil)
       (answers '(nil nil)))
-  (cl-letf (((symbol-function 'yes-or-no-p)
+  (cl-letf (((symbol-function 'pmbah--y-or-n-p-default-yes)
              (lambda (_prompt)
                (prog1 (car answers)
                  (setq answers (cdr answers))))))
     (setq context (pmbah-review-capture-context)))
-  (let ((output (list :region_text (pmbah-test-sign-final-text t)
-                      :whole_buffer_text (pmbah-test-sign-final-text nil)
-                      :context context
-                      :preview_buffer_exists (if (get-buffer "*PMBAH capture context*") t :json-false))))
+  (let* ((region-result (pmbah-test-sign-final-text t))
+         (whole-result (pmbah-test-sign-final-text nil))
+         (prefix-payload (pmbah-test-prefix-sign-no-prompts))
+         (output (list :region_text (plist-get region-result :final_text)
+                       :whole_buffer_text (plist-get whole-result :final_text)
+                       :region_prompts (plist-get region-result :prompts)
+                       :whole_buffer_prompts (plist-get whole-result :prompts)
+                       :prefix_final_text (plist-get prefix-payload :final_text)
+                       :prefix_bind_policy (plist-get prefix-payload :bind_policy)
+                       :prefix_context (plist-get prefix-payload :capture_context)
+                       :default_yes_answer (cl-letf (((symbol-function 'read-from-minibuffer) (lambda (_prompt) "")))
+                                             (pmbah--y-or-n-p-default-yes "Default? "))
+                       :explicit_no_answer (cl-letf (((symbol-function 'read-from-minibuffer) (lambda (_prompt) "n")))
+                                             (if (pmbah--y-or-n-p-default-yes "No? ") t :json-false))
+                       :context context
+                       :preview_buffer_exists (if (get-buffer "*PMBAH capture context*") t :json-false))))
     (with-temp-file ${JSON.stringify(outputPath)}
       (insert (pmbah--json-encode output)))))
 `);
@@ -287,6 +323,13 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
     const output = JSON.parse(await readFile(outputPath, "utf8"));
     assert.equal(output.region_text, "beta");
     assert.equal(output.whole_buffer_text, "alpha beta gamma!");
+    assert.equal(output.region_prompts[0], "Bind the selected region to this record? ");
+    assert.equal(output.whole_buffer_prompts[0], "Bind the whole buffer to this record? ");
+    assert.equal(output.prefix_final_text, "prefix body");
+    assert.equal(output.prefix_bind_policy, "prefix");
+    assert.deepEqual(output.prefix_context, { surface: "emacs", emacs: { buffer_name: "prefix-buffer", major_mode: "text-mode" } });
+    assert.equal(output.default_yes_answer, true);
+    assert.equal(output.explicit_no_answer, false);
     assert.deepEqual(output.context, { surface: "emacs" });
     assert.equal(output.preview_buffer_exists, false);
   } finally {

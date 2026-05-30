@@ -126,7 +126,7 @@ function openSignConfirm(session: SessionRecord): void {
   panel.className = "sign-confirm";
   panel.innerHTML = `
     <p class="sign-affirm">I affirm this is the text this record is meant to cover.</p>
-    <label><input type="checkbox" class="sign-bind" checked /> Bind the document I wrote</label>
+    <label><input type="checkbox" class="sign-bind" checked /> Bind selected text, or all field content if nothing is selected</label>
     <div class="sign-policy">
       <label><input type="radio" name="sign-policy" value="prefix" checked /> Allow extra text before or after it — e.g. a quoted header or a signature line</label>
       <label><input type="radio" name="sign-policy" value="exact" /> Only this text — nothing after it</label>

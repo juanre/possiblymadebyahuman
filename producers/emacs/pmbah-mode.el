@@ -169,29 +169,58 @@ Capture remains enabled and a fresh session starts from the next edit."
     (pmbah--start-session)
     (message "PMBAH session discarded; new session %s started" pmbah--session-id)))
 
+(defun pmbah--y-or-n-p-default-yes (prompt)
+  "Ask PROMPT as a y/n question whose empty answer means yes."
+  (let ((query (concat (string-trim-right prompt) " [Y/n] "))
+        answer)
+    (catch 'done
+      (while t
+        (setq answer (downcase (string-trim (read-from-minibuffer query))))
+        (cond
+         ((or (string-empty-p answer) (member answer '("y" "yes")))
+          (throw 'done t))
+         ((member answer '("n" "no"))
+          (throw 'done nil))
+         (t
+          (message "Please answer y or n.")))))))
+
 ;;;###autoload
-(defun pmbah-sign-buffer (&optional capture-context)
+(defun pmbah-sign-buffer (&optional capture-context no-prompts)
   "Freeze, build, upload, and copy a short URL for the current PMBAH session.
 
-Interactively, ask before including identifying Emacs metadata.  If binding is
-enabled, bind the active region when one is active; otherwise bind the whole
-buffer.  CAPTURE-CONTEXT is intended for tests or advanced callers and must be a
-JSON-serializable plist."
-  (interactive)
+Interactively, ask y/n questions with yes as the default.  With a prefix
+argument, do not ask those questions; use the default yes answers, including the
+prefix binding policy.  If binding is enabled, bind the active region when one
+is active; otherwise bind the whole buffer.  CAPTURE-CONTEXT is intended for
+tests or advanced callers and must be a JSON-serializable plist.  NO-PROMPTS is
+intended for interactive prefix use and tests."
+  (interactive (list nil current-prefix-arg))
   (unless pmbah-mode
     (user-error "Enable pmbah-mode before signing a buffer"))
   (when (= pmbah--next-seq 0)
     (user-error "No PMBAH events captured for this buffer"))
-  (let* ((context (or capture-context (pmbah-review-capture-context)))
-         (bind (and (not noninteractive) (yes-or-no-p "Bind the document text to this record? ")))
+  (let* ((context (or capture-context
+                      (if no-prompts
+                          (pmbah--capture-context t t)
+                        (pmbah-review-capture-context))))
+         (binding-has-region (use-region-p))
+         (bind-prompt (if binding-has-region
+                          "Bind the selected region to this record? "
+                        "Bind the whole buffer to this record? "))
+         (bind (if no-prompts
+                   t
+                 (and (not noninteractive) (pmbah--y-or-n-p-default-yes bind-prompt))))
          (final-text (when bind
-                       (if (use-region-p)
+                       (if binding-has-region
                            (buffer-substring-no-properties (region-beginning) (region-end))
                          (buffer-substring-no-properties (point-min) (point-max)))))
          (bind-policy (when bind
-                        (if (yes-or-no-p "Allow extra text before or after it (e.g. a quoted header or a signature line)? ")
+                        (if (or no-prompts
+                                (pmbah--y-or-n-p-default-yes "Allow extra text before or after it (e.g. a quoted header or a signature line)? "))
                             "prefix" "exact")))
-         (_affirm (when (and bind (not (y-or-n-p "Affirm this is the text this record is meant to cover? ")))
+         (_affirm (when (and bind
+                             (not no-prompts)
+                             (not (pmbah--y-or-n-p-default-yes "Affirm this is the text this record is meant to cover? ")))
                     (user-error "Signing aborted")))
          (record (pmbah-build-record-for-current-buffer context final-text bind-policy))
          (response (pmbah--post-record record))
@@ -213,8 +242,8 @@ Absolute file paths are omitted by default and are never included."
          include-buffer-name
          include-major-mode)
     (message "PMBAH upload is content-blind; absolute file path omitted (%s)" file-label)
-    (setq include-buffer-name (yes-or-no-p (format "Include buffer name `%s` in capture context? " buffer-label)))
-    (setq include-major-mode (yes-or-no-p (format "Include major mode `%s` in capture context? " mode-label)))
+    (setq include-buffer-name (pmbah--y-or-n-p-default-yes (format "Include buffer name `%s` in capture context? " buffer-label)))
+    (setq include-major-mode (pmbah--y-or-n-p-default-yes (format "Include major mode `%s` in capture context? " mode-label)))
     (pmbah--capture-context include-buffer-name include-major-mode)))
 
 (defun pmbah-build-record-for-current-buffer (&optional capture-context final-text bind-policy)
