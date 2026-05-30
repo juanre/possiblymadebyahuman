@@ -19,14 +19,15 @@ to the kill ring.
 - Public uploads contain mutation shape, timing, source labels, manifest metadata,
   and public process hashes. They do **not** include plaintext insertion text.
 - The local helper payload contains process metadata only, with one exception: when
-  you choose to bind the document at sign time, the mode passes the selected text to
-  the **local** helper transiently, solely so the helper can compute the content-blind
-  text binding (the `canon-letters/0.1` commitment) via the shared format
+  you choose to bind the document at sign time, the mode passes the active region
+  when one is active, otherwise the whole buffer, to the **local** helper transiently,
+  solely so the helper can compute the content-blind text binding (the
+  `canon-letters/0.1` commitment) via the shared format
   implementation. The helper discards that text immediately — it is never stored,
   logged, hashed for anything else, uploaded, or reconstructed; only the sealed binding
   object (`scheme`, `policy`, `canonical_length`, `commitment`) survives. The text never
   leaves your machine. This is a local-compute exception, not a storage exception.
-- Absolute local file paths are shown in the preview as omitted and are not
+- Absolute local file paths are noted as omitted at sign time and are not
   uploaded by default.
 - Emacs buffer names and major modes can identify a document or workflow; the
   mode asks before including them in `capture_context`.
@@ -171,7 +172,8 @@ Use the path printed by `command -v node` in the shell where the repo tests pass
    M-x pmbah-show-session-status
    ```
 
-5. Freeze, review context, upload, and copy the short URL:
+5. Freeze, optionally bind the document text, answer capture-context prompts,
+   upload, and copy the short URL:
 
    ```elisp
    M-x pmbah-sign-buffer
@@ -195,29 +197,41 @@ A quick public-service check:
 2. Type a short draft.
 3. Run `M-x pmbah-show-session-status`; confirm the API URL is
    `https://possiblymadebyahuman.com`.
-4. Run `M-x pmbah-sign-buffer`; review capture context, upload, and confirm a
-   short URL is copied to the kill ring.
+4. Run `M-x pmbah-sign-buffer`; answer the binding and capture-context prompts,
+   upload, and confirm a short URL is copied to the kill ring.
 
 For a local development check instead, start with `make local-container` (or
 `PMBAH_PORT=18800 make local-container`) and set `PMBAH_API_BASE_URL` /
 `pmbah-api-base-url` to the matching local origin.
 
-## Capture context review
+## Sign-time binding and capture context
 
-`pmbah-sign-buffer` opens a `*PMBAH capture context*` preview before upload. It
-shows:
+`pmbah-sign-buffer` asks whether to bind the document text to the record. If you
+bind it, the text used is:
 
-- buffer name candidate;
-- major mode candidate;
-- absolute file path status, explicitly omitted by default;
-- the content-blind upload guarantee.
+- the active, non-empty region when `use-region-p` is true; or
+- the whole buffer when there is no active region.
 
-It then asks separately whether to include `emacs.buffer_name` and
-`emacs.major_mode`. If both are declined, the context is only:
+In a default modern Emacs configuration, `use-region-p` is true when the region
+is active and highlighted (for example, set the mark with `C-SPC`, move point so
+the region is non-empty, or use a mouse/selection command). If there is no active
+highlighted region, PMBAH deliberately falls back to binding the whole buffer.
+
+The selected text is passed only transiently to the local helper to compute the
+content-blind `text_binding` commitment, then discarded. Only the binding object
+is uploaded.
+
+For capture context, `pmbah-sign-buffer` does not open a preview buffer. It
+prompts separately for whether to include `emacs.buffer_name` and
+`emacs.major_mode`; absolute file paths are omitted. If both metadata fields are
+declined, the uploaded `capture_context` is:
 
 ```json
 { "surface": "emacs" }
 ```
+
+That `capture_context` is separate from the optional `manifest.text_binding`; a
+record can have minimal capture context and still include a document binding.
 
 ## Event semantics and limitations
 

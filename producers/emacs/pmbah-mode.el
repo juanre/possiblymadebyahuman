@@ -173,9 +173,10 @@ Capture remains enabled and a fresh session starts from the next edit."
 (defun pmbah-sign-buffer (&optional capture-context)
   "Freeze, build, upload, and copy a short URL for the current PMBAH session.
 
-Interactively, show a capture-context preview and ask before including
-identifying Emacs metadata.  CAPTURE-CONTEXT is intended for tests or advanced
-callers and must be a JSON-serializable plist."
+Interactively, ask before including identifying Emacs metadata.  If binding is
+enabled, bind the active region when one is active; otherwise bind the whole
+buffer.  CAPTURE-CONTEXT is intended for tests or advanced callers and must be a
+JSON-serializable plist."
   (interactive)
   (unless pmbah-mode
     (user-error "Enable pmbah-mode before signing a buffer"))
@@ -204,26 +205,14 @@ callers and must be a JSON-serializable plist."
     response))
 
 (defun pmbah-review-capture-context ()
-  "Preview and collect capture context for upload.
-Absolute file paths are shown as omitted and are not included by default."
+  "Collect capture context for upload.
+Absolute file paths are omitted by default and are never included."
   (let* ((buffer-label (buffer-name))
          (mode-label (symbol-name major-mode))
          (file-label (or (buffer-file-name) "not visiting a file"))
          include-buffer-name
          include-major-mode)
-    (with-current-buffer (get-buffer-create "*PMBAH capture context*")
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert "PMBAH capture context preview\n")
-        (insert "================================\n\n")
-        (insert "The public record is content-blind: it uploads mutation shape, timing, metadata, and hashes, not plaintext.\n\n")
-        (insert (format "Buffer name candidate: %s\n" buffer-label))
-        (insert (format "Major mode candidate: %s\n" mode-label))
-        (insert (format "Absolute file path: omitted by default (%s)\n" file-label))
-        (insert "\nYou will be asked before including each identifying metadata field.\n")
-        (goto-char (point-min))
-        (view-mode 1)))
-    (display-buffer "*PMBAH capture context*")
+    (message "PMBAH upload is content-blind; absolute file path omitted (%s)" file-label)
     (setq include-buffer-name (yes-or-no-p (format "Include buffer name `%s` in capture context? " buffer-label)))
     (setq include-major-mode (yes-or-no-p (format "Include major mode `%s` in capture context? " mode-label)))
     (pmbah--capture-context include-buffer-name include-major-mode)))

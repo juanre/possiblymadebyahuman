@@ -222,6 +222,78 @@ test("Emacs producer starts a fresh session after successful upload", { skip: em
   }
 });
 
+test("Emacs sign binding uses active region or whole buffer and avoids preview buffers", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-binding-scope-"));
+  const outputPath = join(temp, "binding-scope.json");
+  const scriptPath = join(temp, "binding-scope.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+
+  await writeFile(scriptPath, `;;; binding-scope.el --- PMBAH binding scope test -*- lexical-binding: t; -*-
+(require 'cl-lib)
+(load ${JSON.stringify(modePath)})
+
+(defun pmbah-test-sign-final-text (activate-region)
+  (let ((captured nil)
+        (answers '(t t)))
+    (with-temp-buffer
+      (text-mode)
+      (insert "alpha beta gamma")
+      (pmbah-mode 1)
+      (goto-char (point-max))
+      (insert "!")
+      (when activate-region
+        (transient-mark-mode 1)
+        (goto-char (+ (point-min) 6))
+        (set-mark (point))
+        (goto-char (+ (point-min) 10))
+        (activate-mark)
+        (unless (use-region-p)
+          (error "expected active region")))
+      (cl-letf (((symbol-function 'yes-or-no-p)
+                 (lambda (_prompt)
+                   (prog1 (car answers)
+                     (setq answers (cdr answers)))))
+                ((symbol-function 'y-or-n-p) (lambda (_prompt) t))
+                ((symbol-function 'pmbah--run-helper)
+                 (lambda (payload)
+                   (setq captured payload)
+                   (list :record (list :manifest (list :record_hash "b3:stub") :events []))))
+                ((symbol-function 'pmbah--post-record)
+                 (lambda (_record) (list :url "https://example.test/record"))))
+        (let ((noninteractive nil))
+          (pmbah-sign-buffer (list :surface "emacs"))))
+      (plist-get captured :final_text))))
+
+(when (get-buffer "*PMBAH capture context*")
+  (kill-buffer "*PMBAH capture context*"))
+(let ((context nil)
+      (answers '(nil nil)))
+  (cl-letf (((symbol-function 'yes-or-no-p)
+             (lambda (_prompt)
+               (prog1 (car answers)
+                 (setq answers (cdr answers))))))
+    (setq context (pmbah-review-capture-context)))
+  (let ((output (list :region_text (pmbah-test-sign-final-text t)
+                      :whole_buffer_text (pmbah-test-sign-final-text nil)
+                      :context context
+                      :preview_buffer_exists (if (get-buffer "*PMBAH capture context*") t :json-false))))
+    (with-temp-file ${JSON.stringify(outputPath)}
+      (insert (pmbah--json-encode output)))))
+`);
+
+  try {
+    const result = runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.region_text, "beta");
+    assert.equal(output.whole_buffer_text, "alpha beta gamma!");
+    assert.deepEqual(output.context, { surface: "emacs" });
+    assert.equal(output.preview_buffer_exists, false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Emacs helper payload contains only process metadata", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-payload-"));
   const outputPath = join(temp, "payload.json");

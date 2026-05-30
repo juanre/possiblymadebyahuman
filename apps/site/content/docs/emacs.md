@@ -15,8 +15,8 @@ eyebrow: "Producer"
 
 ## What it does not capture
 
-- Your document text. No plaintext leaves the producer. The local Node helper that builds the public record is passed numeric process metadata only, with one sanctioned exception: if you choose to bind the document at sign time, the helper receives the selected text transiently so it can compute the content-blind binding commitment, then discards it. Only the commitment is uploaded; the text never leaves your machine. See [Bind and check a document](/docs/checking-a-document/).
-- Absolute local file paths. The capture-context review preview shows the path as omitted by default.
+- Your document text. No plaintext leaves the producer. The local Node helper that builds the public record is passed numeric process metadata only, with one sanctioned exception: if you choose to bind the document at sign time, the helper receives the active region when one is active, otherwise the whole buffer, transiently so it can compute the content-blind binding commitment, then discards it. Only the commitment is uploaded; the text never leaves your machine. See [Bind and check a document](/docs/checking-a-document/).
+- Absolute local file paths. The sign-time prompts note that the path is omitted by default.
 - Anything outside the buffer `pmbah-mode` is attached to. The mode is per-buffer.
 
 ## Requirements
@@ -126,7 +126,7 @@ Use the path printed by `command -v node` in a shell where Node is available.
 2. Enable capture: `M-x pmbah-mode`. The mode line shows `PMBAH:N`, where `N` is the local event count.
 3. Write normally.
 4. Check status when desired: `M-x pmbah-show-session-status`.
-5. Freeze, review the capture context, upload, and copy the record URL: `M-x pmbah-sign-buffer`.
+5. Freeze, optionally bind the document text, answer capture-context prompts, upload, and copy the record URL: `M-x pmbah-sign-buffer`.
 6. If you want to throw away the local session without uploading: `M-x pmbah-discard-session`.
 
 After a successful upload, the local event log is cleared and a fresh session starts for the current buffer. If upload fails, the local event log is retained so you can retry.
@@ -138,24 +138,28 @@ A quick public-service check:
 1. In Emacs, open a buffer and run `M-x pmbah-mode`.
 2. Type a short draft.
 3. Run `M-x pmbah-show-session-status`; confirm the API URL is `https://possiblymadebyahuman.com`.
-4. Run `M-x pmbah-sign-buffer`; review the capture context preview, upload, and confirm a short URL is copied to the kill ring.
+4. Run `M-x pmbah-sign-buffer`; answer the binding and capture-context prompts, upload, and confirm a short URL is copied to the kill ring.
 
 For a local development check instead, start with `make local-container` (or `PMBAH_PORT=18800 make local-container`) and set `PMBAH_API_BASE_URL` / `pmbah-api-base-url` to the matching local origin.
 
-## Capture context review
+## Sign-time binding and capture context
 
-`pmbah-sign-buffer` opens a `*PMBAH capture context*` preview before upload. It shows:
+`pmbah-sign-buffer` asks whether to bind the document text to the record. If you bind it, the text used is:
 
-- the buffer name candidate;
-- the major mode candidate;
-- absolute file path status (omitted by default);
-- the content-blind upload guarantee.
+- the active, non-empty region when `use-region-p` is true; or
+- the whole buffer when there is no active region.
 
-It then asks separately whether to include `emacs.buffer_name` and `emacs.major_mode`. If both are declined, the context is only:
+In a default modern Emacs configuration, `use-region-p` is true when the region is active and highlighted (for example, set the mark with `C-SPC`, move point so the region is non-empty, or use a mouse/selection command). If there is no active highlighted region, PMBAH deliberately falls back to binding the whole buffer.
+
+The selected text is passed only transiently to the local helper to compute the content-blind `text_binding` commitment, then discarded. Only the binding object is uploaded.
+
+For capture context, `pmbah-sign-buffer` does not open a preview buffer. It prompts separately for whether to include `emacs.buffer_name` and `emacs.major_mode`; absolute file paths are omitted. If both metadata fields are declined, the uploaded `capture_context` is:
 
 ```json
 { "surface": "emacs" }
 ```
+
+That `capture_context` is separate from the optional `manifest.text_binding`; a record can have minimal capture context and still include a document binding.
 
 ## Event semantics
 
