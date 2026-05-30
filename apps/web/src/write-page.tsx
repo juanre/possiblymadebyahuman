@@ -14,7 +14,7 @@ import {
   type SessionRecord,
   type SignedRecordDraft,
 } from "../../../packages/producer-core/src/index.ts";
-import { canonicalizeTextForBinding, createTextBinding, type TextBindingPolicy } from "../../../packages/format/src/index.ts";
+import { canonicalizeTextForBinding, createTextBinding } from "../../../packages/format/src/index.ts";
 import { deriveMutationFromMeasuredInput } from "./write-capture.ts";
 
 const STORAGE_KEY = "pmbah.write.sessions.v1";
@@ -99,7 +99,7 @@ export function WritePage() {
   const [uploaded, setUploaded] = useState<IngestRecordResponse | null>(null);
   const signedDraft = useRef<SignedRecordDraft | null>(null);
   const [confirming, setConfirming] = useState(false);
-  const [policy, setPolicy] = useState<TextBindingPolicy>("prefix");
+  const [confirmArmed, setConfirmArmed] = useState(false);
   const [bindDocument, setBindDocument] = useState(true);
   const [canBind, setCanBind] = useState(false);
   const signSheetRef = useRef<HTMLDivElement | null>(null);
@@ -206,10 +206,10 @@ export function WritePage() {
           const text = currentBindingText(textareaRef.current);
           // The binding is computed locally from selected text, or all canvas
           // content when nothing is selected, then discarded; only the
-          // content-blind {scheme, policy, canonical_length, commitment} is
-          // sealed into the record and uploaded.
+          // content-blind {scheme, canonical_length, commitment} is sealed into
+          // the record and uploaded.
           if (canonicalizeTextForBinding(text).length > 0) {
-            options = { textBinding: createTextBinding(text, session.session_id, policy) };
+            options = { textBinding: createTextBinding(text, session.session_id) };
           }
         }
         draft = registry.sign(session.session_id, options);
@@ -240,14 +240,16 @@ export function WritePage() {
       setStatus("error");
       setMessage(`Upload failed: ${reason}. The local event log is still available for retry.`);
     }
-  }, [bindDocument, policy, refreshSession, registry, session]);
+  }, [bindDocument, refreshSession, registry, session]);
 
   const openSignConfirm = useCallback(() => {
     const text = currentBindingText(textareaRef.current);
     const bindable = canonicalizeTextForBinding(text).length > 0;
     setCanBind(bindable);
     setBindDocument(bindable);
+    setConfirmArmed(false);
     setConfirming(true);
+    window.setTimeout(() => setConfirmArmed(true), 50);
   }, []);
 
   const reset = useCallback(async () => {
@@ -278,13 +280,13 @@ export function WritePage() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Enter") return;
       if (!(event.metaKey || event.ctrlKey)) return;
-      if (confirming) { event.preventDefault(); setConfirming(false); void signAndUpload(); return; }
+      if (confirming && confirmArmed) { event.preventDefault(); setConfirming(false); setConfirmArmed(false); void signAndUpload(); return; }
       if (canRetry) { event.preventDefault(); void signAndUpload(); return; }
       if (canSign) { event.preventDefault(); openSignConfirm(); return; }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [canSign, canRetry, confirming, openSignConfirm, signAndUpload]);
+  }, [canSign, canRetry, confirmArmed, confirming, openSignConfirm, signAndUpload]);
 
   // Move focus into the sign sheet when it opens, so keyboard and screen-reader
   // users land on the first actionable control rather than the modeline button.
@@ -318,7 +320,6 @@ export function WritePage() {
 
     {confirming && !uploaded ? (
       <div className="write-sign-sheet" role="dialog" aria-label="Sign this record" ref={signSheetRef}>
-        <p className="write-sign-affirm">I affirm this is the text this record is meant to cover.</p>
         <label className="write-sign-option">
           <input
             type="checkbox"
@@ -329,26 +330,17 @@ export function WritePage() {
           <span>{canBind ? "Bind selected text, or all canvas content if nothing is selected" : "Nothing to bind — this text has no letters or digits"}</span>
         </label>
         {bindDocument ? (
-          <fieldset className="write-sign-policy">
-            <label>
-              <input type="radio" name="bind-policy" checked={policy === "prefix"} onChange={() => setPolicy("prefix")} />
-              <span>Allow extra text before or after it — e.g. a quoted header or a signature line</span>
-            </label>
-            <label>
-              <input type="radio" name="bind-policy" checked={policy === "exact"} onChange={() => setPolicy("exact")} />
-              <span>Only this text — nothing after it</span>
-            </label>
-            <p className="write-sign-note">The check compares wording — letters and digits — not exact text.</p>
-          </fieldset>
+          <p className="write-sign-note">The check compares wording — letters and digits — not exact text.</p>
         ) : (
           <p className="write-sign-note">Signing the writing process only; no document is bound to this record.</p>
         )}
         <div className="write-sign-actions">
-          <button className="ml-button" type="button" onClick={() => setConfirming(false)}>cancel</button>
+          <button className="ml-button" type="button" onClick={() => { setConfirming(false); setConfirmArmed(false); }}>cancel</button>
           <button
             className="ml-button ml-primary"
             type="button"
-            onClick={() => { setConfirming(false); void signAndUpload(); }}
+            disabled={!confirmArmed}
+            onClick={() => { setConfirming(false); setConfirmArmed(false); void signAndUpload(); }}
           >
             sign &amp; upload
           </button>
@@ -379,7 +371,7 @@ export function WritePage() {
             className="ml-button ml-primary"
             type="button"
             disabled={!canSign && !canRetry}
-            onClick={canRetry ? signAndUpload : openSignConfirm}
+            onClick={canRetry ? signAndUpload : () => { window.setTimeout(openSignConfirm, 0); }}
             title="sign (⌘↵ / Ctrl↵)"
           >
             {canRetry ? "retry" : "sign"}

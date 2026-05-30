@@ -67,7 +67,7 @@
     "record": {
       "manifest": {
         "format_version": "0.2",
-        "record_hash": "b3:e8cac69de019e7779e5d8d2258f2c8795bba147d793f75e933e006efe9e5980b",
+        "record_hash": "b3:441f78486562f98ed7bf9288d588a5a3501b163ba89ff5896daf6a7c40427feb",
         "session_id": "123e4567-e89b-42d3-a456-426614174002",
         "producer": {
           "id": "fixture",
@@ -82,7 +82,6 @@
         },
         "text_binding": {
           "scheme": "canon-letters/0.1",
-          "policy": "prefix",
           "canonical_length": 10,
           "commitment": "b3:5b529348dcf566686e8a10595122f011f040a3cdd2f84e096303cfb3a2d4a140"
         },

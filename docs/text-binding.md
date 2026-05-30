@@ -40,25 +40,18 @@ uploaded or stored.
 ```jsonc
 "text_binding": {
   "scheme": "canon-letters/0.1",
-  "policy": "prefix",          // "exact" | "prefix"
   "canonical_length": 1840,    // codepoints of the canonical form
   "commitment": "b3:..."       // b3(session_id ‖ canonical_form)
 }
 ```
 
-- `exact`: the candidate's canonical form must equal the committed one.
-- `prefix`: **edge-anchored** (v1). The committed canonical form matches the
-  whole candidate, its start (trailing material after it — e.g. an appended
-  signature line), or its end (leading material before it — e.g. a quoted
-  header), each by exact commitment equality on the relevant codepoint slice.
-  There is no interior substring, fuzzy, or chunk search; a signed run that sits
-  in the candidate's interior (material both before and after) does not match in
-  v1. The normative rule lives in `docs/spec/canonicalization.md`.
+Candidate checks use a **bounded edge-window** rule. The committed canonical
+form may match the whole candidate, or a window that starts within 160 canonical
+characters of the beginning or ends within 160 canonical characters of the end.
+There is no unbounded interior substring, fuzzy, or chunk search. The normative
+rule lives in `docs/spec/canonicalization.md`.
 
-**Default policy: `prefix`.** It tolerates accidental over-selection at one edge
-— an appended footer/signature after, or a quoted header before — which `exact`
-would reject; the producer lets the signer choose `exact` when they mean
-"exactly this and nothing added."
+No policy field is emitted or accepted; users do not choose how document checks work.
 
 ### 2.2 Aggressive canonical form (`canon-letters/0.1`)
 
@@ -67,7 +60,7 @@ full case folding → keep only code points with Unicode property Letter,
 Number, or Mark**; drop everything else (punctuation, whitespace, symbols,
 case). Case folding is Unicode Default Case Folding (full, language-neutral
 — e.g. `ß` → `ss`), **not** locale lowercasing, which diverges on forms
-such as Greek/polytonic. `canonical_length` and prefix slicing operate on
+such as Greek/polytonic. `canonical_length` and check-window slicing operate on
 the post-fold codepoint sequence.
 Digits are kept; separators and decimal points (punctuation) are dropped —
 so the canonical form compares letters and digits in order but not number
@@ -76,8 +69,8 @@ assumption).
 
 `docs/spec/canonicalization.md` is **normative** and must pin: the Unicode
 version baseline; the exact operation ordering above; codepoint-based
-prefix slicing semantics (the `prefix` policy slices the canonical form by
-*codepoint* count, never by UTF-16 unit or byte); and conformance vectors
+check-window slicing semantics (the canonical form is sliced by *codepoint*
+count, never by UTF-16 unit or byte); and conformance vectors
 covering combining marks, NFKC compatibility forms, non-Latin casefold,
 surrogate handling, and the zero-length case.
 
@@ -142,7 +135,7 @@ record_hash = b3(event_tip ‖ canon(binding))   // when a text_binding is prese
 ```
 
 where `canon(binding)` is the existing canonical-JSON serialization of
-the binding's `{scheme, policy, canonical_length, commitment}`.
+the binding's `{scheme, canonical_length, commitment}`.
 
 Consequences:
 - The short signature / URL derives from `record_hash`, so the URL
@@ -185,30 +178,28 @@ a forced migration.
 The record page offers a check box. Given candidate text `C`:
 
 - compute `canon(C)`;
-- **exact**: pass iff `len(canon(C)) == canonical_length` and
-  `b3(session_id ‖ canon(C)) == commitment`;
-- **prefix** (edge-anchored): pass iff `len(canon(C)) >= canonical_length` and
-  the committed form matches the candidate's start
-  (`b3(session_id ‖ canon(C)[0:canonical_length]) == commitment`, with the
-  remainder reported as appended material) **or** its end
-  (`b3(session_id ‖ canon(C)[len−canonical_length:len]) == commitment`, with the
-  leading codepoints reported as material before it). Equal-length candidates
-  are the whole match. No interior search.
+- fail if `len(canon(C)) < canonical_length`;
+- check every canonical window of length `canonical_length` that starts within
+  160 canonical characters of the beginning or ends within 160 canonical
+  characters of the end;
+- pass iff one checked window has `b3(session_id ‖ window) == commitment`.
+
+Equal-length candidates are the whole match. There is no unbounded interior
+search.
 
 `session_id` and the binding are public in the record, so the browser
 computes everything locally. The candidate text never leaves the page.
 
-A very short `canonical_length` under `prefix` is ambiguous — many
-documents share a short leading letter/digit sequence. The checker should
-warn when the bound canonical length is below a small threshold rather
-than present a confident prefix match.
+A very short `canonical_length` is ambiguous — many documents share a short
+letter/digit run. The checker should warn when the bound canonical length is
+below a small threshold rather than present a confident match.
 
 ## 4. UX
 
 ### 4.1 Signing flow (producers)
 
-Common shape across producers: the signer **selects** the final text and
-**affirms an explicit claim** before the binding is computed.
+Common shape across producers: the signer chooses the text to bind before the
+binding is computed.
 
 **Binding is on by default.** Signing computes a binding from the user's
 selected text when the producer has an active selection, otherwise from the
@@ -218,30 +209,24 @@ still editing or deliberately won't pin the text. A selection/fallback text
 whose canonical form is empty (§2.2) is unbindable: the producer disables
 binding and offers process-only signing.
 
-- The affirmation copy: *"I affirm this is the text this record is meant
-  to cover."* with the chosen policy shown (`exact` / `prefix`) and the
-  honest note that the binding compares wording, not exact text.
 - `/write`: after writing, "Sign" → bind selected text in the writing
-  canvas if present, otherwise all current canvas content → affirmation +
-  policy → sign.
+  canvas if present, otherwise all current canvas content → sign.
 - Browser extension sign modal: bind selected text inside the active
   field/editor if present (for example, just the body text in Gmail),
-  otherwise all current content of that field/editor → affirmation + policy
-  → sign.
+  otherwise all current content of that field/editor → sign.
 - Emacs `pmbah-sign-buffer`: use the active region if any, else whole
-  buffer → affirmation + policy → sign.
+  buffer → sign.
 
 Plaintext boundary: the producer reads the selection **locally**,
 computes the canonical form and commitment, discards the text, and
-uploads only `{scheme, policy, canonical_length, commitment}`. No
+uploads only `{scheme, canonical_length, commitment}`. No
 plaintext and no reversible text reaches the server, consistent with the
 content-blind invariant.
 
 ### 4.2 Checking flow (record page, near the verification area)
 
 - **Binding present:** a "Check a document" box; the reader pastes a
-  document; the browser reports `exact` match / `prefix` match (with the
-  count of appended characters) / no match, each carrying the §2.2
+  document; the browser reports whole / near-edge / no match, each carrying the §2.2
   "not exact text" disclaimer. A prominent "checked in your browser —
   nothing is uploaded" line. Separately and always shown, in a visually
   distinct card headed **"How this was written"**: the commensurability
@@ -257,7 +242,7 @@ content-blind invariant.
 - Automated sign-time length/consistency checking — fragile on rich-text,
   confused by quoted text; replaced by §2.3 human judgment.
 - Content-defined chunking / per-chunk leaf hashes / mid-document diffs —
-  aggressive canon + `exact`/`prefix` covers the real cases.
+  aggressive canon + bounded edge-window checking covers the real cases.
 - Process anchoring (per-checkpoint buffer commitments) — separate, larger
   effort with empirical unknowns.
 - Server-mediated verification — verification is client-side; text never
@@ -286,13 +271,13 @@ content-blind invariant.
    validate `text_binding` on `POST /api/records` (recompute and check
    the seal), persist it, return it on `GET`. DB migration for the new
    manifest field.
-3. **Checking UX** (`apps/web`): check box, exact/prefix/no-match
+3. **Checking UX** (`apps/web`): check box, match/no-match
    results with the disclaimer, commensurability panel, no-binding state,
    client-side verification. May be built in parallel with stage 4, but
    **must not ship to users ahead of `/write` signing** — a checker with
    nothing to check against is meaningless.
 4. **Signing UX — `/write`** (`apps/web` + `packages/producer-core`):
-   selection + affirmation + local commitment compute + upload. Land this
+   selection + local commitment compute + upload. Land this
    together with (or before) stage 3 at user-visible launch.
 5. **Signing UX — extension and Emacs** (`apps/browser-extension`,
    `producers/emacs`): same flow on those producers; conformance pass.

@@ -474,7 +474,7 @@ test("dispatcher: sign with a content-blind text binding seals it and stays veri
   // The popup computes the binding in the content script and passes only the
   // commitment object into sign_session — never the text.
   const documentText = "Hello there, this is the field I actually wrote.";
-  const textBinding = createTextBinding(documentText, sid, "prefix");
+  const textBinding = createTextBinding(documentText, sid);
   await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: textBinding });
 
   const payload = upload.calls[0];

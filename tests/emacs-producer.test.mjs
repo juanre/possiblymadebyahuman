@@ -235,7 +235,7 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
 (defun pmbah-test-sign-final-text (activate-region)
   (let ((captured nil)
         (prompts nil)
-        (answers '(t t t)))
+        (answers '(t)))
     (with-temp-buffer
       (text-mode)
       (insert "alpha beta gamma")
@@ -305,7 +305,6 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
                        :region_prompts (plist-get region-result :prompts)
                        :whole_buffer_prompts (plist-get whole-result :prompts)
                        :prefix_final_text (plist-get prefix-payload :final_text)
-                       :prefix_bind_policy (plist-get prefix-payload :bind_policy)
                        :prefix_context (plist-get prefix-payload :capture_context)
                        :default_yes_answer (cl-letf (((symbol-function 'read-from-minibuffer) (lambda (_prompt) "")))
                                              (pmbah--y-or-n-p-default-yes "Default? "))
@@ -326,7 +325,6 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
     assert.equal(output.region_prompts[0], "Bind the selected region to this record? ");
     assert.equal(output.whole_buffer_prompts[0], "Bind the whole buffer to this record? ");
     assert.equal(output.prefix_final_text, "prefix body");
-    assert.equal(output.prefix_bind_policy, "prefix");
     assert.deepEqual(output.prefix_context, { surface: "emacs", emacs: { buffer_name: "prefix-buffer", major_mode: "text-mode" } });
     assert.equal(output.default_yes_answer, true);
     assert.equal(output.explicit_no_answer, false);
@@ -434,7 +432,6 @@ test("Emacs helper seals a content-blind text binding from transient final text 
     ],
     duration_ms: 90,
     final_text: `Hello there, ${marker} — this is the buffer text.`,
-    bind_policy: "prefix",
     created_client_t: "2026-05-28T00:00:00.000Z",
   };
   const result = spawnSync(process.execPath, [helperPath], {
@@ -449,7 +446,7 @@ test("Emacs helper seals a content-blind text binding from transient final text 
   const binding = output.record.manifest.text_binding;
   assert.equal(output.record.manifest.format_version, "0.2");
   assert.equal(binding.scheme, "canon-letters/0.1");
-  assert.equal(binding.policy, "prefix");
+  assert.equal(Object.hasOwn(binding, "policy"), false);
   assert.ok(binding.canonical_length > 0);
   // The transient final text must not survive into the helper output anywhere.
   const serialized = JSON.stringify(output);

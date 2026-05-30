@@ -161,7 +161,7 @@ For capture context, `pmbah-sign-buffer` does not open a preview buffer. It prom
 
 That `capture_context` is separate from the optional `manifest.text_binding`; a record can have minimal capture context and still include a document binding.
 
-Use `C-u M-x pmbah-sign-buffer` to skip the prompts and accept the default yes answers: include buffer name and major mode, bind the selected region if active or the whole buffer otherwise, use the "allow extra text before or after it" policy, and affirm the binding.
+Use `C-u M-x pmbah-sign-buffer` to skip the prompts and accept the default yes answers: include buffer name and major mode, and bind the selected region if active or the whole buffer otherwise.
 
 ## Event semantics
 

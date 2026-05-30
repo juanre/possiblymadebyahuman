@@ -25,7 +25,7 @@ to the kill ring.
   `canon-letters/0.1` commitment) via the shared format
   implementation. The helper discards that text immediately — it is never stored,
   logged, hashed for anything else, uploaded, or reconstructed; only the sealed binding
-  object (`scheme`, `policy`, `canonical_length`, `commitment`) survives. The text never
+  object (`scheme`, `canonical_length`, `commitment`) survives. The text never
   leaves your machine. This is a local-compute exception, not a storage exception.
 - Absolute local file paths are noted as omitted at sign time and are not
   uploaded by default.
@@ -236,9 +236,8 @@ That `capture_context` is separate from the optional `manifest.text_binding`; a
 record can have minimal capture context and still include a document binding.
 
 Use `C-u M-x pmbah-sign-buffer` to skip the prompts and accept the default yes
-answers: include buffer name and major mode, bind the selected region if active
-or the whole buffer otherwise, use the "allow extra text before or after it"
-policy, and affirm the binding.
+answers: include buffer name and major mode, and bind the selected region if
+active or the whole buffer otherwise.
 
 ## Event semantics and limitations
 

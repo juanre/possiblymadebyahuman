@@ -9,7 +9,7 @@ Core content-blind event-log contract package for PMBAH format versions `0.1` an
 - Canonical JSON serialization for public event objects.
 - BLAKE3 `b3:` hashing helpers for public process records.
 - Event hash-chain computation and verification for `0.1` and `0.2` records.
-- Format `0.2` `text_binding` helpers for local `canon-letters/0.1` commitments and exact/prefix candidate checks, using pinned Unicode 17.0.0 full case folding.
+- Format `0.2` `text_binding` helpers for local `canon-letters/0.1` commitments and bounded edge-window candidate checks, using pinned Unicode 17.0.0 full case folding.
 - Observed process-length math from public mutation positions/lengths, returning `null` when unknown measurements make length unknowable.
 - Record verification helper for public manifest/event structure plus hash-chain checks.
 

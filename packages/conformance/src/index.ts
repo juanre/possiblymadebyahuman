@@ -11,7 +11,6 @@ import {
   type Capability,
   type FormatVersion,
   type TextBinding,
-  type TextBindingPolicy,
   type WritingRecord,
 } from "../../format/src/index.ts";
 
@@ -42,7 +41,6 @@ export type TextCanonicalizationVector = {
 export type TextBindingVector = {
   name: string;
   session_id: string;
-  policy: TextBindingPolicy;
   input: string;
   binding: TextBinding;
   matching_candidate: string;
@@ -136,7 +134,7 @@ export function runConformanceVectors(vectors: ConformanceVectors): ConformanceR
 
   for (const vector of vectors.textBindings ?? []) {
     results.push(check(vector.name, () => {
-      const actual = createTextBinding(vector.input, vector.session_id, vector.policy);
+      const actual = createTextBinding(vector.input, vector.session_id);
       const errors: string[] = [];
       if (JSON.stringify(actual) !== JSON.stringify(vector.binding)) {
         errors.push(`binding mismatch: expected ${JSON.stringify(vector.binding)}, got ${JSON.stringify(actual)}`);

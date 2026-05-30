@@ -476,7 +476,5 @@ section.card[aria-label="Check a document"] {
 }
 .write-sign-affirm { margin: 0; color: #202124; font-weight: 700; }
 .write-sign-option { display: flex; align-items: flex-start; gap: 8px; }
-.write-sign-policy { border: 0; margin: 0; padding: 0; display: grid; gap: 6px; }
-.write-sign-policy label { display: flex; align-items: flex-start; gap: 8px; }
 .write-sign-note { margin: 4px 0 0; color: #756b60; }
 .write-sign-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }

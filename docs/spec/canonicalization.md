@@ -69,7 +69,6 @@ record_hash = H(bytes(event_tip) || utf8(canon(text_binding)))
 ```jsonc
 {
   "scheme": "canon-letters/0.1",
-  "policy": "exact",              // or "prefix"
   "canonical_length": 123,
   "commitment": "b3:..."
 }
@@ -79,7 +78,7 @@ A `text_binding` is invalid on a format `0.1` manifest.
 
 ## Text binding canonicalization: `canon-letters/0.1`
 
-`canon-letters/0.1` is the only text-binding scheme in format `0.2`. It is intentionally lossy and content-blind: producers compute the canonical form locally, hash it, discard the text, and upload only `{scheme, policy, canonical_length, commitment}`.
+`canon-letters/0.1` is the only text-binding scheme in format `0.2`. It is intentionally lossy and content-blind: producers compute the canonical form locally, hash it, discard the text, and upload only `{scheme, canonical_length, commitment}`.
 
 Unicode baseline: implementations must follow Unicode 17.0 data for this scheme. The reference implementation pins Unicode 17.0.0 `CaseFolding.txt` (`CaseFolding-17.0.0.txt`, 2025-07-30) and uses ECMAScript Unicode property escapes and Unicode normalization data from Node 24 / ICU 78.3 (`process.versions.unicode == "17.0"`).
 
@@ -109,23 +108,23 @@ The salt is `session_id`, not `record_hash`, because format `0.2` `record_hash` 
 The public binding stores:
 
 - `scheme`: exactly `canon-letters/0.1`.
-- `policy`: `exact` or `prefix`.
 - `canonical_length`: codepoint length of the committed canonical form; must be greater than zero.
 - `commitment`: the `b3:` BLAKE3 commitment above.
+
+No policy field is valid in `text_binding`.
 
 ## Text binding candidate verification
 
 Given public `session_id`, public `text_binding`, and local candidate text `C`:
 
 1. Compute `canon(C)` with `canon-letters/0.1`.
-2. For `policy: "exact"`: pass iff `len(canon(C)) == canonical_length` and `H(utf8(session_id) || utf8(canon(C))) == commitment`.
-3. For `policy: "prefix"`, verification is **edge-anchored** for v1: the committed canonical form must match the whole candidate, the start of the candidate, or the end of the candidate, each by exact commitment equality on the relevant codepoint slice. Pass iff `len(canon(C)) >= canonical_length` and at least one of:
-   - **whole or start:** `H(utf8(session_id) || utf8(canon(C)[0:canonical_length])) == commitment` — the committed form is the entire candidate (when lengths are equal) or its start, with the remainder being trailing material after it;
-   - **end:** `H(utf8(session_id) || utf8(canon(C)[len(canon(C)) - canonical_length : len(canon(C))])) == commitment` — the committed form is the end of the candidate, with the leading codepoints being material before it.
+2. Fail if `len(canon(C)) < canonical_length`.
+3. Build candidate start offsets from two bounded edge windows:
+   - every offset `0..min(160, len(canon(C)) - canonical_length)` near the beginning;
+   - every offset `max(0, len(canon(C)) - canonical_length - 160)..len(canon(C)) - canonical_length` near the end.
+4. Pass iff any offset `i` has `H(utf8(session_id) || utf8(canon(C)[i:i+canonical_length])) == commitment`.
 
-All slices are by Unicode codepoint count in the canonical form, never by UTF-16 code unit and never by byte. Codepoints before a matched end-slice are leading material; codepoints after a matched start-slice are appended material; neither is part of the commitment check.
-
-This edge anchoring tolerates accidental over-selection at one edge — a quoted header pasted before the signed text, or an appended signature/footer line after it — so a legitimate check is not a false negative. It is strictly edge-anchored: the committed form is tested only against the whole candidate and its two edges. There is **no interior substring search, no fuzzy matching, and no chunk matching.** A candidate that contains the signed wording only in its interior (material both before and after) does not match in v1. The `exact` policy performs no edge leniency.
+All slices are by Unicode codepoint count in the canonical form, never by UTF-16 code unit and never by byte. The check is bounded: it tests only windows up to 160 canonical codepoints from the start or from the end. It does not perform an unbounded interior substring search, fuzzy matching, or chunk matching.
 
 Candidate text verification is client-side. Candidate text must not be uploaded.
 
@@ -137,7 +136,7 @@ Vectors live under `packages/conformance/vectors/` and cover:
 - hash-chain outputs for format `0.1` and format `0.2`;
 - sealed format `0.2` `record_hash` with `text_binding`;
 - `canon-letters/0.1` cases for CJK/Han, combining marks, mixed scripts, punctuation/whitespace stripping, NFKC compatibility forms, non-Latin full case folding including Greek/polytonic expansions, surrogate-pair codepoints, and zero-length canonical form;
-- exact and prefix text-binding candidate checks;
+- bounded edge-window text-binding candidate checks;
 - observed process-length math using Unicode codepoint counts supplied by producers;
 - golden content-blind records;
 - capability-accuracy checks documenting how missing source attribution is represented.

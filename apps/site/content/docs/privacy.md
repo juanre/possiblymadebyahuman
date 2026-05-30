@@ -11,7 +11,7 @@ The default mode of `possiblymadebyahuman` is **content-blind**. Public records 
 - A manifest with the BLAKE3 chain hash over the canonical events, producer identity and version, declared capabilities, capture context (when provided), event count, and duration.
 - Precomputed statistics: typing/paste/cut/drop/IME/autocomplete/programmatic/unknown counts, codepoints inserted/deleted when known, largest atomic insert, observed process length when known, inter-event delay percentiles, active/idle time, and a delay histogram.
 - Analyzer signals, each with explicit measures and an explanation.
-- An optional `text_binding`, only when the signer chose to bind a document: its `scheme`, `policy`, `canonical_length`, and the salted `commitment`. This is a content-blind fingerprint of the signed text's canonical letters/digits; it cannot be turned back into the text. See [Bind and check a document](/docs/checking-a-document/).
+- An optional `text_binding`, only when the signer chose to bind a document: its `scheme`, `canonical_length`, and the salted `commitment`. This is a content-blind fingerprint of the signed text's canonical letters/digits; it cannot be turned back into the text. See [Bind and check a document](/docs/checking-a-document/).
 
 ## What public records do not contain
 

@@ -1,6 +1,4 @@
 import {
-  canonicalizeTextForBinding,
-  computeTextBindingCommitment,
   verifyRecord,
   verifyTextBindingCandidate,
   type BufferMutation,
@@ -95,8 +93,8 @@ export function formatServerObservedSpan(ms: number): string {
   return `${hours} ${hours === 1 ? "hour" : "hours"} ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
 }
 
-// A prefix match over a very short bound text is weak evidence — many
-// documents share a short opening — so the checker warns below this length.
+// A match over a very short bound text is weak evidence — many documents can
+// share a short run — so the checker warns below this length.
 export const SHORT_BINDING_CANONICAL_LENGTH = 64;
 
 export const TEXT_BINDING_DISCLAIMER =
@@ -104,19 +102,16 @@ export const TEXT_BINDING_DISCLAIMER =
 
 export type BindingCheckResult = {
   ok: boolean;
-  kind: "exact" | "trailing" | "leading" | "none";
+  kind: "exact" | "trailing" | "leading" | "surrounding" | "none";
   leadingCount: number;
   trailingCount: number;
   canonicalLength: number;
 };
 
-// Bounded edge leniency: a prefix-policy binding matches if the signed
-// wording is the whole canonical candidate (exact), its start (trailing
-// extra — an appended signature/footer line), or its end (leading extra —
-// a quoted header or greeting pasted before it). We anchor at the two edges
-// only — never an arbitrary interior substring search — so accidental
-// over-selection at the start or end does not fail a legitimate check.
-// exact-policy bindings stay strict (no edge leniency).
+// Bounded edge-window checking: the signed wording may be the whole canonical
+// candidate, near the start, or near the end. The shared format checker tests
+// windows up to 160 canonical characters from either edge — never an unbounded
+// interior substring search.
 export function checkCandidateAgainstBinding(
   binding: TextBinding,
   candidateText: string,
@@ -124,20 +119,14 @@ export function checkCandidateAgainstBinding(
 ): BindingCheckResult {
   const length = binding.canonical_length;
   const base = verifyTextBindingCandidate(binding, candidateText, sessionId);
-  if (base.valid) {
-    const trailing = base.appendedCanonicalLength ?? 0;
-    return { ok: true, kind: trailing > 0 ? "trailing" : "exact", leadingCount: 0, trailingCount: trailing, canonicalLength: length };
-  }
-  if (binding.policy === "prefix") {
-    const candidateCodepoints = Array.from(canonicalizeTextForBinding(candidateText));
-    if (candidateCodepoints.length > length) {
-      const suffix = candidateCodepoints.slice(candidateCodepoints.length - length).join("");
-      if (computeTextBindingCommitment(sessionId, suffix) === binding.commitment) {
-        return { ok: true, kind: "leading", leadingCount: candidateCodepoints.length - length, trailingCount: 0, canonicalLength: length };
-      }
-    }
-  }
-  return { ok: false, kind: "none", leadingCount: 0, trailingCount: 0, canonicalLength: length };
+  if (!base.valid) return { ok: false, kind: "none", leadingCount: 0, trailingCount: 0, canonicalLength: length };
+  const leading = base.leadingCanonicalLength ?? 0;
+  const trailing = base.trailingCanonicalLength ?? 0;
+  let kind: BindingCheckResult["kind"] = "exact";
+  if (leading > 0 && trailing > 0) kind = "surrounding";
+  else if (leading > 0) kind = "leading";
+  else if (trailing > 0) kind = "trailing";
+  return { ok: true, kind, leadingCount: leading, trailingCount: trailing, canonicalLength: length };
 }
 
 export type BindingMatchSummary = { ok: boolean; headline: string; short: boolean };
@@ -151,6 +140,8 @@ export function describeBindingMatch(result: BindingCheckResult): BindingMatchSu
     headline = `Same wording as the signed text, plus ${result.trailingCount} more ${result.trailingCount === 1 ? "character" : "characters"} after it (for example an appended signature line).`;
   } else if (result.kind === "leading") {
     headline = `Same wording as the signed text, with ${result.leadingCount} more ${result.leadingCount === 1 ? "character" : "characters"} before it (for example a quoted header).`;
+  } else if (result.kind === "surrounding") {
+    headline = `Same wording as the signed text, with ${result.leadingCount} more ${result.leadingCount === 1 ? "character" : "characters"} before it and ${result.trailingCount} more ${result.trailingCount === 1 ? "character" : "characters"} after it.`;
   } else {
     headline = "Same wording as the signed text.";
   }

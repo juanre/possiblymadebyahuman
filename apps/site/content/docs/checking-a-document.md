@@ -11,17 +11,12 @@ This is provenance, not a verdict. A match says the words line up; it never clai
 
 In `/write`, the browser extension, and Emacs, signing offers to **bind the document**:
 
-- You affirm: *"this is the text this record is meant to cover."*
 - Binding is on by default; you can opt out and sign the **process only** (no document bound), for example while you are still editing.
 - The text being bound is producer-specific:
   - `/write`: selected text in the writing canvas if there is a selection; otherwise all current canvas content.
   - Browser extension: selected text in the active field/editor if there is a selection; otherwise all current content of that field/editor. This is the path to sign only the body of an email or reply in a larger page such as Gmail.
   - Emacs: active region when `use-region-p` is true; otherwise the whole buffer.
-- You choose a policy:
-  - **Allow extra text before or after it** (the default): tolerates a quoted header pasted above your text or a signature line appended below.
-  - **Only this text**: strict; nothing added.
-
-The producer computes the binding **locally** from that selected-or-fallback text and **discards the text**. Only a content-blind commitment is uploaded: a salted hash of the text's canonical letters and digits, plus its length and policy. The text itself never leaves your machine, and the commitment cannot be turned back into the text.
+The producer computes the binding **locally** from that selected-or-fallback text and **discards the text**. Only a content-blind commitment is uploaded: a salted hash of the text's canonical letters and digits, plus its length. The text itself never leaves your machine, and the commitment cannot be turned back into the text.
 
 A selection with no letters or digits (for example emoji or punctuation only) cannot be bound; signing falls back to process-only.
 
@@ -30,7 +25,7 @@ A selection with no letters or digits (for example emoji or punctuation only) ca
 A record that has a binding shows a **Check a document** box. Paste the document you want to check; the comparison runs **in your browser** and the pasted text is never uploaded. You get one of:
 
 - **Same wording as the signed text.**
-- **Same wording, plus N more characters after it** (an appended signature or footer), or **with N more before it** (a quoted header).
+- **Same wording, plus N more characters after it**, **with N more before it**, or with a small amount of surrounding material near the beginning/end of the pasted document.
 - **These letters don't match what the author signed.**
 
 ## What a match means, and does not
@@ -39,7 +34,7 @@ A match compares **letters and digits in order**. It **ignores spacing, punctuat
 
 That looseness is deliberate; it survives the mangling real documents pick up in transit (rewrapped lines, smart quotes, changed spacing). The cost is that texts which share the same ordered letters and digits read as a match even when they differ in punctuation or number formatting. For example, `$1,000.00` and `$100,000` both reduce to `100000`, so they would verify as the same wording. When a binding covers only a short run of text, the checker says so, because a short run is weak evidence on its own.
 
-The check is **edge-anchored**: it matches the whole document, its start, or its end. It does **not** search the interior. If your signed text sits in the middle of a larger paste (material both before *and* after), paste just the signed portion to check it.
+The check is **bounded near the edges**: it matches the whole pasted document, or a window starting within 160 canonical letters/digits of the beginning or ending within 160 canonical letters/digits of the end. It does **not** do an unbounded interior search. If your signed text sits deep in the middle of a larger paste, paste just the signed portion to check it.
 
 ## The other half is yours to judge
 

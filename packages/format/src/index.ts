@@ -14,9 +14,8 @@ export type FormatVersion = (typeof FORMAT_VERSIONS)[number];
 export type B3Hash = `${typeof HASH_PREFIX}${string}`;
 
 export const TEXT_BINDING_SCHEME = "canon-letters/0.1";
-export const TEXT_BINDING_POLICIES = ["exact", "prefix"] as const;
+export const TEXT_BINDING_EDGE_WINDOW_CANONICAL_LENGTH = 160;
 export type TextBindingScheme = typeof TEXT_BINDING_SCHEME;
-export type TextBindingPolicy = (typeof TEXT_BINDING_POLICIES)[number];
 
 export const OPERATIONS = ["insert", "delete", "replace"] as const;
 export type Operation = (typeof OPERATIONS)[number];
@@ -86,17 +85,18 @@ export type Attestation = {
 
 export type TextBinding = {
   scheme: TextBindingScheme;
-  policy: TextBindingPolicy;
   canonical_length: number;
   commitment: B3Hash;
 };
 
 export type TextBindingVerificationResult = {
   valid: boolean;
-  policy: TextBindingPolicy;
   canonicalLength: number;
   candidateCanonicalLength: number;
-  appendedCanonicalLength?: number;
+  matchStartCanonicalOffset?: number;
+  leadingCanonicalLength?: number;
+  trailingCanonicalLength?: number;
+  checkedWindowCount: number;
   errors: string[];
 };
 
@@ -146,7 +146,6 @@ const OPERATION_SET = new Set<string>(OPERATIONS);
 const SOURCE_SET = new Set<string>(SOURCES);
 const CAPABILITY_SET = new Set<string>(CAPABILITIES);
 const FORMAT_VERSION_SET = new Set<string>(FORMAT_VERSIONS);
-const TEXT_BINDING_POLICY_SET = new Set<string>(TEXT_BINDING_POLICIES);
 const EVENT_KEYS = new Set(["seq", "t", "op", "pos", "del_len", "ins_len", "source"]);
 
 export function canonicalizeJson(value: unknown): string {
@@ -223,14 +222,10 @@ export function computeTextBindingCommitment(sessionId: string, canonicalForm: s
   return b3HashBytes(concatBytes(utf8ToBytes(sessionId), utf8ToBytes(canonicalForm)));
 }
 
-export function createTextBinding(input: string, sessionId: string, policy: TextBindingPolicy = "prefix"): TextBinding {
-  if (!TEXT_BINDING_POLICY_SET.has(policy)) {
-    throw new TypeError(`text_binding.policy must be one of ${TEXT_BINDING_POLICIES.join(", ")}`);
-  }
+export function createTextBinding(input: string, sessionId: string): TextBinding {
   const canonicalForm = canonicalizeTextForBinding(input);
   return {
     scheme: TEXT_BINDING_SCHEME,
-    policy,
     canonical_length: Array.from(canonicalForm).length,
     commitment: computeTextBindingCommitment(sessionId, canonicalForm),
   };
@@ -246,47 +241,62 @@ export function verifyTextBindingCandidate(
   const candidateCanonical = canonicalizeTextForBinding(candidateText);
   const candidateCodepoints = Array.from(candidateCanonical);
   let valid = false;
-  let appendedCanonicalLength: number | undefined;
+  let matchStartCanonicalOffset: number | undefined;
+  let checkedWindowCount = 0;
 
   if (errors.length === 0) {
-    if (binding.policy === "exact") {
-      if (candidateCodepoints.length !== binding.canonical_length) {
-        errors.push(`canonical length mismatch: expected ${binding.canonical_length}, got ${candidateCodepoints.length}`);
-      } else if (computeTextBindingCommitment(sessionId, candidateCanonical) !== binding.commitment) {
-        errors.push("text binding commitment mismatch");
-      } else {
-        valid = true;
-      }
+    if (candidateCodepoints.length < binding.canonical_length) {
+      errors.push(`canonical length shorter than signed text: expected at least ${binding.canonical_length}, got ${candidateCodepoints.length}`);
     } else {
-      if (candidateCodepoints.length < binding.canonical_length) {
-        errors.push(`canonical length shorter than prefix: expected at least ${binding.canonical_length}, got ${candidateCodepoints.length}`);
-      } else {
-        const prefix = candidateCodepoints.slice(0, binding.canonical_length).join("");
-        if (computeTextBindingCommitment(sessionId, prefix) !== binding.commitment) {
-          errors.push("text binding commitment mismatch");
-        } else {
-          appendedCanonicalLength = candidateCodepoints.length - binding.canonical_length;
+      const offsets = textBindingCandidateWindowOffsets(candidateCodepoints.length, binding.canonical_length);
+      checkedWindowCount = offsets.length;
+      for (const offset of offsets) {
+        const window = candidateCodepoints.slice(offset, offset + binding.canonical_length).join("");
+        if (computeTextBindingCommitment(sessionId, window) === binding.commitment) {
           valid = true;
+          matchStartCanonicalOffset = offset;
+          break;
         }
       }
+      if (!valid) errors.push("text binding commitment mismatch");
     }
   }
 
+  const leadingCanonicalLength = matchStartCanonicalOffset;
+  const trailingCanonicalLength = matchStartCanonicalOffset === undefined
+    ? undefined
+    : candidateCodepoints.length - matchStartCanonicalOffset - binding.canonical_length;
+
   return {
     valid,
-    policy: binding.policy,
     canonicalLength: binding.canonical_length,
     candidateCanonicalLength: candidateCodepoints.length,
-    appendedCanonicalLength,
+    matchStartCanonicalOffset,
+    leadingCanonicalLength,
+    trailingCanonicalLength,
+    checkedWindowCount,
     errors,
   };
+}
+
+export function textBindingCandidateWindowOffsets(candidateCanonicalLength: number, bindingCanonicalLength: number): number[] {
+  if (!Number.isInteger(candidateCanonicalLength) || !Number.isInteger(bindingCanonicalLength)) {
+    throw new TypeError("canonical lengths must be integers");
+  }
+  if (candidateCanonicalLength < bindingCanonicalLength || bindingCanonicalLength <= 0) return [];
+  const maxStart = candidateCanonicalLength - bindingCanonicalLength;
+  const offsets = new Set<number>();
+  const leadingLimit = Math.min(TEXT_BINDING_EDGE_WINDOW_CANONICAL_LENGTH, maxStart);
+  for (let offset = 0; offset <= leadingLimit; offset += 1) offsets.add(offset);
+  const trailingStart = Math.max(0, maxStart - TEXT_BINDING_EDGE_WINDOW_CANONICAL_LENGTH);
+  for (let offset = trailingStart; offset <= maxStart; offset += 1) offsets.add(offset);
+  return Array.from(offsets).sort((left, right) => left - right);
 }
 
 export function canonicalizeTextBinding(binding: TextBinding): string {
   assertValidTextBinding(binding);
   return canonicalizeJson({
     scheme: binding.scheme,
-    policy: binding.policy,
     canonical_length: binding.canonical_length,
     commitment: binding.commitment,
   });
@@ -565,15 +575,12 @@ export function validateTextBinding(binding: unknown): string[] {
   const errors: string[] = [];
   if (!isPlainObject(binding)) return ["text_binding must be an object"];
   const candidate = binding as Partial<TextBinding>;
-  const allowedKeys = new Set(["scheme", "policy", "canonical_length", "commitment"]);
+  const allowedKeys = new Set(["scheme", "canonical_length", "commitment"]);
   for (const key of Object.keys(candidate)) {
     if (!allowedKeys.has(key)) errors.push(`text_binding contains unknown field ${key}`);
   }
   if (candidate.scheme !== TEXT_BINDING_SCHEME) {
     errors.push(`text_binding.scheme must be ${TEXT_BINDING_SCHEME}`);
-  }
-  if (typeof candidate.policy !== "string" || !TEXT_BINDING_POLICY_SET.has(candidate.policy)) {
-    errors.push(`text_binding.policy must be one of ${TEXT_BINDING_POLICIES.join(", ")}`);
   }
   validateNonNegativeInteger(candidate.canonical_length, "text_binding.canonical_length", errors);
   if (candidate.canonical_length === 0) {

@@ -1,4 +1,4 @@
-import type { CaptureContext, TextBinding, TextBindingPolicy } from "../../../../packages/format/src/index.ts";
+import type { CaptureContext, TextBinding } from "../../../../packages/format/src/index.ts";
 import type {
   FieldDescriptor,
   FieldOrigin,
@@ -47,7 +47,6 @@ export type ContentToBackground =
 export type ComputeBindingRequest = {
   kind: "compute_binding";
   session_id: SessionId;
-  policy: TextBindingPolicy;
 };
 
 export type ComputeBindingResponse =

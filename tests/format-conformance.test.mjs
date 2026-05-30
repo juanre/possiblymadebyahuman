@@ -61,28 +61,32 @@ test("canon-letters/0.1 normalizes local text without retaining plaintext", () =
   assert.equal(canonicalizeTextForBinding("A𝟘🙂B"), "a0b");
   assert.equal(canonicalizeTextForBinding("🎉 — !!"), "");
   assert.throws(
-    () => createTextBinding("🎉 — !!", "123e4567-e89b-42d3-a456-426614174002", "prefix"),
+    () => createTextBinding("🎉 — !!", "123e4567-e89b-42d3-a456-426614174002"),
     /canonical form must not be empty/,
   );
 });
 
-test("text binding exact and prefix verification uses local candidate text only", () => {
+test("text binding verification uses bounded edge-window candidate text only", () => {
   const sessionId = "123e4567-e89b-42d3-a456-426614174002";
-  const prefixBinding = createTextBinding("Hello, World!", sessionId, "prefix");
-  const prefixMatch = verifyTextBindingCandidate(prefixBinding, "hello world!!! appended", sessionId);
-  assert.equal(prefixMatch.valid, true, prefixMatch.errors.join("; "));
-  assert.equal(prefixMatch.appendedCanonicalLength, 8);
-  assert.equal(verifyTextBindingCandidate(prefixBinding, "hullo world", sessionId).valid, false);
-
-  const exactBinding = createTextBinding("Straße 123", sessionId, "exact");
-  assert.equal(verifyTextBindingCandidate(exactBinding, "STRASSE-123", sessionId).valid, true);
-  assert.equal(verifyTextBindingCandidate(exactBinding, "STRASSE-123-extra", sessionId).valid, false);
+  const binding = createTextBinding("Hello, World!", sessionId);
+  const trailingMatch = verifyTextBindingCandidate(binding, "hello world!!! appended", sessionId);
+  assert.equal(trailingMatch.valid, true, trailingMatch.errors.join("; "));
+  assert.equal(trailingMatch.trailingCanonicalLength, 8);
+  const leadingMatch = verifyTextBindingCandidate(binding, `${"x".repeat(160)}hello world`, sessionId);
+  assert.equal(leadingMatch.valid, true, leadingMatch.errors.join("; "));
+  assert.equal(leadingMatch.leadingCanonicalLength, 160);
+  const surroundingMatch = verifyTextBindingCandidate(binding, `${"x".repeat(10)}hello world${"y".repeat(10)}`, sessionId);
+  assert.equal(surroundingMatch.valid, true, surroundingMatch.errors.join("; "));
+  assert.equal(surroundingMatch.leadingCanonicalLength, 10);
+  assert.equal(surroundingMatch.trailingCanonicalLength, 10);
+  assert.equal(verifyTextBindingCandidate(binding, `${"x".repeat(161)}hello world${"y".repeat(161)}`, sessionId).valid, false);
+  assert.equal(verifyTextBindingCandidate(binding, "hullo world", sessionId).valid, false);
 });
 
 test("format 0.2 seals text binding into record_hash and detects tampering", () => {
   const sessionId = "123e4567-e89b-42d3-a456-426614174002";
   const events = [{ seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 5, source: "typing" }];
-  const textBinding = createTextBinding("Hello, World!", sessionId, "prefix");
+  const textBinding = createTextBinding("Hello, World!", sessionId);
   const record = {
     manifest: {
       format_version: "0.2",
@@ -102,8 +106,14 @@ test("format 0.2 seals text binding into record_hash and detects tampering", () 
   };
   assert.equal(verifyRecord(record).valid, true);
 
+  const policyRecord = JSON.parse(JSON.stringify(record));
+  policyRecord.manifest.text_binding.policy = "prefix";
+  const policyVerification = verifyRecord(policyRecord);
+  assert.equal(policyVerification.valid, false);
+  assert.ok(policyVerification.errors.some((error) => error.includes("text_binding contains unknown field policy")));
+
   const tampered = JSON.parse(JSON.stringify(record));
-  tampered.manifest.text_binding.policy = "exact";
+  tampered.manifest.text_binding.commitment = `${tampered.manifest.text_binding.commitment.slice(0, -1)}${tampered.manifest.text_binding.commitment.endsWith("0") ? "1" : "0"}`;
   const tamperedVerification = verifyRecord(tampered);
   assert.equal(tamperedVerification.valid, false);
   assert.ok(tamperedVerification.errors.some((error) => error.includes("record_hash mismatch")));

@@ -286,13 +286,13 @@ function scan(root: ParentNode): void {
 // user has selected text inside the field/editor at sign time, bind that
 // selection; otherwise bind all current field/editor content. The text lives
 // only in this function's scope and is discarded on return; only the sealed
-// {scheme, policy, canonical_length, commitment} object leaves here.
-function computeBindingForSession(session_id: string, policy: "exact" | "prefix"): ComputeBindingResponse {
+// {scheme, canonical_length, commitment} object leaves here.
+function computeBindingForSession(session_id: string): ComputeBindingResponse {
   const element = document.querySelector(`[${SESSION_ATTR}="${session_id}"]`);
   if (!(element instanceof HTMLElement)) return { kind: "binding_result", text_binding: null };
   const text = bindingTextForElement(element);
   if (canonicalizeTextForBinding(text).length === 0) return { kind: "binding_result", text_binding: null };
-  return { kind: "binding_result", text_binding: createTextBinding(text, session_id, policy) };
+  return { kind: "binding_result", text_binding: createTextBinding(text, session_id) };
 }
 
 function bindingTextForElement(element: HTMLElement): string {
@@ -330,7 +330,7 @@ function start(): void {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!isComputeBindingRequest(message)) return false;
     try {
-      sendResponse(computeBindingForSession(message.session_id, message.policy));
+      sendResponse(computeBindingForSession(message.session_id));
     } catch (error) {
       sendResponse({ kind: "binding_error", reason: error instanceof Error ? error.message : String(error) });
     }

@@ -33,12 +33,11 @@ try {
   // `final_text` is accepted transiently SOLELY to compute the content-blind
   // text binding locally (SOT 3.10 local-transient-compute exception). It is
   // never echoed into the output, logged, persisted, or uploaded; only the
-  // sealed {scheme, policy, canonical_length, commitment} object survives.
-  const bindPolicy = input.bind_policy === "exact" ? "exact" : "prefix";
+  // sealed {scheme, canonical_length, commitment} object survives.
   const finalText = typeof input.final_text === "string" ? input.final_text : null;
   const textBinding =
     finalText !== null && canonicalizeTextForBinding(finalText).length > 0
-      ? createTextBinding(finalText, input.session_id, bindPolicy)
+      ? createTextBinding(finalText, input.session_id)
       : undefined;
 
   const formatVersion = textBinding ? FORMAT_VERSION_0_2 : input.format_version ?? FORMAT_VERSION;

@@ -189,11 +189,11 @@ Capture remains enabled and a fresh session starts from the next edit."
   "Freeze, build, upload, and copy a short URL for the current PMBAH session.
 
 Interactively, ask y/n questions with yes as the default.  With a prefix
-argument, do not ask those questions; use the default yes answers, including the
-prefix binding policy.  If binding is enabled, bind the active region when one
-is active; otherwise bind the whole buffer.  CAPTURE-CONTEXT is intended for
-tests or advanced callers and must be a JSON-serializable plist.  NO-PROMPTS is
-intended for interactive prefix use and tests."
+argument, do not ask those questions; use the default yes answers.  If binding
+is enabled, bind the active region when one is active; otherwise bind the whole
+buffer.  CAPTURE-CONTEXT is intended for tests or advanced callers and must be a
+JSON-serializable plist.  NO-PROMPTS is intended for interactive prefix use and
+tests."
   (interactive (list nil current-prefix-arg))
   (unless pmbah-mode
     (user-error "Enable pmbah-mode before signing a buffer"))
@@ -214,15 +214,7 @@ intended for interactive prefix use and tests."
                        (if binding-has-region
                            (buffer-substring-no-properties (region-beginning) (region-end))
                          (buffer-substring-no-properties (point-min) (point-max)))))
-         (bind-policy (when bind
-                        (if (or no-prompts
-                                (pmbah--y-or-n-p-default-yes "Allow extra text before or after it (e.g. a quoted header or a signature line)? "))
-                            "prefix" "exact")))
-         (_affirm (when (and bind
-                             (not no-prompts)
-                             (not (pmbah--y-or-n-p-default-yes "Affirm this is the text this record is meant to cover? ")))
-                    (user-error "Signing aborted")))
-         (record (pmbah-build-record-for-current-buffer context final-text bind-policy))
+         (record (pmbah-build-record-for-current-buffer context final-text))
          (response (pmbah--post-record record))
          (url (or (alist-get 'url response) (alist-get 'record_hash response))))
     (when url
@@ -246,14 +238,14 @@ Absolute file paths are omitted by default and are never included."
     (setq include-major-mode (pmbah--y-or-n-p-default-yes (format "Include major mode `%s` in capture context? " mode-label)))
     (pmbah--capture-context include-buffer-name include-major-mode)))
 
-(defun pmbah-build-record-for-current-buffer (&optional capture-context final-text bind-policy)
+(defun pmbah-build-record-for-current-buffer (&optional capture-context final-text)
   "Build and locally verify a public PMBAH record for the current buffer.
 The returned alist contains only the public `manifest` and `events` shape.
 FINAL-TEXT, when non-nil, is handed to the local helper transiently so it can
 compute the content-blind text binding; it is never stored or uploaded."
-  (alist-get 'record (pmbah--build-record-result capture-context final-text bind-policy)))
+  (alist-get 'record (pmbah--build-record-result capture-context final-text)))
 
-(defun pmbah--build-record-result (&optional capture-context final-text bind-policy)
+(defun pmbah--build-record-result (&optional capture-context final-text)
   "Return the helper result for the current buffer, including verification facts.
 FINAL-TEXT, when a non-empty string, is passed to the local helper SOLELY to
 compute the content-blind text binding and is never persisted or uploaded."
@@ -272,7 +264,7 @@ compute the content-blind text binding and is never persisted or uploaded."
                          :duration_ms (pmbah--elapsed-ms)
                          :created_client_t (format-time-string "%FT%T%z" (current-time) t))
                    (when (and final-text (stringp final-text) (> (length final-text) 0))
-                     (list :final_text final-text :bind_policy (or bind-policy "prefix"))))))
+                     (list :final_text final-text)))))
     (pmbah--run-helper payload)))
 
 (defun pmbah--run-helper (payload)
