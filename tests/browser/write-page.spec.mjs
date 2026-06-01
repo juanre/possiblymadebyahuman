@@ -194,7 +194,7 @@ test("/write keeps a failed upload available for retry", async ({ page }) => {
   // technical detail is preserved in the title attribute on the error span.
   const errorSpan = page.locator(".ml-error");
   await expect(errorSpan).toBeVisible();
-  await expect(errorSpan).toHaveText("upload failed — try again");
+  await expect(errorSpan).toHaveText("upload failed, try again");
   await expect(errorSpan).toHaveAttribute("title", /Upload failed: temporary_test_failure/);
   await page.getByRole("button", { name: "retry" }).click();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/retrytest1" })).toBeVisible();
@@ -249,9 +249,10 @@ test("/write can sign the process only, binding no document", async ({ page }) =
 
 test("/write focuses the canvas on load so you can type without clicking", async ({ page }) => {
   await page.goto("/write");
-  const canvas = page.getByRole("textbox", { name: "Writing canvas" });
-  await expect(canvas).toBeFocused();
-  // Typing immediately, with no click, lands in the canvas.
+  // Wait for the local session to be ready (modeline reads "idle"); the app
+  // puts the cursor in the canvas on ready. Then typing with no click must
+  // land in the canvas.
+  await expect(page.locator(".write-modeline")).toContainText("idle");
   await page.keyboard.type("hello");
-  await expect(canvas).toHaveValue("hello");
+  await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveValue("hello");
 });

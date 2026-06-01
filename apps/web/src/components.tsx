@@ -229,8 +229,8 @@ const MEASURE_DEFINITIONS: Record<string, string> = {
   inter_event_delay_p95_ms: "95th-percentile time between consecutive edits.",
   inter_event_delay_max_ms: "Longest gap between consecutive edits.",
   long_pause_count: "Number of gaps of 30 seconds or more.",
-  active_time_ms: "Total time spent actively editing — the sum of gaps shorter than 30 seconds.",
-  idle_time_ms: "Total time paused — the sum of gaps of 30 seconds or more.",
+  active_time_ms: "Total time spent actively editing: the sum of gaps shorter than 30 seconds.",
+  idle_time_ms: "Total time paused: the sum of gaps of 30 seconds or more.",
   small_edit_count: "Edits that inserted or deleted only a few codepoints.",
   atomic_insert_max_len: "Largest amount of text inserted in a single edit (e.g. a paste).",
   deletion_count: "Number of edits that removed text.",
@@ -440,8 +440,8 @@ export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
   return (
     <section className="card" id="check-a-document" aria-label="Check a document">
       <h2>Check a document against this record</h2>
-      <p className="muted">Have a copy of this writing? Paste it below and your browser tells you whether it is the text signed here — comparing wording, not exact text. (The Check button turns on once you paste something.)</p>
-      <p className="binding-check-privacy">Runs entirely in your browser — the document you paste is never uploaded.</p>
+      <p className="muted">Have a copy of this writing? Paste it below and your browser tells you whether it is the text signed here, comparing wording, not exact text. (The Check button turns on once you paste something.)</p>
+      <p className="binding-check-privacy">Runs entirely in your browser; the document you paste is never uploaded.</p>
       <textarea
         className="binding-check-input"
         value={candidate}
@@ -490,7 +490,7 @@ function BindingResult({ result }: { result: BindingCheckResult }) {
         <p className="binding-result-note">{TEXT_BINDING_DISCLAIMER}</p>
         {summary.short && (
           <p className="binding-result-warning">
-            This binds only a short run of text ({result.canonicalLength} letters), so a match on it is weak on its own — many documents share a short run.
+            This binds only a short run of text ({result.canonicalLength} letters), so a match on it is weak on its own; many documents share a short run.
           </p>
         )}
       </div>
@@ -505,7 +505,7 @@ export function CommensurabilityCard({ record }: { record: RecordApiResponse }) 
   return (
     <section className="card commensurability-card" aria-label="How this was written">
       <h2>How this was written</h2>
-      <p className="muted">A separate judgment, for you to make — not an automated result. Weigh the signed size against the recorded process.</p>
+      <p className="muted">A separate judgment, for you to make, not an automated result. Weigh the signed size against the recorded process.</p>
       <div className="commensurability">
         <Stat label="Signed text" value={`${binding.canonical_length} letters & digits (no punctuation or spacing)`} />
         <Stat

@@ -138,7 +138,7 @@ test.describe("text binding — bound record", () => {
     const result = card.locator(".binding-result");
     await expect(result).toHaveClass(/ok/);
     await expect(result).toContainText("Same wording as the signed text.");
-    await expect(result).toContainText("not a check of exact text");
+    await expect(result).toContainText("ignores spacing, punctuation, case, and number formatting");
   });
 
   test("appended text reports a prefix match with extra characters", async ({ page }) => {
@@ -158,7 +158,7 @@ test.describe("text binding — bound record", () => {
     const result = card.locator(".binding-result");
     await expect(result).toHaveClass(/ok/);
     await expect(result).toContainText(/\d+ more characters? before it/);
-    await expect(result).toContainText("not a check of exact text");
+    await expect(result).toContainText("ignores spacing, punctuation, case, and number formatting");
   });
 
   test("different text does not match", async ({ page }) => {
@@ -168,7 +168,7 @@ test.describe("text binding — bound record", () => {
     const result = card.locator(".binding-result");
     await expect(result).toHaveClass(/error/);
     await expect(result).toContainText("don't match");
-    await expect(result).toContainText("not a check of exact text");
+    await expect(result).toContainText("ignores spacing, punctuation, case, and number formatting");
   });
 
   test("signet states it signs the process and the text when bound", async ({ page }) => {
@@ -177,14 +177,14 @@ test.describe("text binding — bound record", () => {
     await expect(signet).toContainText("text it produced");
   });
 
-  test("a match shows an affirmative check mark, scoped to wording not authorship", async ({ page }) => {
+  test("a match shows an affirmative check mark", async ({ page }) => {
     const card = page.locator("section.card", { hasText: "Check a document" });
     await card.getByLabel("document to check").fill(BOUND_TEXT);
     await card.getByRole("button", { name: "Check" }).click();
     const result = card.locator(".binding-result");
     await expect(result).toHaveClass(/ok/);
     await expect(result.locator(".binding-result-mark svg")).toHaveCount(1);
-    await expect(result).toContainText("not who wrote it");
+    await expect(result).toContainText("Same wording as the signed text.");
   });
 
   test("editing the box clears a stale result and Check stamps a time", async ({ page }) => {

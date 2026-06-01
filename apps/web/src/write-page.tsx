@@ -153,6 +153,12 @@ export function WritePage() {
     return () => { cancelled = true; };
   }, [createSession, registry]);
 
+  // Put the cursor in the canvas as soon as the session is ready, so landing
+  // on /write means you can start typing without clicking it first.
+  useEffect(() => {
+    if (status === "ready") textareaRef.current?.focus();
+  }, [status]);
+
   useEffect(() => {
     const element = textareaRef.current;
     if (!element || !session || session.state !== "active") return;
@@ -273,7 +279,7 @@ export function WritePage() {
   const canRetry = status === "error" && session?.state === "failed_upload" && signedDraft.current !== null;
   const canDiscard = eventCount > 0 || !!uploaded;
   const phase = displayPhase(status, eventCount);
-  const shortError = status === "error" ? "upload failed — try again" : null;
+  const shortError = status === "error" ? "upload failed, try again" : null;
 
   // Cmd/Ctrl+Enter triggers sign-or-retry from anywhere on the page.
   useEffect(() => {
@@ -306,7 +312,6 @@ export function WritePage() {
         className="write-canvas"
         aria-label="Writing canvas"
         placeholder=""
-        autoFocus
         disabled={status === "signing" || status === "uploaded"}
         spellCheck="true"
       />
@@ -328,11 +333,9 @@ export function WritePage() {
             disabled={!canBind}
             onChange={(event) => setBindDocument(event.target.checked)}
           />
-          <span>{canBind ? "Bind selected text, or all canvas content if nothing is selected" : "Nothing to bind — this text has no letters or digits"}</span>
+          <span>{canBind ? "Bind selected text, or all canvas content if nothing is selected" : "Nothing to bind; this text has no letters or digits"}</span>
         </label>
-        {bindDocument ? (
-          <p className="write-sign-note">The check compares wording — letters and digits — not exact text.</p>
-        ) : (
+        {bindDocument ? null : (
           <p className="write-sign-note">Signing the writing process only; no document is bound to this record.</p>
         )}
         <div className="write-sign-actions">
