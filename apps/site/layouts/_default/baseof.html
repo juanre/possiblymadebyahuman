@@ -182,17 +182,24 @@
         color: var(--pencil);
         margin: 0.4rem 0 0;
       }
-      .home-figure { margin: 0; align-self: start; }
+      .home-figure { margin: 0; align-self: start; position: relative; }
+      .home-figure picture { display: block; }
+      .home-figure .fig-original { position: absolute; inset: 0; }
       .home-figure img {
         display: block;
         width: 100%;
         height: auto;
         transform: rotate(-1deg);
-        transition: transform 180ms cubic-bezier(.4,0,.2,1);
+        transition: transform 180ms cubic-bezier(.4,0,.2,1), opacity 200ms ease;
         filter: drop-shadow(0 4px 12px rgba(60, 40, 20, 0.08));
       }
+      .home-figure .fig-original img { opacity: 0; }
       .home-figure:hover img,
       .home-figure:focus-within img { transform: rotate(0.4deg) translateY(-1px); }
+      .home-figure:hover .fig-post img,
+      .home-figure:focus-within .fig-post img { opacity: 0; }
+      .home-figure:hover .fig-original img,
+      .home-figure:focus-within .fig-original img { opacity: 1; }
       .home-prose { margin: 2.6rem 0 1.6rem; max-width: 520px; }
       .home-prose > p {
         margin: 0 0 1.6rem;
