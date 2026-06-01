@@ -174,7 +174,7 @@ test("browser extension release docs define package artifact and store plan", as
     "Draft Chrome Web Store listing copy",
     "Draft privacy and data-use disclosure answers",
     "Permission-justification template",
-    "Release-readiness summary at frontend tip",
+    "Release-readiness summary at CWS-prep tip",
     "Human-input blocker packet for `.26`",
     "No fake, placeholder, or \"coming soon\" install URL",
     "not an AI detector",

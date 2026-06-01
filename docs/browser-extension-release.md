@@ -43,10 +43,8 @@ icons/48.png
 icons/128.png
 ```
 
-The icon files are generated build placeholders for package-shape validation
-(solid-colour PNGs produced by `scripts/build.mjs`). Human-approved
-pencil-figure-derived icons must replace them before Chrome Web Store
-submission — see `docs/chrome-web-store-prep.md` item 3.
+The icon files are PMBAH pencil-figure-derived PNGs copied from
+`apps/browser-extension/icons/` by `scripts/build.mjs`.
 
 ## Local build and package
 

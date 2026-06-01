@@ -47,9 +47,14 @@ test("browser extension package command creates deterministic Chrome zip without
   const manifest = JSON.parse(readEntry(second, entries, "manifest.json").toString("utf8"));
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.description, "Content-blind writing records for text fields.");
   assert.deepEqual(manifest.permissions, ["storage", "clipboardWrite", "alarms"]);
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);
   assert.equal(manifest.background.service_worker, "service-worker.js");
+
+  assertPngIcon(readEntry(second, entries, "icons/16.png"), 500);
+  assertPngIcon(readEntry(second, entries, "icons/48.png"), 1000);
+  assertPngIcon(readEntry(second, entries, "icons/128.png"), 10000);
 
   const serviceWorker = readEntry(second, entries, "service-worker.js").toString("utf8");
   assert.match(serviceWorker, /https:\/\/possiblymadebyahuman\.com/);
@@ -68,6 +73,11 @@ test("browser extension build normalizes EXT_BASE_URL for configured package bui
 
 function sha256(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
+}
+
+function assertPngIcon(buffer, minBytes) {
+  assert.ok(buffer.length >= minBytes, `icon should be real artwork, got ${buffer.length} bytes`);
+  assert.deepEqual([...buffer.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 }
 
 function parseZipEntries(buffer) {
