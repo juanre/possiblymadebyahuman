@@ -10,9 +10,13 @@ title: "possiblymadebyahuman"
     <h2 class="home-counter">But we can record the writing process, and sign it for you.</h2>
   </div>
   <figure class="home-figure">
-    <picture>
+    <picture class="fig-post">
+      <source type="image/webp" srcset="/images/post-llm-600.webp 600w, /images/post-llm-1200.webp 1200w" sizes="(max-width: 640px) 40vw, 220px">
+      <img src="/images/post-llm-1200.png" srcset="/images/post-llm-600.png 600w, /images/post-llm-1200.png 1200w" sizes="(max-width: 640px) 40vw, 220px" alt="Hand-drawn stick figure in a beret carrying a canvas with an infinity symbol." width="600" height="800" loading="eager" decoding="async">
+    </picture>
+    <picture class="fig-original" aria-hidden="true">
       <source type="image/webp" srcset="/images/pmbah-figure-600.webp 600w, /images/pmbah-figure-1200.webp 1200w" sizes="(max-width: 640px) 40vw, 220px">
-      <img src="/images/pmbah-figure-1200.jpg" srcset="/images/pmbah-figure-600.jpg 600w, /images/pmbah-figure-1200.jpg 1200w" sizes="(max-width: 640px) 40vw, 220px" alt="Hand-drawn pencil stick figure on graph paper, wearing a beret, carrying a canvas with an infinity symbol on it." width="600" height="800" loading="eager" decoding="async">
+      <img src="/images/pmbah-figure-1200.jpg" srcset="/images/pmbah-figure-600.jpg 600w, /images/pmbah-figure-1200.jpg 1200w" sizes="(max-width: 640px) 40vw, 220px" alt="" width="600" height="800" loading="eager" decoding="async">
     </picture>
   </figure>
 </section>
