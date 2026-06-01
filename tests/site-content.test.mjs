@@ -10,7 +10,6 @@ const read = (path) => readFile(path, "utf8");
 
 const requiredDocPages = [
   "what-pmbah-does.md",
-  "claims.md",
   "privacy.md",
   "terms.md",
   "records.md",
@@ -26,7 +25,6 @@ const sectionsCoveringProductPromise = [
   { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/write", "/docs/emacs/"] },
   { file: "docs/emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open a writing buffer", "length-derived stats may be unknown"] },
   { file: "docs/what-pmbah-does.md", needs: ["the words stay with you", "without actually storing your text", "do not prove that you wrote it"] },
-  { file: "docs/claims.md", needs: ["We claim", "We do not claim"] },
   { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system", "chrome.storage.local", "bearer", "Server-observed checkpoints", "GitHub issues"] },
   { file: "docs/terms.md", needs: ["MIT licensed", "provided as-is", "no public deletion API", "not a detector", "Identity and authorship assertions", "Moderation and removal", "project issue tracker"] },
   { file: "docs/records.md", needs: ["buffer mutation", "short_signature", "Hash chain", "Reserved route prefixes"] },

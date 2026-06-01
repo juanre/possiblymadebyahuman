@@ -26,7 +26,6 @@ content/
   docs/
     _index.md                # docs section index
     what-pmbah-does.md
-    claims.md
     privacy.md
     records.md
     verification.md

@@ -13,7 +13,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 
 - A content-blind writing-record producer plus an ingest endpoint that stores those records and serves them at hash-addressed URLs.
 - The producer never reads the text of what you write; the public record contains only the shape of the editing (positions, lengths, timing, source attribution), a BLAKE3 hash chain over those events, and a small `capture_context` block you reviewed before signing. See the [privacy page](/docs/privacy/) for the full data inventory.
-- The service makes no claim about whether a human wrote anything. It is **not a detector**, and it does not issue a verdict, score, badge, or certificate. The [claims page](/docs/claims/) lists exactly what is and is not asserted.
+- The service makes no claim about whether a human wrote anything. It is **not a detector**, and it does not issue a verdict, score, badge, or certificate.
 
 ## Service is provided as-is
 
