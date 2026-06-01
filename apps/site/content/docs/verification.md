@@ -1,6 +1,8 @@
 ---
 title: "How to verify a record"
 summary: "Recompute the record's BLAKE3 hash in your own browser and compare it to the stored hash."
+group: "Read and verify a record"
+weight: 2
 ---
 
 Every public record page includes a **Signature & details** section. A record's signature is its BLAKE3 hash, and the short record URL is derived from that hash. When the page loads, it recomputes the hash from the stored events in your own browser and shows the result next to the stored hash, so the "Computed hash" row is your own re-derivation rather than something the server asserts. Nothing you do here is uploaded.

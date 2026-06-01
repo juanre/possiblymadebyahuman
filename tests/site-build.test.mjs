@@ -20,7 +20,7 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
     const expected = [
       "index.html",
       "docs/index.html",
-      "docs/product-promise/index.html",
+      "docs/what-pmbah-does/index.html",
       "docs/claims/index.html",
       "docs/privacy/index.html",
       "docs/records/index.html",

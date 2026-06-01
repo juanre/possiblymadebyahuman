@@ -2,6 +2,8 @@
 title: "Write in Emacs"
 summary: "Native pmbah-mode for content-blind writing records from GNU Emacs."
 eyebrow: "Producer"
+group: "Write a record"
+weight: 2
 ---
 
 `pmbah-mode` is a buffer-local minor mode for GNU Emacs 29.1+ that records the shape of your editing as a content-blind process record. When you choose to sign, it uploads only the public, content-blind manifest and event log to the configured ingest service and copies the returned record URL to your kill ring. Nothing about what you typed leaves your machine; only the shape of the editing does.

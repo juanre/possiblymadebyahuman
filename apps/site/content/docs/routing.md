@@ -1,6 +1,8 @@
 ---
 title: "Deployment and routing"
 summary: "How `/`, `/docs/*`, `/write`, `/api/*`, and `/<short_signature>` are served from a single container."
+group: "For implementers"
+weight: 2
 ---
 
 The public service runs as **one Docker container** that serves three things:

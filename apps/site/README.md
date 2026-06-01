@@ -25,7 +25,7 @@ content/
   _index.md                  # landing page
   docs/
     _index.md                # docs section index
-    product-promise.md
+    what-pmbah-does.md
     claims.md
     privacy.md
     records.md

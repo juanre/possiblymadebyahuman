@@ -1,6 +1,8 @@
 ---
 title: "Terms / Service Notes"
-summary: "What you can expect from this service, and what the service expects from you. v0, candid."
+summary: "What you can expect from this service, and what the service expects from you."
+group: "Policies"
+weight: 1
 ---
 
 This is a lightweight v0 statement of what `possiblymadebyahuman` is and isn't as a hosted service. It is intentionally short. The code that runs the service is [open source, MIT licensed](https://github.com/juanre/possiblymadebyahuman/blob/main/LICENSE), but the MIT licence covers the code; it does not by itself describe how the hosted service behaves. This page does.

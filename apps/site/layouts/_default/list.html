@@ -2,15 +2,19 @@
   <p class="eyebrow">{{ .Section | humanize }}</p>
   <h1>{{ .Title }}</h1>
   {{ .Content }}
-  {{ $pages := .Pages }}
-  {{ if $pages }}
-    <ul class="page-list">
-      {{ range $pages.ByTitle }}
-        <li>
-          <a href="{{ .RelPermalink }}">{{ .Title }}</a>
-          {{ with .Params.summary }}<div class="summary">{{ . }}</div>{{ end }}
-        </li>
-      {{ end }}
-    </ul>
+  {{ $groups := slice "Start here" "Write a record" "Read and verify a record" "How it holds up" "For implementers" "Policies" }}
+  {{ range $group := $groups }}
+    {{ $inGroup := where $.Pages "Params.group" $group }}
+    {{ with $inGroup }}
+      <h2 class="page-group">{{ $group }}</h2>
+      <ul class="page-list">
+        {{ range .ByWeight }}
+          <li>
+            <a href="{{ .RelPermalink }}">{{ .Title }}</a>
+            {{ with .Params.summary }}<div class="summary">{{ . }}</div>{{ end }}
+          </li>
+        {{ end }}
+      </ul>
+    {{ end }}
   {{ end }}
 {{ end }}

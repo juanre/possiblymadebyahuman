@@ -604,7 +604,7 @@ export function RecordSignet({ record }: { record: RecordApiResponse }) {
           </p>
         </div>
       </div>
-      <p className="signet-orient">A timestamped, tamper-evident record of how this text was written. <a href="/docs/product-promise/">What is this?</a></p>
+      <p className="signet-orient">A timestamped, tamper-evident record of how this text was written. <a href="/docs/what-pmbah-does/">What is this?</a></p>
     </header>
   );
 }
@@ -617,7 +617,7 @@ export function RecordFooter() {
       <p className="record-footer-tagline">We cannot prove a human wrote it. But we can record the writing process, and sign it for you.</p>
       <nav className="record-footer-links" aria-label="Site">
         <a href="/">Home</a>
-        <a href="/docs/product-promise/">What this is</a>
+        <a href="/docs/what-pmbah-does/">What this is</a>
         <a href="/docs/checking-a-document/">How checking works</a>
         <a href="/docs/verification/">Verify a record</a>
         <a href="https://github.com/juanre/possiblymadebyahuman" rel="noopener">Source</a>

@@ -1,11 +1,11 @@
 ---
 title: "Threat model"
 summary: "Who and what this product can and cannot defend against."
+group: "How it holds up"
+weight: 1
 ---
 
-A threat model is what keeps a system disciplined. This is ours, deliberately short.
-
-## Who we are trying to be useful to
+## Who this is for
 
 - An author who wants to show *some* of the work behind a piece of writing, without handing over the writing itself.
 - A reader who wants to look at the editing process behind something they were given.

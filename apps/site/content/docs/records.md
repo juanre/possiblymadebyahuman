@@ -1,6 +1,8 @@
 ---
 title: "Records and short signatures"
 summary: "How a buffer mutation log becomes a hash-addressed record with a short, shareable URL."
+group: "Read and verify a record"
+weight: 1
 ---
 
 ## The primitive: a buffer mutation

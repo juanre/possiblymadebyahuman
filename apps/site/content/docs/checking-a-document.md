@@ -1,6 +1,8 @@
 ---
 title: "Bind and check a document"
-summary: "Optionally bind the text you signed to a record, and let a reader check a document against it in their browser, comparing wording, not exact text."
+summary: "Bind the text you signed to a record, and let a reader check a document against it in their browser."
+group: "Write a record"
+weight: 3
 ---
 
 A writing record shows the *shape* of an editing process. On its own it is not tied to any particular finished document; the URL could be pasted next to anything. **Binding** closes that gap: when you sign, you can commit the record to the specific text you wrote, so a reader can later check whether a document they were given is that text.

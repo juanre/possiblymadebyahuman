@@ -1,6 +1,8 @@
 ---
 title: "What we claim, and do not claim"
-summary: "A short, candid list of what the record means and what it deliberately does not mean."
+summary: "What the record means, and what it does not."
+group: "Start here"
+weight: 2
 ---
 
 ## We claim

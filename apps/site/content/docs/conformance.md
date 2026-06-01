@@ -1,6 +1,8 @@
 ---
 title: "Producer conformance"
 summary: "What it takes for a producer (browser extension, Emacs minor mode, or anything else) to be considered conformant."
+group: "For implementers"
+weight: 1
 ---
 
 `possiblymadebyahuman` is producer-agnostic. The browser extension and the Emacs minor mode are the first two implementations, and others can follow. To stay consistent with the public format, every producer must clear the same checks.
