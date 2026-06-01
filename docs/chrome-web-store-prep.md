@@ -333,10 +333,14 @@ each unlocks the next.
    - The package includes PMBAH pencil-figure-derived PNG icons generated from
      `apps/site/static/images/pmbah-figure-1200.jpg` and committed under
      `apps/browser-extension/icons/`.
+   - The Chrome Web Store listing icon is the PMBAH infinity mark committed at
+     `apps/browser-extension/store-assets/chrome-web-store-icon-128.png`.
    - Required sizes per current Chrome Web Store policy: 128 (listing tile),
      and the in-product 16 / 48 / 128 set already in the manifest.
-   - Icon source: `apps/site/static/images/pmbah-figure-1200.jpg` →
+   - In-product icon source: `apps/site/static/images/pmbah-figure-1200.jpg` →
      `apps/browser-extension/icons/{16,48,128}.png`.
+   - Store listing icon source: `apps/site/static/icon-512.png` →
+     `apps/browser-extension/store-assets/chrome-web-store-icon-128.png`.
 
 4. **Screenshots for the listing (Juan after sideload).**
    - Chrome Web Store currently requires at least one 1280×800 or 640×400
