@@ -247,6 +247,34 @@ test("/write can sign the process only, binding no document", async ({ page }) =
   expect(verifyRecord({ manifest: uploadedPayload.manifest, events: uploadedPayload.events }).valid).toBe(true);
 });
 
+test("/write keeps your writing after signing and offers to copy it", async ({ page }) => {
+  await page.route("**/api/observed-sessions/*/checkpoints", async (route) => {
+    const body = route.request().postDataJSON();
+    const observedSessionId = new URL(route.request().url()).pathname.split("/").at(-2);
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ observed_session_id: observedSessionId, token: "k".repeat(32), checkpoint_id: "keep-cp", event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
+    });
+  });
+  await page.route("**/api/records", async (route) => {
+    const payload = route.request().postDataJSON();
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: payload.manifest.record_hash, short_signature: "keeptext1", url: "http://127.0.0.1:4173/keeptext1", created: true }) });
+  });
+
+  await page.goto("/write");
+  await expect(page.locator(".write-modeline")).toContainText("idle");
+  await page.keyboard.type("My precious writing.");
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
+  await expect(page.getByText("open record →")).toBeVisible();
+
+  // Signing must NOT wipe the canvas; the writer keeps their words.
+  await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveValue("My precious writing.");
+  // And there is a button to copy the writing to the clipboard.
+  await expect(page.getByRole("button", { name: "copy text" })).toBeVisible();
+});
+
 test("/write focuses the canvas on load so you can type without clicking", async ({ page }) => {
   await page.goto("/write");
   // Wait for the local session to be ready (modeline reads "idle"); the app

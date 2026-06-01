@@ -231,7 +231,6 @@ export function WritePage() {
       setStatus("uploaded");
       setMessage("Record uploaded. The link points to the public writing-process record; it contains no document text.");
       void navigator.clipboard?.writeText(response.url).catch(() => undefined);
-      if (textareaRef.current) textareaRef.current.value = "";
       signedDraft.current = null;
       setSession(registry.get(session.session_id) ?? null);
     } catch (error) {
@@ -259,6 +258,10 @@ export function WritePage() {
   }, []);
 
   const reset = useCallback(async () => {
+    const hasText = (textareaRef.current?.value ?? "").length > 0;
+    if (hasText && !window.confirm(`Clear the canvas and start a new draft? Your writing will be removed from the page. Use "copy text" first if you want to keep it.`)) {
+      return;
+    }
     signedDraft.current = null;
     if (textareaRef.current) textareaRef.current.value = "";
     registry.load(registry.snapshot().filter((entry) => entry.session_id !== session?.session_id));
@@ -272,6 +275,13 @@ export function WritePage() {
     await navigator.clipboard?.writeText(uploaded.url);
     setMessage("Link copied.");
   }, [uploaded]);
+
+  const copyText = useCallback(async () => {
+    const text = textareaRef.current?.value ?? "";
+    if (!text) return;
+    await navigator.clipboard?.writeText(text);
+    setMessage("Your writing was copied to the clipboard.");
+  }, []);
 
   const eventCount = session?.events.length ?? 0;
   const elapsed = session && eventCount > 0 ? Math.max(0, session.events.at(-1)?.t ?? 0) : 0;
@@ -312,7 +322,8 @@ export function WritePage() {
         className="write-canvas"
         aria-label="Writing canvas"
         placeholder=""
-        disabled={status === "signing" || status === "uploaded"}
+        disabled={status === "signing"}
+        readOnly={status === "uploaded"}
         spellCheck="true"
       />
     </div>
@@ -369,6 +380,7 @@ export function WritePage() {
         </> : null}
       </span>
       <span className="ml-right">
+        {canDiscard ? <button className="ml-button" type="button" onClick={copyText}>copy text</button> : null}
         {uploaded ? <button className="ml-button" type="button" onClick={copyLink}>copy link</button> : null}
         {!uploaded ? (
           <button
