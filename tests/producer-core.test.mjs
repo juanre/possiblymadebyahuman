@@ -324,6 +324,33 @@ test("10. failed upload retains events and reason; retry clears the reason on su
   assert.equal(registry.get(session.session_id).state, "uploaded");
 });
 
+test("reopen resumes an uploaded session so editing and re-signing continue the same record", () => {
+  const { registry, clock } = makeRegistry();
+  clock.set(0);
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" });
+  const firstDraft = registry.sign(session.session_id);
+  registry.markUploading(session.session_id);
+  registry.markUploaded(session.session_id, { record_hash: firstDraft.manifest.record_hash, short_signature: "First12345", url: "https://example.test/First12345", created: true });
+  assert.equal(registry.get(session.session_id).state, "uploaded");
+  assert.equal(firstDraft.events.length, 1);
+
+  const reopened = registry.reopen(session.session_id);
+  assert.equal(reopened.state, "active");
+  assert.equal(reopened.events.length, 1, "events are kept across reopen");
+  assert.equal(registry.get(session.session_id).uploaded_response, undefined);
+
+  // Continue writing and sign again: the new record covers the whole process.
+  registry.appendMutation(session.session_id, { op: "insert", pos: 3, del_len: 0, ins_len: 2, source: "typing" });
+  const secondDraft = registry.sign(session.session_id);
+  assert.equal(secondDraft.events.length, 2, "re-signed record spans original + new edits");
+  assert.notEqual(secondDraft.manifest.record_hash, firstDraft.manifest.record_hash);
+
+  // reopen is only valid from an uploaded session.
+  assert.throws(() => registry.reopen(session.session_id), SessionFrozenError);
+});
+
 test("11. signing one session leaves siblings active and writable", () => {
   const { registry, clock } = makeRegistry();
   clock.set(0);

@@ -270,10 +270,22 @@ export function WritePage() {
     await createSession();
   }, [createSession, registry, session]);
 
+  const keepEditing = useCallback(() => {
+    if (!session) return;
+    registry.reopen(session.session_id);
+    void registry.persist();
+    signedDraft.current = null;
+    setUploaded(null);
+    setStatus("ready");
+    setMessage("Back to editing. Make changes and sign again to record the updated writing.");
+    setSession(registry.get(session.session_id) ?? null);
+    textareaRef.current?.focus();
+  }, [registry, session]);
+
   const copyLink = useCallback(async () => {
     if (!uploaded) return;
     await navigator.clipboard?.writeText(uploaded.url);
-    setMessage("Link copied.");
+    setMessage("Signature copied to the clipboard.");
   }, [uploaded]);
 
   const copyText = useCallback(async () => {
@@ -331,7 +343,7 @@ export function WritePage() {
     {uploaded ? (
       <div className="write-result" role="status" aria-live="polite">
         <a className="write-result-link" href={uploaded.url} target="_blank" rel="noopener noreferrer">{uploaded.url}</a>
-        <a className="write-result-arrow" href={uploaded.url} target="_blank" rel="noopener noreferrer">open record →</a>
+        <a className="write-result-arrow" href={uploaded.url} target="_blank" rel="noopener noreferrer">open signature →</a>
       </div>
     ) : null}
 
@@ -381,7 +393,8 @@ export function WritePage() {
       </span>
       <span className="ml-right">
         {canDiscard ? <button className="ml-button" type="button" onClick={copyText}>copy text</button> : null}
-        {uploaded ? <button className="ml-button" type="button" onClick={copyLink}>copy link</button> : null}
+        {uploaded ? <button className="ml-button" type="button" onClick={copyLink}>copy signature</button> : null}
+        {uploaded ? <button className="ml-button" type="button" onClick={keepEditing}>keep editing</button> : null}
         {!uploaded ? (
           <button
             className="ml-button ml-primary"

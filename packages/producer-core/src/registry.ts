@@ -271,6 +271,22 @@ export class SessionRegistry {
   }
 
   /**
+   * Resume editing a session that was already signed and uploaded. The recorded
+   * events are kept, so continuing to write and signing again produces a record
+   * of the whole writing process so far, not just the new edits. The previously
+   * uploaded record is unaffected; observation restarts for the resumed pass.
+   */
+  reopen(session_id: SessionId): SessionRecord {
+    const record = this.#requireInState(session_id, ["uploaded"]);
+    record.state = "active";
+    record.uploaded_response = undefined;
+    record.last_failure_reason = undefined;
+    record.observation = emptyObservation(this.#checkpoint !== null);
+    record.last_edit_wall_ms = this.#clock.now();
+    return cloneSession(record);
+  }
+
+  /**
    * Drops a specific session immediately. User-driven (e.g. "discard this draft"
    * from a popup), distinct from the time-based `sweep`. Returns the removed
    * record so callers can persist a tombstone or surface a confirmation.

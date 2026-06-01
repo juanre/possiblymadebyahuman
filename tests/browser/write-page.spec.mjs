@@ -55,7 +55,7 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
   await page.getByRole("button", { name: "sign", exact: true }).click();
   await page.getByRole("button", { name: "sign & upload" }).click();
 
-  await expect(page.getByText("open record →")).toBeVisible();
+  await expect(page.getByText("open signature →")).toBeVisible();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/writetest1" })).toBeVisible();
 
   expect(uploadedPayload, "record upload payload captured").toBeTruthy();
@@ -267,7 +267,7 @@ test("/write keeps your writing after signing and offers to copy it", async ({ p
   await page.keyboard.type("My precious writing.");
   await page.getByRole("button", { name: "sign", exact: true }).click();
   await page.getByRole("button", { name: "sign & upload" }).click();
-  await expect(page.getByText("open record →")).toBeVisible();
+  await expect(page.getByText("open signature →")).toBeVisible();
 
   // Signing must NOT wipe the canvas; the writer keeps their words.
   await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveValue("My precious writing.");
