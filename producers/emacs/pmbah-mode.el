@@ -169,30 +169,52 @@ Capture remains enabled and a fresh session starts from the next edit."
     (pmbah--start-session)
     (message "PMBAH session discarded; new session %s started" pmbah--session-id)))
 
+(defun pmbah--y-or-n-p-default-yes (prompt)
+  "Ask PROMPT as a y/n question whose empty answer means yes."
+  (let ((query (concat (string-trim-right prompt) " [Y/n] "))
+        answer)
+    (catch 'done
+      (while t
+        (setq answer (downcase (string-trim (read-from-minibuffer query))))
+        (cond
+         ((or (string-empty-p answer) (member answer '("y" "yes")))
+          (throw 'done t))
+         ((member answer '("n" "no"))
+          (throw 'done nil))
+         (t
+          (message "Please answer y or n.")))))))
+
 ;;;###autoload
-(defun pmbah-sign-buffer (&optional capture-context)
+(defun pmbah-sign-buffer (&optional capture-context no-prompts)
   "Freeze, build, upload, and copy a short URL for the current PMBAH session.
 
-Interactively, show a capture-context preview and ask before including
-identifying Emacs metadata.  CAPTURE-CONTEXT is intended for tests or advanced
-callers and must be a JSON-serializable plist."
-  (interactive)
+Interactively, ask y/n questions with yes as the default.  With a prefix
+argument, do not ask those questions; use the default yes answers.  If binding
+is enabled, bind the active region when one is active; otherwise bind the whole
+buffer.  CAPTURE-CONTEXT is intended for tests or advanced callers and must be a
+JSON-serializable plist.  NO-PROMPTS is intended for interactive prefix use and
+tests."
+  (interactive (list nil current-prefix-arg))
   (unless pmbah-mode
     (user-error "Enable pmbah-mode before signing a buffer"))
   (when (= pmbah--next-seq 0)
     (user-error "No PMBAH events captured for this buffer"))
-  (let* ((context (or capture-context (pmbah-review-capture-context)))
-         (bind (and (not noninteractive) (yes-or-no-p "Bind the document text to this record? ")))
+  (let* ((context (or capture-context
+                      (if no-prompts
+                          (pmbah--capture-context t t)
+                        (pmbah-review-capture-context))))
+         (binding-has-region (use-region-p))
+         (bind-prompt (if binding-has-region
+                          "Bind the selected region to this record? "
+                        "Bind the whole buffer to this record? "))
+         (bind (if no-prompts
+                   t
+                 (and (not noninteractive) (pmbah--y-or-n-p-default-yes bind-prompt))))
          (final-text (when bind
-                       (if (use-region-p)
+                       (if binding-has-region
                            (buffer-substring-no-properties (region-beginning) (region-end))
                          (buffer-substring-no-properties (point-min) (point-max)))))
-         (bind-policy (when bind
-                        (if (yes-or-no-p "Allow extra text before or after it (e.g. a quoted header or a signature line)? ")
-                            "prefix" "exact")))
-         (_affirm (when (and bind (not (y-or-n-p "Affirm this is the text this record is meant to cover? ")))
-                    (user-error "Signing aborted")))
-         (record (pmbah-build-record-for-current-buffer context final-text bind-policy))
+         (record (pmbah-build-record-for-current-buffer context final-text))
          (response (pmbah--post-record record))
          (url (or (alist-get 'url response) (alist-get 'record_hash response))))
     (when url
@@ -204,38 +226,26 @@ callers and must be a JSON-serializable plist."
     response))
 
 (defun pmbah-review-capture-context ()
-  "Preview and collect capture context for upload.
-Absolute file paths are shown as omitted and are not included by default."
+  "Collect capture context for upload.
+Absolute file paths are omitted by default and are never included."
   (let* ((buffer-label (buffer-name))
          (mode-label (symbol-name major-mode))
          (file-label (or (buffer-file-name) "not visiting a file"))
          include-buffer-name
          include-major-mode)
-    (with-current-buffer (get-buffer-create "*PMBAH capture context*")
-      (let ((inhibit-read-only t))
-        (erase-buffer)
-        (insert "PMBAH capture context preview\n")
-        (insert "================================\n\n")
-        (insert "The public record is content-blind: it uploads mutation shape, timing, metadata, and hashes, not plaintext.\n\n")
-        (insert (format "Buffer name candidate: %s\n" buffer-label))
-        (insert (format "Major mode candidate: %s\n" mode-label))
-        (insert (format "Absolute file path: omitted by default (%s)\n" file-label))
-        (insert "\nYou will be asked before including each identifying metadata field.\n")
-        (goto-char (point-min))
-        (view-mode 1)))
-    (display-buffer "*PMBAH capture context*")
-    (setq include-buffer-name (yes-or-no-p (format "Include buffer name `%s` in capture context? " buffer-label)))
-    (setq include-major-mode (yes-or-no-p (format "Include major mode `%s` in capture context? " mode-label)))
+    (message "PMBAH upload is content-blind; absolute file path omitted (%s)" file-label)
+    (setq include-buffer-name (pmbah--y-or-n-p-default-yes (format "Include buffer name `%s` in capture context? " buffer-label)))
+    (setq include-major-mode (pmbah--y-or-n-p-default-yes (format "Include major mode `%s` in capture context? " mode-label)))
     (pmbah--capture-context include-buffer-name include-major-mode)))
 
-(defun pmbah-build-record-for-current-buffer (&optional capture-context final-text bind-policy)
+(defun pmbah-build-record-for-current-buffer (&optional capture-context final-text)
   "Build and locally verify a public PMBAH record for the current buffer.
 The returned alist contains only the public `manifest` and `events` shape.
 FINAL-TEXT, when non-nil, is handed to the local helper transiently so it can
 compute the content-blind text binding; it is never stored or uploaded."
-  (alist-get 'record (pmbah--build-record-result capture-context final-text bind-policy)))
+  (alist-get 'record (pmbah--build-record-result capture-context final-text)))
 
-(defun pmbah--build-record-result (&optional capture-context final-text bind-policy)
+(defun pmbah--build-record-result (&optional capture-context final-text)
   "Return the helper result for the current buffer, including verification facts.
 FINAL-TEXT, when a non-empty string, is passed to the local helper SOLELY to
 compute the content-blind text binding and is never persisted or uploaded."
@@ -254,7 +264,7 @@ compute the content-blind text binding and is never persisted or uploaded."
                          :duration_ms (pmbah--elapsed-ms)
                          :created_client_t (format-time-string "%FT%T%z" (current-time) t))
                    (when (and final-text (stringp final-text) (> (length final-text) 0))
-                     (list :final_text final-text :bind_policy (or bind-policy "prefix"))))))
+                     (list :final_text final-text)))))
     (pmbah--run-helper payload)))
 
 (defun pmbah--run-helper (payload)

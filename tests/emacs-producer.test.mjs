@@ -222,6 +222,119 @@ test("Emacs producer starts a fresh session after successful upload", { skip: em
   }
 });
 
+test("Emacs sign binding uses active region or whole buffer and avoids preview buffers", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-binding-scope-"));
+  const outputPath = join(temp, "binding-scope.json");
+  const scriptPath = join(temp, "binding-scope.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+
+  await writeFile(scriptPath, `;;; binding-scope.el --- PMBAH binding scope test -*- lexical-binding: t; -*-
+(require 'cl-lib)
+(load ${JSON.stringify(modePath)})
+
+(defun pmbah-test-sign-final-text (activate-region)
+  (let ((captured nil)
+        (prompts nil)
+        (answers '(t)))
+    (with-temp-buffer
+      (text-mode)
+      (insert "alpha beta gamma")
+      (pmbah-mode 1)
+      (goto-char (point-max))
+      (insert "!")
+      (when activate-region
+        (transient-mark-mode 1)
+        (goto-char (+ (point-min) 6))
+        (set-mark (point))
+        (goto-char (+ (point-min) 10))
+        (activate-mark)
+        (unless (use-region-p)
+          (error "expected active region")))
+      (cl-letf (((symbol-function 'pmbah--y-or-n-p-default-yes)
+                 (lambda (prompt)
+                   (push prompt prompts)
+                   (prog1 (car answers)
+                     (setq answers (cdr answers)))))
+                ((symbol-function 'pmbah--run-helper)
+                 (lambda (payload)
+                   (setq captured payload)
+                   (list :record (list :manifest (list :record_hash "b3:stub") :events []))))
+                ((symbol-function 'pmbah--post-record)
+                 (lambda (_record) (list :url "https://example.test/record"))))
+        (let ((noninteractive nil))
+          (pmbah-sign-buffer (list :surface "emacs"))))
+      (list :final_text (plist-get captured :final_text)
+            :prompts (vconcat (nreverse prompts))))))
+
+(defun pmbah-test-prefix-sign-no-prompts ()
+  (let ((captured nil))
+    (with-temp-buffer
+      (rename-buffer "prefix-buffer")
+      (text-mode)
+      (insert "prefix ")
+      (pmbah-mode 1)
+      (insert "body")
+      (cl-letf (((symbol-function 'pmbah--y-or-n-p-default-yes)
+                 (lambda (prompt)
+                   (error "unexpected prompt: %s" prompt)))
+                ((symbol-function 'pmbah--run-helper)
+                 (lambda (payload)
+                   (setq captured payload)
+                   (list :record (list :manifest (list :record_hash "b3:stub") :events []))))
+                ((symbol-function 'pmbah--post-record)
+                 (lambda (_record) (list :url "https://example.test/record"))))
+        (let ((noninteractive nil)
+              (current-prefix-arg '(4)))
+          (call-interactively #'pmbah-sign-buffer)))
+      captured)))
+
+(when (get-buffer "*PMBAH capture context*")
+  (kill-buffer "*PMBAH capture context*"))
+(let ((context nil)
+      (answers '(nil nil)))
+  (cl-letf (((symbol-function 'pmbah--y-or-n-p-default-yes)
+             (lambda (_prompt)
+               (prog1 (car answers)
+                 (setq answers (cdr answers))))))
+    (setq context (pmbah-review-capture-context)))
+  (let* ((region-result (pmbah-test-sign-final-text t))
+         (whole-result (pmbah-test-sign-final-text nil))
+         (prefix-payload (pmbah-test-prefix-sign-no-prompts))
+         (output (list :region_text (plist-get region-result :final_text)
+                       :whole_buffer_text (plist-get whole-result :final_text)
+                       :region_prompts (plist-get region-result :prompts)
+                       :whole_buffer_prompts (plist-get whole-result :prompts)
+                       :prefix_final_text (plist-get prefix-payload :final_text)
+                       :prefix_context (plist-get prefix-payload :capture_context)
+                       :default_yes_answer (cl-letf (((symbol-function 'read-from-minibuffer) (lambda (_prompt) "")))
+                                             (pmbah--y-or-n-p-default-yes "Default? "))
+                       :explicit_no_answer (cl-letf (((symbol-function 'read-from-minibuffer) (lambda (_prompt) "n")))
+                                             (if (pmbah--y-or-n-p-default-yes "No? ") t :json-false))
+                       :context context
+                       :preview_buffer_exists (if (get-buffer "*PMBAH capture context*") t :json-false))))
+    (with-temp-file ${JSON.stringify(outputPath)}
+      (insert (pmbah--json-encode output)))))
+`);
+
+  try {
+    const result = runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.region_text, "beta");
+    assert.equal(output.whole_buffer_text, "alpha beta gamma!");
+    assert.equal(output.region_prompts[0], "Bind the selected region to this record? ");
+    assert.equal(output.whole_buffer_prompts[0], "Bind the whole buffer to this record? ");
+    assert.equal(output.prefix_final_text, "prefix body");
+    assert.deepEqual(output.prefix_context, { surface: "emacs", emacs: { buffer_name: "prefix-buffer", major_mode: "text-mode" } });
+    assert.equal(output.default_yes_answer, true);
+    assert.equal(output.explicit_no_answer, false);
+    assert.deepEqual(output.context, { surface: "emacs" });
+    assert.equal(output.preview_buffer_exists, false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Emacs helper payload contains only process metadata", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-payload-"));
   const outputPath = join(temp, "payload.json");
@@ -319,7 +432,6 @@ test("Emacs helper seals a content-blind text binding from transient final text 
     ],
     duration_ms: 90,
     final_text: `Hello there, ${marker} — this is the buffer text.`,
-    bind_policy: "prefix",
     created_client_t: "2026-05-28T00:00:00.000Z",
   };
   const result = spawnSync(process.execPath, [helperPath], {
@@ -334,7 +446,7 @@ test("Emacs helper seals a content-blind text binding from transient final text 
   const binding = output.record.manifest.text_binding;
   assert.equal(output.record.manifest.format_version, "0.2");
   assert.equal(binding.scheme, "canon-letters/0.1");
-  assert.equal(binding.policy, "prefix");
+  assert.equal(Object.hasOwn(binding, "policy"), false);
   assert.ok(binding.canonical_length > 0);
   // The transient final text must not survive into the helper output anywhere.
   const serialized = JSON.stringify(output);

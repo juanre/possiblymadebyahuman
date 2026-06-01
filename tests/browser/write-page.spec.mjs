@@ -68,7 +68,7 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
   expect(uploadedPayload.manifest.format_version).toBe("0.2");
   expect(uploadedPayload.manifest.text_binding).toBeTruthy();
   expect(uploadedPayload.manifest.text_binding.scheme).toBe("canon-letters/0.1");
-  expect(uploadedPayload.manifest.text_binding.policy).toBe("prefix");
+  expect(uploadedPayload.manifest.text_binding).not.toHaveProperty("policy");
   // "A🙂B" canonicalizes to "ab" (emoji dropped, casefolded) -> 2 codepoints.
   expect(uploadedPayload.manifest.text_binding.canonical_length).toBe(2);
 

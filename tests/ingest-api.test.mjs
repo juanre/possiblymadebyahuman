@@ -145,7 +145,7 @@ test("POST and GET preserve a sealed text_binding without plaintext", async () =
 test("ingest rejects text_binding tampering that breaks the sealed record_hash", async () => {
   const { api } = makeApi();
   const record = await textBindingRecord();
-  record.manifest.text_binding.policy = "exact";
+  record.manifest.text_binding.commitment = `${record.manifest.text_binding.commitment.slice(0, -1)}${record.manifest.text_binding.commitment.endsWith("0") ? "1" : "0"}`;
 
   const response = await api.postRecord(record);
   assert.equal(response.status, 400);

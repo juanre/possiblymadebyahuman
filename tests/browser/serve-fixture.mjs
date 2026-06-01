@@ -136,7 +136,7 @@ const fixtureRecord = { manifest: record.manifest, events: record.events, stats,
 // commitment to verify against. record_hash is resealed over the binding so
 // the chain still verifies in the browser.
 const boundSessionId = record.manifest.session_id;
-const boundBinding = createTextBinding(BOUND_TEXT, boundSessionId, "prefix");
+const boundBinding = createTextBinding(BOUND_TEXT, boundSessionId);
 
 // A richer synthetic process for the demo so the writing-rhythm fingerprint has
 // real shape: a typing cadence (~60-200ms gaps), a couple of pastes, small
