@@ -330,8 +330,8 @@ export function WritePage() {
 
     {uploaded ? (
       <div className="write-result" role="status" aria-live="polite">
-        <a className="write-result-link" href={uploaded.url}>{uploaded.url}</a>
-        <span className="write-result-arrow">open record →</span>
+        <a className="write-result-link" href={uploaded.url} target="_blank" rel="noopener noreferrer">{uploaded.url}</a>
+        <a className="write-result-arrow" href={uploaded.url} target="_blank" rel="noopener noreferrer">open record →</a>
       </div>
     ) : null}
 

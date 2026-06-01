@@ -395,7 +395,8 @@ section.card[aria-label="Check a document"] {
   padding-bottom: 1px;
 }
 .write-result-link:hover, .write-result-link:focus-visible { color: #5a3819; border-bottom-color: #8b5e34; outline: none; }
-.write-result-arrow { color: #756b60; font-size: 0.86rem; }
+.write-result-arrow { color: #756b60; font-size: 0.86rem; text-decoration: none; }
+.write-result-arrow:hover, .write-result-arrow:focus-visible { color: #5a3819; outline: none; }
 @keyframes write-result-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
