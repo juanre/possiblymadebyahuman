@@ -10,6 +10,7 @@ title: "possiblymadebyahuman"
     <h2 class="home-counter">But we can record the writing process, and sign it for you.</h2>
   </div>
   <figure class="home-figure">
+    <input type="checkbox" class="fig-reveal" id="hero-reveal" aria-label="See the original hand drawing">
     <picture class="fig-post">
       <source type="image/webp" srcset="/images/post-llm-600.webp 600w, /images/post-llm-1200.webp 1200w" sizes="(max-width: 640px) 40vw, 220px">
       <img src="/images/post-llm-1200.png" srcset="/images/post-llm-600.png 600w, /images/post-llm-1200.png 1200w" sizes="(max-width: 640px) 40vw, 220px" alt="Hand-drawn stick figure in a beret carrying a canvas with an infinity symbol." width="600" height="800" loading="eager" decoding="async">
@@ -41,3 +42,17 @@ Oh well. It cannot be done but we are doing it anyway. You can at least assert t
   <a class="home-cta" href="/write">Write in the browser</a>
   <a class="home-cta" href="/docs/emacs/">Write in Emacs</a>
 </p>
+
+<figure class="closer-figure">
+  <input type="checkbox" class="fig-reveal" id="closer-reveal" aria-label="See the finished painting">
+  <div class="closer-fig-media">
+    <picture class="closer-fig-sketch">
+      <source type="image/webp" srcset="/images/sitting-drawing-600.webp 600w, /images/sitting-drawing-1200.webp 1200w" sizes="(max-width: 640px) 70vw, 260px">
+      <img src="/images/sitting-drawing-1200.png" srcset="/images/sitting-drawing-600.png 600w, /images/sitting-drawing-1200.png 1200w" sizes="(max-width: 640px) 70vw, 260px" alt="Hand-drawn stick figure in a beret, seated, drawing a canvas with an infinity symbol." width="600" height="750" loading="lazy" decoding="async">
+    </picture>
+    <picture class="closer-fig-painting" aria-hidden="true">
+      <source type="image/webp" srcset="/images/sitting-painting-600.webp 600w, /images/sitting-painting-1200.webp 1200w" sizes="(max-width: 640px) 70vw, 260px">
+      <img src="/images/sitting-painting-1200.jpg" srcset="/images/sitting-painting-600.jpg 600w, /images/sitting-painting-1200.jpg 1200w" sizes="(max-width: 640px) 70vw, 260px" alt="" width="600" height="750" loading="lazy" decoding="async">
+    </picture>
+  </div>
+</figure>
