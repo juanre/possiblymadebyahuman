@@ -246,3 +246,12 @@ test("/write can sign the process only, binding no document", async ({ page }) =
   expect(uploadedPayload.manifest.text_binding, "process-only sign must not bind a document").toBeUndefined();
   expect(verifyRecord({ manifest: uploadedPayload.manifest, events: uploadedPayload.events }).valid).toBe(true);
 });
+
+test("/write focuses the canvas on load so you can type without clicking", async ({ page }) => {
+  await page.goto("/write");
+  const canvas = page.getByRole("textbox", { name: "Writing canvas" });
+  await expect(canvas).toBeFocused();
+  // Typing immediately, with no click, lands in the canvas.
+  await page.keyboard.type("hello");
+  await expect(canvas).toHaveValue("hello");
+});

@@ -293,6 +293,7 @@ export function WritePage() {
         className="write-canvas"
         aria-label="Writing canvas"
         placeholder=""
+        autoFocus
         disabled={status === "signing" || status === "uploaded"}
         spellCheck="true"
       />
