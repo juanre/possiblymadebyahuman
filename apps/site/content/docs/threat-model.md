@@ -29,7 +29,7 @@ weight: 1
 
 ## What we explicitly do not do
 
-- We do not authenticate users. There are no accounts in v0.
+- We do not authenticate users. There are no accounts.
 - We do not offer public deletion. Records are permanent by default; this is acceptable only because they do not contain text or identifying user fields.
 - We do not vouch for `capture_context`. The signer chose what to include. Treat URL and title as provenance hints, not as facts.
 - We do not promise anonymity. The signer's network and producer environment may leak identity in ways outside this service's control.

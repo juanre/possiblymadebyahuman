@@ -5,7 +5,7 @@ group: "How it holds up"
 weight: 2
 ---
 
-The default mode of `possiblymadebyahuman` is **content-blind**. Public records describe the shape of an editing process. They do not contain, store, upload, or reconstruct the document's text. If the signer chooses to bind a document, the producer computes a content-blind commitment to it locally and uploads only that commitment: a salted hash of the text's canonical letters and digits, which cannot be turned back into the text. See [Bind and check a document](/docs/checking-a-document/).
+`possiblymadebyahuman` is **content-blind**. Public records describe the shape of an editing process. They do not contain, store, upload, or reconstruct the document's text. If the signer chooses to bind a document, the producer computes a content-blind commitment to it locally and uploads only that commitment: a salted hash of the text's canonical letters and digits, which cannot be turned back into the text. See [Bind and check a document](/docs/checking-a-document/).
 
 ## What public records contain
 
@@ -20,7 +20,7 @@ The default mode of `possiblymadebyahuman` is **content-blind**. Public records 
 - The text of the document. Producers may transiently inspect text in-memory to derive a numeric field (e.g. paste length), but the string is discarded in the same statement and never recorded.
 - Any text-content hash *other than* the optional `text_binding` commitment described above. The BLAKE3 chain hash is computed over the canonical *process events*, never over text; the only text-derived value a record may carry is the binding commitment, which is salted, computed locally, and cannot reconstruct the text, and only when the signer chose to bind.
 - No inserted-text hashes, per-mutation text fingerprints, or full-buffer hashes. The binding (when present) commits once to the canonical letters/digits of the selected text as a whole; nothing fingerprints individual insertions or the raw buffer.
-- Any account, email, or directly identifying user field. There is no user system in v0.
+- Any account, email, or directly identifying user field. There is no user system.
 
 ## What producers may do transiently
 
@@ -59,10 +59,10 @@ If the producer can't reach the ingest service, no checkpoints are sent and the 
 
 ## What we cannot offer
 
-- Deletion of uploaded records. There is no public deletion API in v0. Permanence is the price of not asking for an account. If a record contains material that is clearly abusive (spam, illegal content) and is reported to the maintainers, the service operator may remove it on a case-by-case basis. See [Terms / Service Notes](/docs/terms/).
+- Deletion of uploaded records. There is no public deletion API. Permanence is the price of not asking for an account. If a record contains material that is clearly abusive (spam, illegal content) and is reported to the maintainers, the service operator may remove it on a case-by-case basis. See [Terms / Service Notes](/docs/terms/).
 - Confidentiality against an attacker who already has the text: the system is about *not* uploading, hashing, or storing text, not about protecting text the signer chose to publish elsewhere.
 - A guarantee that a third party did not separately keep a copy of the writing. We can only describe what *this* service stores.
 
 ## Contact
 
-Privacy questions, ambiguities in this document, or concerns about a specific record are tracked at the project's [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues). v0 has no separate privacy contact endpoint; the issue tracker is the canonical channel.
+Privacy questions, ambiguities in this document, or concerns about a specific record are tracked at the project's [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues). There is no separate privacy contact endpoint; the issue tracker is the canonical channel.

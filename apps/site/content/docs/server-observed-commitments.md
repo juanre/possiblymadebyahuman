@@ -48,4 +48,4 @@ A reader might reasonably ask: "If the server saw a chain tip at 14:02 and anoth
 - A check the ingest service can use at finalisation: if the commitments do not match the submitted record's event-chain prefix, finalisation is rejected and no public record is published.
 - A bound that makes after-the-fact fabrication of a session materially more work. An attacker who wants to publish a record with a long server-observed span has to commit chain tips at real wall-clock cadence; they cannot fold a long span onto a single offline burst.
 
-The cadence is fixed in v0: the producer commits on the first mutation, then again after fifty new events or after sixty seconds with at least one new event since the last attempt, and once more before the final upload. The producer never sends idle heartbeats. The cadence is not user-configurable in v0.
+The cadence is fixed: the producer commits on the first mutation, then again after fifty new events or after sixty seconds with at least one new event since the last attempt, and once more before the final upload. The producer never sends idle heartbeats. The cadence is not user-configurable.

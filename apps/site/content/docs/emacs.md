@@ -29,7 +29,7 @@ weight: 2
 - Repository dependencies installed from the repo root with `npm ci` (or `make install`).
 - A running ingest service, e.g. `make local-container` for local development.
 
-The Emacs package is not on MELPA / ELPA for v0. Install from a checkout or release archive.
+The Emacs package is not on MELPA / ELPA. Install from a checkout or release archive.
 
 ## Install from a checkout
 
@@ -79,7 +79,7 @@ Change only `pmbah-checkout-root` for your checkout location.
                      pmbah-checkout-root)))
 ```
 
-Emacs 29's `package-vc-install` can fetch the Lisp code but does not install npm dependencies for the Node helper. For v0, use a manual checkout / release directory and run `npm ci` there.
+Emacs 29's `package-vc-install` can fetch the Lisp code but does not install npm dependencies for the Node helper. Use a manual checkout or release directory and run `npm ci` there.
 
 ## Configuration
 

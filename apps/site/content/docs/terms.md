@@ -5,7 +5,7 @@ group: "Policies"
 weight: 1
 ---
 
-This is a lightweight v0 statement of what `possiblymadebyahuman` is and isn't as a hosted service. It is intentionally short. The code that runs the service is [open source, MIT licensed](https://github.com/juanre/possiblymadebyahuman/blob/main/LICENSE), but the MIT licence covers the code; it does not by itself describe how the hosted service behaves. This page does.
+This page covers what `possiblymadebyahuman` is and isn't as a hosted service. The code that runs the service is [open source, MIT licensed](https://github.com/juanre/possiblymadebyahuman/blob/main/LICENSE), but the MIT licence covers the code; it does not by itself describe how the hosted service behaves. This page does.
 
 If you need formal terms (for an employer, an institution, or a use case where written assurance matters), this page is not those, and you should reach out via the [project issue tracker](https://github.com/juanre/possiblymadebyahuman/issues) to discuss before relying on the service.
 
@@ -17,7 +17,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 
 ## Service is provided as-is
 
-- v0 is provided as a best-effort service with no guarantee of availability, no guarantee of indefinite record persistence, no warranty (express or implied), no service-level agreement, no support agreement, and no commitment to backward-compatible URLs beyond what the existing record format already guarantees.
+- This is a best-effort service: no guarantee of availability, no guarantee of indefinite record persistence, no warranty (express or implied), no service-level agreement, no support agreement, and no commitment to backward-compatible URLs beyond what the existing record format already guarantees.
 - The service may go down, be rebuilt, change ingest endpoints, or be shut down. Records are produced on your machine and you keep the local event log until you choose to sign and upload; if the service is unavailable when you sign, the upload fails and you keep the local session for retry.
 - Code changes ship under the same MIT licence; service-side behaviour changes are documented in the [release docs](/docs/) and at the project's [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases).
 
@@ -26,7 +26,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 - **Don't try to break the service.** No automated abuse, mass-scraping, or attempts to overload the ingest endpoint. No attempts to inject content into other people's records. No exploitation of platform features in ways that materially degrade the service for others.
 - **Don't impersonate.** When you choose what `capture_context` to include with a record, the page URL, page title, buffer name, or major mode you upload is information *you* asserted about a session *you* signed; it is not validated by the service. Don't upload context that implies another person, organisation, or platform authored the writing.
 - **Don't upload unlawful material.** Records that contain instructions, links, or other content that is illegal in the operator's jurisdiction may be removed when reported. See the moderation section below.
-- **Respect the no-deletion model when you sign.** Once a record is uploaded, the v0 service has no public deletion API. Before you click sign, the producer shows you the capture context and lets you redact or omit it. Use that review step.
+- **Respect the no-deletion model when you sign.** Once a record is uploaded, the service has no public deletion API. Before you click sign, the producer shows you the capture context and lets you redact or omit it. Use that review step.
 
 ## What you keep
 
@@ -47,7 +47,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 
 ## Liability
 
-- To the extent permitted by law, the service is provided without warranty and without liability for indirect, incidental, or consequential damages arising from use or unavailability of the service. v0 is a hobbyist research surface; deploy your own instance if you need guarantees.
+- To the extent permitted by law, the service is provided without warranty and without liability for indirect, incidental, or consequential damages arising from use or unavailability of the service. If you need guarantees, deploy your own instance.
 
 ## Changes to this page
 
@@ -55,4 +55,4 @@ If you need formal terms (for an employer, an institution, or a use case where w
 
 ## Contact
 
-The canonical channel for v0 is the [project issue tracker](https://github.com/juanre/possiblymadebyahuman/issues). There is no separate support email. The service operator is the maintainer named in the repository.
+The canonical channel is the [project issue tracker](https://github.com/juanre/possiblymadebyahuman/issues). There is no separate support email. The service operator is the maintainer named in the repository.
