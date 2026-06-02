@@ -1,24 +1,12 @@
+# possiblymadebyahuman
+#
+# The home and docs are indexable Hugo pages. The record viewer
+# (/<signature>) and the drafting page (/write) are served by the app and
+# carry a noindex meta tag: crawlers may read them so link previews work, but
+# they stay out of the search index. The ingest API is not a content surface.
+
 User-agent: *
-Disallow: /
-
-# Allow only the Hugo-served documentation surfaces.
-# The React record viewer at /<short_signature>, the /write drafting page,
-# and /api/ are deliberately not indexed — records are immutable and
-# self-canonical, the drafting page is a per-session surface, and the API
-# is not a content endpoint.
-Allow: /$
-Allow: /docs/
-
-# Common metadata paths the crawler may still want to read directly.
-Allow: /sitemap.xml
-Allow: /robots.txt
-Allow: /favicon.svg
-Allow: /favicon.ico
-Allow: /favicon-32.png
-Allow: /apple-touch-icon.png
-Allow: /icon-192.png
-Allow: /icon-512.png
-Allow: /site.webmanifest
-Allow: /og/
+Allow: /
+Disallow: /api/
 
 Sitemap: https://possiblymadebyahuman.com/sitemap.xml

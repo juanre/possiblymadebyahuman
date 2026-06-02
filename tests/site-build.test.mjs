@@ -70,9 +70,8 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
 
     const robots = readFileSync(join(out, "robots.txt"), "utf8");
     assert.ok(robots.includes("Sitemap: https://possiblymadebyahuman.com/sitemap.xml"), "robots.txt missing Sitemap directive");
-    assert.ok(robots.includes("Disallow: /"), "robots.txt missing default Disallow");
-    assert.ok(robots.includes("Allow: /$"), "robots.txt missing root-page Allow");
-    assert.ok(robots.includes("Allow: /docs/"), "robots.txt missing /docs/ Allow");
+    assert.ok(robots.includes("Allow: /"), "robots.txt should allow crawling (record/write pages carry a noindex meta tag)");
+    assert.ok(robots.includes("Disallow: /api/"), "robots.txt should block the ingest API surface");
 
     const manifest = JSON.parse(readFileSync(join(out, "site.webmanifest"), "utf8"));
     assert.equal(manifest.name, "possiblymadebyahuman");
