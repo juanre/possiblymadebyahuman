@@ -13,10 +13,15 @@ const watch = process.argv.includes("--watch");
 const rawBaseUrl = process.env.EXT_BASE_URL || "https://possiblymadebyahuman.com";
 const normalizedBaseUrl = normalizeBaseUrl(rawBaseUrl);
 
-const entryPoints = {
+// The service worker is declared "type": "module" and the popup loads its
+// script as a module, so both may be ESM bundles. Manifest content_scripts run
+// as classic scripts, so the content bundle must be a self-contained IIFE.
+const moduleEntryPoints = {
   "service-worker": join(root, "src/background/service-worker.ts"),
-  content: join(root, "src/content/capture.ts"),
   popup: join(root, "src/popup/popup.ts"),
+};
+const contentEntryPoints = {
+  content: join(root, "src/content/capture.ts"),
 };
 
 const sharedOptions = {
@@ -40,7 +45,14 @@ async function buildOnce() {
   await Promise.all([
     build({
       ...sharedOptions,
-      entryPoints,
+      entryPoints: moduleEntryPoints,
+      outdir: dist,
+      entryNames: "[name]",
+    }),
+    build({
+      ...sharedOptions,
+      format: "iife",
+      entryPoints: contentEntryPoints,
       outdir: dist,
       entryNames: "[name]",
     }),
@@ -57,13 +69,20 @@ async function watchBuild() {
   await copyPopupHtml();
   await writeManifest();
   await writeIcons();
-  const ctx = await context({
+  const moduleContext = await context({
     ...sharedOptions,
-    entryPoints,
+    entryPoints: moduleEntryPoints,
     outdir: dist,
     entryNames: "[name]",
   });
-  await ctx.watch();
+  const contentContext = await context({
+    ...sharedOptions,
+    format: "iife",
+    entryPoints: contentEntryPoints,
+    outdir: dist,
+    entryNames: "[name]",
+  });
+  await Promise.all([moduleContext.watch(), contentContext.watch()]);
   console.log(`Watching browser extension sources in ${relativeDist()}`);
 }
 

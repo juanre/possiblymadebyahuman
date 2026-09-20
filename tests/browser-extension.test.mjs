@@ -814,3 +814,54 @@ test("dispatcher: capture-context redactions chosen at sign time are applied to 
   assert.equal(context.browser.url, "https://a.test/post");
   assert.equal(JSON.stringify(upload.calls[0]).includes("secret draft"), false);
 });
+
+
+test("dispatcher: rapid edits to a frozen session share one continuation", async () => {
+  const { dispatcher } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({ kind: "sign_session", session_id: sid });
+
+  // The content script fires appends without awaiting, so two keystrokes can
+  // both carry the frozen session id.
+  const [first, second] = await Promise.all([
+    dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" } }),
+    dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 4, del_len: 0, ins_len: 1, source: "typing" } }),
+  ]);
+  assert.equal(first.session_id, second.session_id);
+  const continuation = dispatcher.registry.get(first.session_id);
+  assert.equal(continuation.events.length, 2);
+  assert.equal(dispatcher.registry.list().filter((session) => session.state === "active").length, 1);
+});
+
+test("dispatcher: registering a field with an active continuation resumes it instead of starting another", async () => {
+  const { dispatcher } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  const continued = await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" } });
+
+  // Page re-mounts the field while the uploaded session is still within its grace period.
+  const again = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false,
+  });
+  assert.equal(again.result.session_id, continued.session_id);
+  assert.equal(dispatcher.registry.list().filter((session) => session.state === "active").length, 1);
+});

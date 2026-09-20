@@ -35,12 +35,15 @@ export function findResumableSession(
   descriptor: FieldDescriptor,
   existing: ReadonlyArray<SessionRecord>,
 ): SessionRecord | null {
-  for (const session of existing) {
-    if (session.origin.origin !== origin.origin) continue;
-    if (session.origin.path !== origin.path) continue;
-    if (session.descriptor.field_kind !== descriptor.field_kind) continue;
-    if (isExactDescriptorMatch(session.descriptor, descriptor)) return session;
-    if (isPartialDescriptorMatch(session.descriptor, descriptor)) return session;
-  }
-  return null;
+  // An active session wins over an uploaded one for the same field: the field
+  // is already being recorded and must not spawn a second continuation.
+  const candidates = existing.filter((session) =>
+    session.origin.origin === origin.origin
+    && session.origin.path === origin.path
+    && session.descriptor.field_kind === descriptor.field_kind
+    && (isExactDescriptorMatch(session.descriptor, descriptor) || isPartialDescriptorMatch(session.descriptor, descriptor)));
+  return candidates.find((session) => session.state === "active")
+    ?? candidates.find((session) => isExactDescriptorMatch(session.descriptor, descriptor))
+    ?? candidates[0]
+    ?? null;
 }

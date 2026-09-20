@@ -298,6 +298,19 @@ export class SessionRegistry {
     if (!previous.uploaded_response) {
       throw new Error(`uploaded session ${session_id} has no upload response to continue from`);
     }
+    const parentHash = previous.uploaded_response.record_hash;
+    // Edits arriving before the field learned its continuation id, or a field
+    // re-registering while the signed session is still listed, must all land in
+    // the one continuation of that record.
+    const existing = Array.from(this.#sessions.values()).find(
+      (record) => record.state === "active" && record.parent_record === parentHash,
+    );
+    if (existing) {
+      if (location.origin) existing.origin = { ...location.origin };
+      if (location.descriptor) existing.descriptor = { ...location.descriptor };
+      existing.last_edit_wall_ms = this.#clock.now();
+      return cloneSession(existing);
+    }
     const now = this.#clock.now();
     const record: SessionRecord = {
       session_id: this.#uuid.uuid(),
@@ -312,7 +325,7 @@ export class SessionRegistry {
       events: [],
       last_event_chain_tip: null,
       state: "active",
-      parent_record: previous.uploaded_response.record_hash,
+      parent_record: parentHash,
       observation: emptyObservation(this.#checkpoint !== null),
     };
     this.#sessions.set(record.session_id, record);

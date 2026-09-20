@@ -143,6 +143,7 @@ prod-container-down:
 
 test-web-browser:
 	npm run build:web
+	$(MAKE) extension-build
 	npm run test:web-browser
 
 build-site:

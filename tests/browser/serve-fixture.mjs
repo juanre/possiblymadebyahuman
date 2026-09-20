@@ -9,6 +9,7 @@ import { BOUND_TEXT } from "./bound-fixture-text.mjs";
 
 const rootDir = fileURLToPath(new URL("../..", import.meta.url));
 const webDistDir = join(rootDir, "apps/web/dist");
+const extensionDistDir = join(rootDir, "apps/browser-extension/dist");
 const goldenPath = join(rootDir, "packages/conformance/vectors/golden-records.json");
 
 const port = Number(process.env.PMBAH_FIXTURE_PORT ?? 4173);
@@ -291,6 +292,21 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // A plain page hosting the built content script as Chrome would inject it
+    // (a classic script), with chrome.runtime stubbed to record what the script
+    // sends. Lets the browser suite drive real key events through the capture code.
+    if (url.pathname === "/extension-harness") {
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      res.setHeader("cache-control", "no-store");
+      res.end(EXTENSION_HARNESS_HTML);
+      return;
+    }
+    if (url.pathname === "/extension/content.js") {
+      await serveFile(res, join(extensionDistDir, "content.js"));
+      return;
+    }
+
     if (url.pathname.startsWith("/record-assets/")) {
       const relative = url.pathname.replace(/^\/record-assets\//, "");
       await serveFile(res, join(webDistDir, normalize(relative).replace(/^(\.\.[/\\])+/, "")));
@@ -335,6 +351,31 @@ function contentType(path) {
     default: return "application/octet-stream";
   }
 }
+
+const EXTENSION_HARNESS_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>extension harness</title></head>
+<body>
+<textarea id="plain" aria-label="plain field"></textarea>
+<div id="rich" contenteditable="true" aria-label="rich field" style="min-height:2em;border:1px solid #999"></div>
+<script>
+  window.__pmbah = { messages: [] };
+  window.chrome = {
+    runtime: {
+      id: "harness",
+      onMessage: { addListener() {} },
+      async sendMessage(message) {
+        window.__pmbah.messages.push(message);
+        if (message.kind === "register_field") {
+          return { kind: "register_field_result", result: { kind: "registered", session_id: "00000000-0000-4000-8000-00000000c0de", certainty: "fresh" } };
+        }
+        if (message.kind === "append_mutation") return { kind: "append_mutation_result" };
+        return { kind: "error", reason: "unexpected " + message.kind };
+      },
+    },
+  };
+</script>
+<script src="/extension/content.js"></script>
+</body></html>`;
 
 server.listen(port, "127.0.0.1", () => {
   console.log(`fixture server listening on http://127.0.0.1:${port} (slug=${fixtureSlug})`);

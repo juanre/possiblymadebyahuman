@@ -215,22 +215,25 @@ async function registerField(element: HTMLElement): Promise<void> {
     field_is_empty: empty,
   });
 
+  const transient = transientFor(element);
   if (response.kind !== "register_field_result") {
     setBadge(element, "error", `register_failed:${response.kind === "error" ? response.reason : "unexpected"}`);
     entry.state = "error";
+    transient.queue.length = 0;
     return;
   }
   if (response.result.kind === "ineligible") {
     setBadge(element, "ineligible");
     entry.state = "ineligible";
+    transient.queue.length = 0;
     return;
   }
   entry.session_id = response.result.session_id;
   element.setAttribute(SESSION_ATTR, response.result.session_id);
   setBadge(element, "recording", response.result.certainty === "fresh" ? "recording" : `recording (${response.result.certainty})`);
+  // Send the queued mutations before accepting live ones so order is kept.
+  for (const mutation of transient.queue.splice(0)) void sendMutation(entry, mutation);
   entry.state = "recording";
-  const queued = transientFor(element).queue.splice(0);
-  for (const mutation of queued) await sendMutation(entry, mutation);
 }
 
 /**
@@ -251,6 +254,10 @@ function handleBeforeInput(event: InputEvent): void {
   const entry = fields.get(target);
   if (!entry || (entry.state !== "recording" && entry.state !== "pending")) return;
   const transient = transientFor(target);
+  // A new beforeinput means the previous measured change never produced an
+  // input event (a Backspace with nothing to delete, or the page cancelled it);
+  // its stale measurement must not be applied to this change.
+  transient.measuring = null;
   // Composition keystrokes are recorded once, at compositionend.
   if (transient.composition) return;
   const inputType = event.inputType ?? null;
@@ -422,6 +429,10 @@ function attachListeners(element: HTMLElement): void {
     handleBeforeInput(event as InputEvent);
   });
   element.addEventListener("input", handleInput);
+  element.addEventListener("blur", () => {
+    const transient = transients.get(element);
+    if (transient) transient.measuring = null;
+  });
   element.addEventListener("compositionstart", (event) => {
     handleCompositionStart(event as CompositionEvent);
   });

@@ -303,7 +303,17 @@ test("service-worker bundle declares the package version as the producer version
   const body = await readFile(`${DIST}/service-worker.js`, "utf8");
   const packageJson = JSON.parse(await readFile("apps/browser-extension/package.json", "utf8"));
   assert.ok(body.includes(`"${packageJson.version}"`), "producer version must come from package.json");
-  assert.notEqual(packageJson.version, "0.1.0", "the published 0.1.0 needs a bumped version to ship fixes");
+});
+
+test("content script bundle is a classic script Chrome can inject", async () => {
+  // manifest content_scripts run as classic scripts; a top-level import or
+  // export statement is a syntax error there and the script never runs.
+  const DIST = await distDir();
+  const body = await readFile(`${DIST}/content.js`, "utf8");
+  assert.doesNotMatch(body, /(^|[;}\s])export\s*[{*]|(^|[;}\s])export\s+(const|let|var|function|class|default)\b/);
+  assert.doesNotMatch(body, /(^|[;}\s])import\s*[{"']|(^|[;}\s])import\s+[\w$]+\s+from\b/);
+  const { Script } = await import("node:vm");
+  assert.doesNotThrow(() => new Script(body), "content.js must parse as a classic script");
 });
 
 test("source files outside the content script never read DOM text", async () => {

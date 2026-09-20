@@ -121,7 +121,13 @@ function formatTimelineTick(seconds: number): string {
 
 export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
-  const lengthKnown = points.length > 0 && points.every((point) => point.documentLength !== null);
+  // The length curve is drawn for the prefix of events whose document length can
+  // be inferred; from the first event with an unknown position onwards only
+  // markers and pauses are shown.
+  const firstUnknown = points.findIndex((point) => point.documentLength === null);
+  const knownPoints = firstUnknown === -1 ? points : points.slice(0, firstUnknown);
+  const lengthKnown = knownPoints.length > 0;
+  const lengthKnownThroughout = points.length > 0 && firstUnknown === -1;
   const maxLength = timelineLengthScale(points, record.stats.observed_final_length);
   const observedDurationMs = record.manifest.duration_ms || (points.length > 0 ? points[points.length - 1]!.t : 0);
   const duration = Math.max(1, observedDurationMs);
@@ -131,22 +137,22 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const tx = (t: number) => TIMELINE_PAD_L + (Math.min(duration, Math.max(0, t)) / duration) * plotW;
   const ly = (len: number) => baseline - (Math.min(maxLength, Math.max(0, len)) / maxLength) * plotH;
   // With no inferable length there is no curve; markers sit on a neutral mid line.
-  const markerY = (point: { documentLength: number | null }) => lengthKnown ? ly(point.documentLength ?? 0) : baseline - plotH / 2;
+  const markerY = (point: { documentLength: number | null }) => point.documentLength !== null ? ly(point.documentLength) : baseline - plotH / 2;
 
   // Document length over time. The fill closes down to the baseline at both
   // ends (correct for an area); the stroked line traces ONLY the curve, so it
   // does not follow the closing edge back to zero at the end.
   const areaCommands: string[] = [`M ${TIMELINE_PAD_L} ${baseline}`];
-  for (const point of points) {
+  for (const point of knownPoints) {
     areaCommands.push(`L ${tx(point.t)} ${ly(point.documentLength ?? 0)}`);
   }
   // Close the fill straight down at the LAST data point, not out at the (often
   // later) duration mark — otherwise the fill slopes diagonally to zero at the
   // end and reads as the document length collapsing.
-  const lastX = points.length > 0 ? tx(points[points.length - 1]!.t) : TIMELINE_PAD_L;
+  const lastX = knownPoints.length > 0 ? tx(knownPoints[knownPoints.length - 1]!.t) : TIMELINE_PAD_L;
   areaCommands.push(`L ${lastX} ${baseline} Z`);
   const areaPath = areaCommands.join(" ");
-  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${tx(point.t)} ${ly(point.documentLength ?? 0)}`).join(" ");
+  const linePath = knownPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${tx(point.t)} ${ly(point.documentLength ?? 0)}`).join(" ");
 
   const pauseSpans = points.filter((point) => point.isLongPause && point.delayFromPreviousMs > 0);
   // Only NOTABLE events get a marker — pastes, drops, cuts/deletes, and large
@@ -174,10 +180,12 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   return (
     <section className="card timeline-card">
       <h2>Edit timeline</h2>
-      {lengthKnown ? (
+      {lengthKnownThroughout ? (
         <p className="muted">Document length over time. Pastes, cuts, and large inserts are marked on the curve; shaded bands are long pauses. Steady typing is the rising line itself.</p>
+      ) : lengthKnown ? (
+        <p className="muted">Document length over time, up to edit {knownPoints.length} of {points.length}. From there the length is unknown: an edit with no recorded position (an undo, for example) means the events alone cannot say how long the document was. Pastes, cuts, and large inserts stay marked in time; shaded bands are long pauses.</p>
       ) : (
-        <p className="muted">Document length is unknown for this record: the capture started inside existing text, so the events alone cannot say how long the document was. Pastes, cuts, and large inserts are marked in time; shaded bands are long pauses.</p>
+        <p className="muted">Document length is unknown for this record: the capture started inside existing text, or an early edit had no recorded position, so the events alone cannot say how long the document was. Pastes, cuts, and large inserts are marked in time; shaded bands are long pauses.</p>
       )}
       <svg className="timeline-chart" viewBox={`0 0 ${TIMELINE_VB_W} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
         {pauseSpans.map((point) => {
@@ -383,9 +391,14 @@ function ChainStatus({ verification }: { verification: VerificationState }) {
       </p>
     );
   }
+  const hashMismatch = verification.messages.some((message) => message.includes("record_hash mismatch"));
   return (
     <div className="chain-status error" role="status">
-      <p><strong>Hash chain does not match.</strong> Recomputing the chain from the events shown here does not reproduce the record hash, so this record has been altered since it was signed or is malformed.</p>
+      {hashMismatch ? (
+        <p><strong>Hash chain does not match.</strong> Recomputing the chain from the events shown here does not reproduce the record hash, so these are not the events that were signed.</p>
+      ) : (
+        <p><strong>Record could not be verified.</strong> This record does not pass the format's checks, so the chain was not recomputed. The details below say what failed.</p>
+      )}
       <ul className="chain-status-errors">
         {verification.messages.map((message) => <li key={message}>{message}</li>)}
       </ul>
