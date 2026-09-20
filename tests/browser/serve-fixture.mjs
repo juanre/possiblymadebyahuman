@@ -14,6 +14,8 @@ const goldenPath = join(rootDir, "packages/conformance/vectors/golden-records.js
 
 const port = Number(process.env.PMBAH_FIXTURE_PORT ?? 4173);
 const fixtureSlug = process.env.PMBAH_FIXTURE_SLUG ?? "smoke";
+// An address with no record behind it.
+const UNKNOWN_SLUG = "unknown";
 
 const [golden] = JSON.parse(await readFile(goldenPath, "utf8"));
 const record = JSON.parse(JSON.stringify(golden.record));
@@ -276,6 +278,13 @@ const server = createServer(async (req, res) => {
 
     if (url.pathname.startsWith("/api/records/")) {
       const requestedSlug = url.pathname.slice("/api/records/".length);
+      if (requestedSlug === UNKNOWN_SLUG) {
+        res.statusCode = 404;
+        res.setHeader("content-type", "application/json; charset=utf-8");
+        res.setHeader("cache-control", "no-store");
+        res.end(JSON.stringify({ error: "record_not_found" }));
+        return;
+      }
       const body = requestedSlug === "bound"
         ? boundRecord
         : requestedSlug === "tampered"
@@ -319,18 +328,20 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    await serveFile(res, join(webDistDir, "index.html"));
+    // Like the production server, an address with no record gets the app shell
+    // with a 404 status.
+    await serveFile(res, join(webDistDir, "index.html"), url.pathname === `/${UNKNOWN_SLUG}` ? 404 : 200);
   } catch (error) {
     res.statusCode = 500;
     res.end(String(error));
   }
 });
 
-async function serveFile(res, path) {
+async function serveFile(res, path, status = 200) {
   try {
     const info = await stat(path);
     if (!info.isFile()) throw new Error("not a file");
-    res.statusCode = 200;
+    res.statusCode = status;
     res.setHeader("content-type", contentType(path));
     res.setHeader("cache-control", "no-store");
     createReadStream(path).pipe(res);

@@ -6,7 +6,7 @@ import { extname, join, normalize } from "node:path";
 import pg from "pg";
 
 import { createIngestApi } from "./index.ts";
-import { PostgresRecordStore, type PostgresDatabase } from "../../../packages/storage/src/index.ts";
+import { PostgresRecordStore, type PostgresDatabase, type RecordStore } from "../../../packages/storage/src/index.ts";
 import { loadSqlMigrations } from "../../../packages/storage/src/migrations.ts";
 
 export const DEFAULT_RECORD_BODY_LIMIT_BYTES = 10_000_000;
@@ -52,14 +52,17 @@ export function createPoolConfig(env: NodeJS.ProcessEnv = process.env): pg.PoolC
   return config;
 }
 
-export function createRuntimeServer(options: {
+export type RuntimeServerOptions = {
   api: ReturnType<typeof createIngestApi>;
+  store: Pick<RecordStore, "findByShortSignatureOrHash">;
   db: PostgresDatabase;
   webDistDir?: string;
   siteDistDir?: string;
   recordBodyLimitBytes?: number;
   requiredMigrationVersions?: readonly string[];
-}): Server {
+};
+
+export function createRuntimeServer(options: RuntimeServerOptions): Server {
   const server = createServer(async (req, res) => {
     try {
       await route(req, res, options);
@@ -141,18 +144,7 @@ export async function readiness(
   }
 }
 
-async function route(
-  req: IncomingMessage,
-  res: ServerResponse,
-  options: {
-    api: ReturnType<typeof createIngestApi>;
-    db: PostgresDatabase;
-    webDistDir?: string;
-    siteDistDir?: string;
-    recordBodyLimitBytes?: number;
-    requiredMigrationVersions?: readonly string[];
-  },
-): Promise<void> {
+async function route(req: IncomingMessage, res: ServerResponse, options: RuntimeServerOptions): Promise<void> {
   const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
   if (requestUrl.pathname.startsWith("/api/")) {
@@ -207,6 +199,18 @@ async function route(
     return;
   }
 
+  // Every remaining path is the record app: /write, or a record address. An
+  // address with no stored record still gets the app shell (so it can explain
+  // that nothing is there) but with a 404 status, so browsers and crawlers do
+  // not treat a broken link as a page that exists.
+  if (requestUrl.pathname !== "/write") {
+    const slug = requestUrl.pathname.replace(/^\//, "").replace(/\/$/, "");
+    const stored = await options.store.findByShortSignatureOrHash(slug);
+    if (!stored) {
+      await serveStatic(res, options.webDistDir ?? WEB_DIST_DIR, "index.html", 404);
+      return;
+    }
+  }
   await serveStatic(res, options.webDistDir ?? WEB_DIST_DIR, "index.html");
 }
 
@@ -252,12 +256,13 @@ async function writeFetchResponse(res: ServerResponse, response: Response): Prom
   res.end(Buffer.from(await response.arrayBuffer()));
 }
 
-async function serveStatic(res: ServerResponse, root: string, relativePath: string): Promise<void> {
+async function serveStatic(res: ServerResponse, root: string, relativePath: string, status = 200): Promise<void> {
   const safeRelative = normalize(relativePath).replace(/^(\.\.[/\\])+/, "");
   const path = join(root, safeRelative);
   try {
     const info = await stat(path);
     if (!info.isFile()) throw new Error("not a file");
+    res.statusCode = status;
     res.setHeader("content-type", contentType(path));
     const stream = createReadStream(path);
     stream.on("error", (error) => {
@@ -321,6 +326,7 @@ export async function main(): Promise<void> {
   const requiredMigrationVersions = (await loadSqlMigrations()).map((migration) => migration.version);
   const server = createRuntimeServer({
     api,
+    store,
     db: pool as PostgresDatabase,
     recordBodyLimitBytes: RECORD_BODY_LIMIT_BYTES,
     requiredMigrationVersions,

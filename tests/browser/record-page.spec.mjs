@@ -144,6 +144,18 @@ test.describe("public record page", () => {
   });
 });
 
+test.describe("unknown record address", () => {
+  test("says plainly that no record exists here and links home", async ({ page }) => {
+    const response = await page.goto("/unknown");
+    expect(response.status()).toBe(404);
+    await expect(page.getByRole("heading", { name: "No record at this address" })).toBeVisible();
+    const main = page.locator("main");
+    await expect(main).toContainText("No writing record exists at /unknown");
+    await expect(main.getByRole("link", { name: "home page" })).toHaveAttribute("href", "/");
+    await expect(main).not.toContainText("Record fetch failed");
+  });
+});
+
 test.describe("tampered record", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/tampered");

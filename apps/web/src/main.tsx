@@ -8,7 +8,7 @@ import "./style.css";
 function App() {
   const slug = window.location.pathname.replace(/^\//, "").replace(/\/$/, "") || "record";
   const isWriteRoute = slug === "write";
-  const [state, setState] = useState<{ loading: boolean; error?: string; record?: RecordApiResponse }>({ loading: !isWriteRoute });
+  const [state, setState] = useState<{ loading: boolean; error?: string; notFound?: boolean; record?: RecordApiResponse }>({ loading: !isWriteRoute });
 
   useEffect(() => {
     if (isWriteRoute) return;
@@ -16,6 +16,10 @@ function App() {
     async function load() {
       try {
         const response = await fetch(`/api/records/${encodeURIComponent(slug)}`);
+        if (response.status === 404) {
+          if (!cancelled) setState({ loading: false, notFound: true });
+          return;
+        }
         if (!response.ok) throw new Error(`Record fetch failed (${response.status})`);
         const record = await response.json() as RecordApiResponse;
         if (!cancelled) setState({ loading: false, record });
@@ -29,7 +33,26 @@ function App() {
 
   if (isWriteRoute) return <WritePage />;
   if (state.loading) return <main className="page-shell"><p className="eyebrow">possiblymadebyahuman</p><h1>Writing record</h1><p>Loading writing record…</p></main>;
-  if (state.error || !state.record) return <main className="page-shell"><p className="eyebrow">possiblymadebyahuman</p><h1>Writing record unavailable</h1><p className="error">{state.error ?? "Record not found"}</p><p>This page cannot make a claim without a record to inspect.</p></main>;
+  if (state.notFound) {
+    return (
+      <main className="page-shell">
+        <p className="eyebrow"><a className="eyebrow-home" href="/">← possiblymadebyahuman</a></p>
+        <h1>No record at this address</h1>
+        <p>No writing record exists at <code>/{slug}</code>. Check the link you were given: a record is addressed by the short signature in its URL.</p>
+        <p><a href="/">Go to the home page</a></p>
+      </main>
+    );
+  }
+  if (state.error || !state.record) {
+    return (
+      <main className="page-shell">
+        <p className="eyebrow"><a className="eyebrow-home" href="/">← possiblymadebyahuman</a></p>
+        <h1>Writing record unavailable</h1>
+        <p className="error">{state.error ?? "The record could not be loaded."}</p>
+        <p>This page cannot say anything about a record it could not load. Try again in a moment, or <a href="/">go to the home page</a>.</p>
+      </main>
+    );
+  }
   return <RecordPage record={state.record} />;
 }
 

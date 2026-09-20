@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { computeEventHashChain } from "../packages/format/src/index.ts";
@@ -224,6 +226,7 @@ test("runtime POST body limit returns 413 before API handling", async () => {
   let handled = false;
   const server = createRuntimeServer({
     api: { handleRequest: async () => { handled = true; return new Response("{}", { status: 200 }); } },
+    store: new InMemoryRecordStore(),
     db: { async query() { return { rows: [] }; } },
     recordBodyLimitBytes: 5,
   });
@@ -347,6 +350,7 @@ test("runtime server still routes valid API requests under the body limit", asyn
   const api = createIngestApi({ store, baseUrl: "https://possiblymadebyahuman.test", now: () => new Date("2026-05-28T10:00:00.000Z") });
   const server = createRuntimeServer({
     api,
+    store,
     db: { async query() { return { rows: [] }; } },
     recordBodyLimitBytes: 10_000,
   });
@@ -361,6 +365,45 @@ test("runtime server still routes valid API requests under the body limit", asyn
     });
     assert.equal(response.status, 201);
     assert.equal((await response.json()).record_hash, record.manifest.record_hash);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("runtime server serves the record shell with 404 for an unknown slug and 200 for a stored record or /write", async () => {
+  const store = new InMemoryRecordStore();
+  const api = createIngestApi({ store, baseUrl: "https://possiblymadebyahuman.test" });
+  const webDistDir = await mkdtemp(join(tmpdir(), "pmbah-web-dist-"));
+  const shell = "<!doctype html><div id=\"root\"></div>";
+  await writeFile(join(webDistDir, "index.html"), shell);
+  const server = createRuntimeServer({
+    api,
+    store,
+    db: { async query() { return { rows: [] }; } },
+    webDistDir,
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+    const upload = await fetch(`${base}/api/records`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(await fixtureRecord()),
+    });
+    assert.equal(upload.status, 201);
+    const { short_signature, record_hash } = await upload.json();
+
+    const missing = await fetch(`${base}/no-such-record`);
+    assert.equal(missing.status, 404);
+    assert.match(missing.headers.get("content-type"), /text\/html/);
+    assert.equal(await missing.text(), shell);
+
+    for (const path of [`/${short_signature}`, `/${record_hash}`, "/write"]) {
+      const response = await fetch(`${base}${path}`);
+      assert.equal(response.status, 200, path);
+      assert.equal(await response.text(), shell, path);
+    }
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -455,6 +498,7 @@ test("runtime server serves site root files with their media types and redirects
 
   const server = createRuntimeServer({
     api: { handleRequest: async () => new Response("{}", { status: 200 }) },
+    store: new InMemoryRecordStore(),
     db: { async query() { return { rows: [] }; } },
     siteDistDir: siteDir,
     webDistDir: webDir,
