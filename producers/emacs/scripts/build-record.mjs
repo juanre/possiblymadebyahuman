@@ -23,7 +23,14 @@ function fail(message, details = []) {
 
 try {
   const raw = await readStdin();
-  const input = JSON.parse(raw);
+  // A parse error message can quote the offending input, which may hold the
+  // transient binding text; report the failure without echoing anything.
+  let input;
+  try {
+    input = JSON.parse(raw);
+  } catch {
+    fail("helper input was not valid JSON");
+  }
 
   if (!Array.isArray(input.events)) fail("events must be an array");
   if (typeof input.session_id !== "string") fail("session_id must be a string");

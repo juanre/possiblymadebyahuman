@@ -18,6 +18,7 @@ import type {
   StorageAdapter,
   UuidAdapter,
 } from "./adapters.ts";
+import { redactCaptureContext as applyCaptureContextRedactions, type CaptureContextRedactions } from "./capture-context.ts";
 import { resolveSession } from "./session-id.ts";
 import { advanceChain, appendBufferMutation, durationMs } from "./timeline.ts";
 import { DEFAULT_TTL_MS, DEFAULT_UPLOADED_GRACE_MS, sweepExpired } from "./ttl.ts";
@@ -162,6 +163,7 @@ export class SessionRegistry {
     if (existing && (resolution.certainty === "resumed" || resolution.certainty === "collision")) {
       existing.identity_certainty = resolution.certainty;
       existing.descriptor = descriptor;
+      existing.origin = { ...origin };
       existing.last_edit_wall_ms = this.#clock.now();
       return cloneSession(existing);
     }
@@ -214,13 +216,17 @@ export class SessionRegistry {
       : "partial";
   }
 
+  /**
+   * Signs an active session, or re-signs one whose upload failed so the same
+   * record can be retried. A retry reuses the binding sealed the first time.
+   */
   sign(session_id: SessionId, options: SignOptions = {}): SignedRecordDraft {
-    const record = this.#requireSignable(session_id);
+    const record = this.#requireInState(session_id, ["active", "failed_upload"]);
     if (record.events.length === 0) {
       throw new Error(`cannot sign session ${session_id} with no events`);
     }
     const events: BufferMutation[] = record.events.map((event) => ({ ...event }));
-    const textBinding = options.textBinding;
+    const textBinding = record.state === "failed_upload" ? options.textBinding ?? record.signed_text_binding : options.textBinding;
     // When a binding is present the record hash is sealed over it; otherwise
     // it is the plain event-chain tip (the cached tip when available).
     const record_hash = textBinding
@@ -248,7 +254,15 @@ export class SessionRegistry {
     }
 
     record.state = "signing";
+    record.signed_text_binding = textBinding;
     return { manifest, events };
+  }
+
+  /** Applies the signer's capture-context choices before the record is signed. */
+  redactCaptureContext(session_id: SessionId, redactions: CaptureContextRedactions): SessionRecord {
+    const record = this.#requireInState(session_id, ["active", "failed_upload"]);
+    record.capture_context = applyCaptureContextRedactions(record.capture_context, redactions);
+    return cloneSession(record);
   }
 
   markUploading(session_id: SessionId): void {
@@ -281,6 +295,7 @@ export class SessionRegistry {
     record.state = "active";
     record.uploaded_response = undefined;
     record.last_failure_reason = undefined;
+    record.signed_text_binding = undefined;
     record.observation = emptyObservation(this.#checkpoint !== null);
     record.last_edit_wall_ms = this.#clock.now();
     return cloneSession(record);
@@ -567,12 +582,6 @@ export class SessionRegistry {
   }
 
   #requireMutable(session_id: SessionId): SessionRecord {
-    const record = this.#require(session_id);
-    if (record.state !== "active") throw new SessionFrozenError(session_id, record.state);
-    return record;
-  }
-
-  #requireSignable(session_id: SessionId): SessionRecord {
     const record = this.#require(session_id);
     if (record.state !== "active") throw new SessionFrozenError(session_id, record.state);
     return record;

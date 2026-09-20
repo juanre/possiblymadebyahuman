@@ -122,6 +122,9 @@ export type SessionRecord = {
   state: SessionState;
   uploaded_response?: IngestRecordResponse;
   last_failure_reason?: string;
+  // The content-blind binding sealed at the last sign attempt, kept so a failed
+  // upload can be retried with the same record. Never the text.
+  signed_text_binding?: TextBinding;
   observation: SessionObservation;
 };
 

@@ -1,5 +1,5 @@
-import type { CaptureContext, TextBinding } from "../../../../packages/format/src/index.ts";
-import { SessionRegistry, buildCaptureContext } from "../../../../packages/producer-core/src/index.ts";
+import type { TextBinding } from "../../../../packages/format/src/index.ts";
+import { SessionFrozenError, SessionRegistry, buildCaptureContext } from "../../../../packages/producer-core/src/index.ts";
 import type {
   ClockAdapter,
   CheckpointAdapter,
@@ -14,7 +14,7 @@ import type {
   ContentToBackground,
   SignSessionResult,
 } from "./messages.ts";
-import { isFieldEligible } from "./policy.ts";
+import { findResumableSession, isFieldEligible } from "./policy.ts";
 
 export interface DispatcherOptions {
   clock: ClockAdapter;
@@ -42,8 +42,14 @@ export class BackgroundDispatcher {
   }
 
   ensureInitialised(): Promise<void> {
-    if (!this.#initPromise) this.#initPromise = this.registry.init();
+    if (!this.#initPromise) this.#initPromise = this.registry.init().then(() => this.sweepExpired());
     return this.#initPromise;
+  }
+
+  /** Drops expired unsigned captures and uploaded sessions past their grace period. */
+  async sweepExpired(): Promise<void> {
+    const removed = this.registry.sweep();
+    if (removed.length > 0) await this.registry.persist();
   }
 
   async handle(message: ContentToBackground): Promise<BackgroundResponse> {
@@ -51,7 +57,7 @@ export class BackgroundDispatcher {
     try {
       switch (message.kind) {
         case "register_field":
-          return this.#handleRegister(message);
+          return await this.#handleRegister(message);
         case "append_mutation":
           return this.#handleAppend(message);
         case "list_sessions":
@@ -68,7 +74,8 @@ export class BackgroundDispatcher {
     }
   }
 
-  #handleRegister(message: Extract<ContentToBackground, { kind: "register_field" }>): BackgroundResponse {
+  async #handleRegister(message: Extract<ContentToBackground, { kind: "register_field" }>): Promise<BackgroundResponse> {
+    await this.sweepExpired();
     const origin = {
       origin: message.origin_url,
       path: message.page_path,
@@ -92,6 +99,12 @@ export class BackgroundDispatcher {
       descriptor: message.descriptor,
       page_title: message.page_title,
     });
+    // A non-empty field whose session was already uploaded reopens that
+    // session: further edits extend the recorded process, as on /write.
+    if (!message.field_is_empty) {
+      const resumable = findResumableSession(origin, message.descriptor, this.registry.list());
+      if (resumable?.state === "uploaded") this.registry.reopen(resumable.session_id);
+    }
     const session = this.registry.findOrCreate(origin, message.descriptor, capture);
     void this.registry.persist();
     return {
@@ -105,13 +118,24 @@ export class BackgroundDispatcher {
     // returned to the content script is a pure ack — sending the session
     // record would leak `observation.last_observed_token` (the bearer token)
     // into the page's content-script context, where it has no business being.
-    this.registry.appendMutation(message.session_id, message.mutation);
+    try {
+      this.registry.appendMutation(message.session_id, message.mutation);
+    } catch (error) {
+      // Editing a field after its session was signed and uploaded continues the
+      // same session, so the next signature covers the whole writing process.
+      if (!(error instanceof SessionFrozenError) || error.state !== "uploaded") throw error;
+      this.registry.reopen(message.session_id);
+      this.registry.appendMutation(message.session_id, message.mutation);
+    }
     void this.registry.persist();
     return { kind: "append_mutation_result" };
   }
 
   async #handleSign(message: Extract<ContentToBackground, { kind: "sign_session" }>): Promise<BackgroundResponse> {
-    const result = await this.#runSignUpload(message.session_id, message.capture_context_overrides, message.text_binding);
+    if (message.capture_context_redactions) {
+      this.registry.redactCaptureContext(message.session_id, message.capture_context_redactions);
+    }
+    const result = await this.#runSignUpload(message.session_id, message.text_binding);
     return { kind: "sign_session_result", result };
   }
 
@@ -120,13 +144,8 @@ export class BackgroundDispatcher {
     if (!existing || existing.state !== "failed_upload") {
       return { kind: "retry_result", result: { kind: "failed", reason: "no_failed_upload_in_session" } };
     }
-    // v0 retry is opt-in via discard + fresh start. Producer-core does not
-    // memoize the signed draft, so a true in-place retry would require
-    // re-signing — but the session is no longer `active` once it has reached
-    // `failed_upload`. The popup surfaces this explicitly as "Discard and
-    // continue typing to start a fresh session" rather than pretending a
-    // one-click retry works.
-    return { kind: "retry_result", result: { kind: "failed", reason: "retry_requires_discard_and_resign" } };
+    const result = await this.#runSignUpload(message.session_id, existing.signed_text_binding);
+    return { kind: "retry_result", result };
   }
 
   #handleDiscard(message: Extract<ContentToBackground, { kind: "discard_session" }>): BackgroundResponse {
@@ -135,13 +154,10 @@ export class BackgroundDispatcher {
     return { kind: "discard_result", ok: true };
   }
 
-  async #runSignUpload(session_id: SessionRecord["session_id"], overrides?: Partial<CaptureContext>, textBinding?: TextBinding): Promise<SignSessionResult> {
+  async #runSignUpload(session_id: SessionRecord["session_id"], textBinding?: TextBinding): Promise<SignSessionResult> {
     try {
       await this.registry.flushObservation(session_id);
       const draft = this.registry.sign(session_id, textBinding ? { textBinding } : {});
-      if (overrides && draft.manifest.capture_context) {
-        draft.manifest.capture_context = { ...draft.manifest.capture_context, ...overrides };
-      }
       const observation = this.registry.getObservationEnvelope(session_id);
       this.registry.markUploading(session_id);
       const response = await this.#upload.postRecord({

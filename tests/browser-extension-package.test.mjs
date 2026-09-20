@@ -6,7 +6,8 @@ import { promisify } from "node:util";
 import test from "node:test";
 
 const execFileAsync = promisify(execFile);
-const zipPath = "apps/browser-extension/dist/possiblymadebyahuman-extension-0.1.0.zip";
+const packageVersion = JSON.parse(await readFile("apps/browser-extension/package.json", "utf8")).version;
+const zipPath = `apps/browser-extension/dist/possiblymadebyahuman-extension-${packageVersion}.zip`;
 
 async function packageExtension(env = {}) {
   await execFileAsync("npm", ["--workspace", "@possiblymadebyahuman/browser-extension", "run", "package"], {
@@ -46,7 +47,7 @@ test("browser extension package command creates deterministic Chrome zip without
 
   const manifest = JSON.parse(readEntry(second, entries, "manifest.json").toString("utf8"));
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.1.0");
+  assert.equal(manifest.version, packageVersion);
   assert.equal(manifest.description, "Content-blind writing records for text fields.");
   assert.deepEqual(manifest.permissions, ["storage", "clipboardWrite", "alarms"]);
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);

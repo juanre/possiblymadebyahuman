@@ -51,8 +51,9 @@ export function sourceFromInputType(inputType: string | undefined | null): Sourc
     case "deleteSoftLineForward":
     case "deleteHardLineBackward":
     case "deleteHardLineForward":
-    case "deleteByDrag":
       return "typing";
+    case "deleteByDrag":
+      return "drop";
     default:
       return "unknown";
   }
@@ -68,6 +69,103 @@ export function insertedCodepointsForInput(inputType: string | null, insertedTex
   const count = codepointCount(insertedText);
   if (inputType === "insertLineBreak" || inputType === "insertParagraph") return Math.max(1, count);
   return count;
+}
+
+export function isDeletionInputType(inputType: string | null): boolean {
+  return typeof inputType === "string" && inputType.startsWith("delete");
+}
+
+/** Undo, redo and formatting commands whose size is only measurable after the browser applies them. */
+export function isNetChangeInputType(inputType: string | null): boolean {
+  return typeof inputType === "string" && (inputType.startsWith("history") || inputType.startsWith("format"));
+}
+
+/**
+ * A deletion with a collapsed caret (Backspace, Delete, word and line deletes)
+ * has no selection to measure in `beforeinput`. The caller records the field's
+ * codepoint length before the change and, once the browser has applied it,
+ * passes the new length and caret. The deleted span always ends where the
+ * caret lands, so pos is the caret and del_len is the length difference.
+ */
+export function collapsedDeletionMutation(args: {
+  lengthBefore: number;
+  lengthAfter: number;
+  caretAfterCodepoints: number;
+  source: Source;
+}): PendingMutation | null {
+  const del_len = args.lengthBefore - args.lengthAfter;
+  if (del_len <= 0) return null;
+  return { op: "delete", pos: Math.max(0, args.caretAfterCodepoints), del_len, ins_len: 0, source: args.source };
+}
+
+/**
+ * Undo, redo and formatting change the buffer by an amount we can only measure
+ * as a net length difference, at a position we cannot attribute. Record the
+ * size honestly and leave pos unknown rather than guess.
+ */
+export function netLengthChangeMutation(args: { lengthBefore: number; lengthAfter: number }): PendingMutation | null {
+  const delta = args.lengthAfter - args.lengthBefore;
+  if (delta === 0) return null;
+  return delta > 0
+    ? { op: "insert", pos: null, del_len: 0, ins_len: delta, source: "unknown" }
+    : { op: "delete", pos: null, del_len: -delta, ins_len: 0, source: "unknown" };
+}
+
+/**
+ * A spellcheck or autocorrect replacement carries the inserted text but replaces
+ * a range the selection does not describe. With the inserted size known and the
+ * field length before and after, the replaced span is the length difference and
+ * it ends where the caret lands.
+ */
+export function measuredReplacementMutation(args: {
+  lengthBefore: number;
+  lengthAfter: number;
+  insLen: number;
+  caretAfterCodepoints: number;
+  source: Source;
+}): PendingMutation | null {
+  const del_len = Math.max(0, args.lengthBefore - args.lengthAfter + args.insLen);
+  if (del_len === 0 && args.insLen === 0) return null;
+  return {
+    op: operationFor({ ins_len: args.insLen, del_len }),
+    pos: Math.max(0, args.caretAfterCodepoints - args.insLen),
+    del_len,
+    ins_len: args.insLen,
+    source: args.source,
+  };
+}
+
+/**
+ * One IME composition is one `ime` mutation: the span selected when composition
+ * started (already measured numerically by the caller) is replaced by the
+ * committed text. A cancelled composition that replaced nothing records nothing.
+ */
+export function compositionMutation(args: {
+  pos: number | null;
+  del_len: number | null;
+  committedText: string;
+}): PendingMutation | null {
+  const ins_len = codepointCount(args.committedText);
+  const del_len = args.del_len;
+  if (ins_len === 0 && (del_len ?? 0) === 0) return null;
+  const op: Operation = del_len !== null ? operationFor({ ins_len, del_len }) : "insert";
+  return { op, pos: args.pos, del_len, ins_len, source: "ime" };
+}
+
+/**
+ * Contenteditable insertions expose their size through the input event's data
+ * for typed text, through the drag/clipboard transfer for pastes and drops, and through
+ * the structural Enter inputTypes. Anything else is unknown, not zero.
+ */
+export function contentEditableInsertedCodepoints(
+  inputType: string | null,
+  data: string | null,
+  transferredText: string | null,
+): number | null {
+  if (inputType === "insertLineBreak" || inputType === "insertParagraph") return Math.max(1, codepointCount(data ?? ""));
+  if (typeof data === "string" && data.length > 0) return codepointCount(data);
+  if (typeof transferredText === "string" && transferredText.length > 0) return codepointCount(transferredText);
+  return null;
 }
 
 /**

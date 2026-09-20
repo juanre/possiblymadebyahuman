@@ -1,5 +1,6 @@
-import type { CaptureContext, TextBinding } from "../../../../packages/format/src/index.ts";
+import type { TextBinding } from "../../../../packages/format/src/index.ts";
 import type {
+  CaptureContextRedactions,
   FieldDescriptor,
   FieldOrigin,
   IngestRecordResponse,
@@ -28,7 +29,8 @@ export type ContentToBackground =
   | {
       kind: "sign_session";
       session_id: SessionId;
-      capture_context_overrides?: Partial<CaptureContext>;
+      // The signer's review of what provenance context to publish.
+      capture_context_redactions?: CaptureContextRedactions;
       // Content-blind binding object computed in the content script (the only
       // context that holds field text). Never the text itself.
       text_binding?: TextBinding;

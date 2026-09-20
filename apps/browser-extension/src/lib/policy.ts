@@ -11,6 +11,9 @@ import type {
  * — the extension records nothing and surfaces this state via the badge.
  * A resumable session match (exact or partial) re-enters that session and
  * continues recording, even if the field currently shows non-empty content.
+ * An uploaded session counts as resumable: the field's content is exactly the
+ * process that session recorded, so editing on reopens it rather than
+ * snapshotting the text as a fresh start.
  */
 export function isFieldEligible(args: {
   origin: FieldOrigin;
@@ -33,7 +36,6 @@ export function findResumableSession(
   existing: ReadonlyArray<SessionRecord>,
 ): SessionRecord | null {
   for (const session of existing) {
-    if (session.state === "uploaded") continue;
     if (session.origin.origin !== origin.origin) continue;
     if (session.origin.path !== origin.path) continue;
     if (session.descriptor.field_kind !== descriptor.field_kind) continue;

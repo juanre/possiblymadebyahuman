@@ -454,3 +454,14 @@ test("Emacs helper seals a content-blind text binding from transient final text 
   assert.equal(serialized.includes("Hello there"), false);
   assert.equal(serialized.includes("final_text"), false);
 });
+
+
+test("Emacs helper never echoes its input back when the input is malformed", () => {
+  const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
+  const marker = "SECRET-DOCUMENT-WORDS-9f3a";
+  const result = spawnSync(process.execPath, [helperPath], { input: `{"final_text": "${marker}"`, encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.equal(result.stderr.includes(marker), false, result.stderr);
+  assert.equal(result.stdout.includes(marker), false);
+  assert.match(result.stderr, /not valid JSON/);
+});

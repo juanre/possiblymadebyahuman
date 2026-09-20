@@ -24,9 +24,11 @@ export function buildCaptureContext(input: CaptureContextInput): CaptureContext 
   return ctx;
 }
 
+export type CaptureContextRedactions = { drop_title?: boolean; drop_url?: boolean; replace_label?: string };
+
 export function redactCaptureContext(
   context: CaptureContext,
-  redactions: { drop_title?: boolean; drop_url?: boolean; replace_label?: string },
+  redactions: CaptureContextRedactions,
 ): CaptureContext {
   const next: CaptureContext = JSON.parse(JSON.stringify(context));
   if (redactions.replace_label !== undefined) next.label = redactions.replace_label;

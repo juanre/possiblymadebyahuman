@@ -291,6 +291,21 @@ test("FieldEntry type carries no text-bearing string field", async () => {
   assert.doesNotMatch(declaration, /text\s*\??:\s*string/i, "FieldEntry must not declare a text-bearing string");
 });
 
+test("FieldTransient numeric state carries no text-bearing field", async () => {
+  const source = await readFile("apps/browser-extension/src/content/capture.ts", "utf8");
+  const match = source.match(/type\s+FieldTransient\s*=\s*\{([\s\S]+?)\n\};/m);
+  assert.ok(match, "FieldTransient type declaration not found");
+  assert.doesNotMatch(match[1], /\bstring\b/, "FieldTransient must hold numbers and mutation shapes only");
+});
+
+test("service-worker bundle declares the package version as the producer version", async () => {
+  const DIST = await distDir();
+  const body = await readFile(`${DIST}/service-worker.js`, "utf8");
+  const packageJson = JSON.parse(await readFile("apps/browser-extension/package.json", "utf8"));
+  assert.ok(body.includes(`"${packageJson.version}"`), "producer version must come from package.json");
+  assert.notEqual(packageJson.version, "0.1.0", "the published 0.1.0 needs a bumped version to ship fixes");
+});
+
 test("source files outside the content script never read DOM text", async () => {
   // codepoint.ts inspects transient strings passed by the content script — it
   // does not itself touch the DOM. Its parameters happen to be named *Value,

@@ -11,7 +11,7 @@ import {
 } from "../lib/adapters.ts";
 import { BackgroundDispatcher } from "../lib/dispatcher.ts";
 import { isContentMessage } from "../lib/messages.ts";
-import { API_BASE_URL, RECORDS_ENDPOINT } from "../lib/config.ts";
+import { API_BASE_URL, EXTENSION_VERSION, RECORDS_ENDPOINT } from "../lib/config.ts";
 
 export const BACKGROUND_ENTRYPOINT = "service-worker";
 
@@ -38,7 +38,7 @@ declare const chrome: {
 
 const PRODUCER: ProducerIdentity = {
   id: "browser-extension",
-  version: "0.1.0",
+  version: EXTENSION_VERSION,
   capabilities: ["timing", "source_attribution"],
 };
 
@@ -84,8 +84,5 @@ function enrichWithSender(
 chrome.alarms.create(TTL_SWEEP_ALARM, { periodInMinutes: TTL_SWEEP_PERIOD_MINUTES });
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== TTL_SWEEP_ALARM) return;
-  const removed = dispatcher.registry.sweep();
-  if (removed.length > 0) {
-    void dispatcher.registry.persist();
-  }
+  void dispatcher.ensureInitialised().then(() => dispatcher.sweepExpired());
 });

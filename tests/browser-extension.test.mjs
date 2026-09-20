@@ -6,10 +6,16 @@ import {
   buildTextFieldMutation,
   codepointCount,
   codepointOffsetOf,
+  collapsedDeletionMutation,
+  compositionMutation,
+  contentEditableInsertedCodepoints,
   insertedCodepointsForInput,
+  measuredReplacementMutation,
+  netLengthChangeMutation,
   operationFor,
   sourceFromInputType,
 } from "../apps/browser-extension/src/lib/codepoint.ts";
+import { readFile } from "node:fs/promises";
 import {
   domSignature,
   extractDescriptor,
@@ -585,7 +591,7 @@ test("dispatcher: discard removes the targeted session only", async () => {
   assert.ok(dispatcher.registry.get(r2.result.session_id));
 });
 
-test("dispatcher: failed_upload retry surfaces the discard-and-resign requirement honestly", async () => {
+test("dispatcher: a retry that fails again stays in failed_upload with the new reason", async () => {
   const { dispatcher, upload } = makeDispatcher();
   upload.queueError(new Error("ingest_failed status=500 reason=down"));
   const reg = await dispatcher.handle({
@@ -603,7 +609,190 @@ test("dispatcher: failed_upload retry surfaces the discard-and-resign requiremen
   const signResp = await dispatcher.handle({ kind: "sign_session", session_id: sid });
   assert.equal(signResp.result.kind, "failed");
   assert.equal(dispatcher.registry.get(sid).state, "failed_upload");
+  upload.queueError(new Error("ingest_failed status=503 reason=still down"));
   const retry = await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid });
   assert.equal(retry.result.kind, "failed");
-  assert.equal(retry.result.reason, "retry_requires_discard_and_resign");
+  assert.match(retry.result.reason, /still down/);
+  assert.equal(dispatcher.registry.get(sid).state, "failed_upload");
+  assert.equal(dispatcher.registry.get(sid).last_failure_reason, retry.result.reason);
+});
+
+
+test("codepoint: collapsed deletions are measured from the field length before and after the edit", () => {
+  assert.deepEqual(
+    collapsedDeletionMutation({ lengthBefore: 5, lengthAfter: 4, caretAfterCodepoints: 4, source: "typing" }),
+    { op: "delete", pos: 4, del_len: 1, ins_len: 0, source: "typing" },
+  );
+  assert.deepEqual(
+    collapsedDeletionMutation({ lengthBefore: 12, lengthAfter: 7, caretAfterCodepoints: 3, source: "typing" }),
+    { op: "delete", pos: 3, del_len: 5, ins_len: 0, source: "typing" },
+  );
+  // Backspace at the start of the field changes nothing and records nothing.
+  assert.equal(collapsedDeletionMutation({ lengthBefore: 5, lengthAfter: 5, caretAfterCodepoints: 0, source: "typing" }), null);
+});
+
+test("codepoint: a spellcheck replacement is sized from the inserted text and the length difference", () => {
+  // "teh" (3) replaced by "the" (3): lengths equal, caret lands after the word.
+  assert.deepEqual(
+    measuredReplacementMutation({ lengthBefore: 10, lengthAfter: 10, insLen: 3, caretAfterCodepoints: 7, source: "autocomplete" }),
+    { op: "replace", pos: 4, del_len: 3, ins_len: 3, source: "autocomplete" },
+  );
+  assert.deepEqual(
+    measuredReplacementMutation({ lengthBefore: 10, lengthAfter: 12, insLen: 5, caretAfterCodepoints: 9, source: "autocomplete" }),
+    { op: "replace", pos: 4, del_len: 3, ins_len: 5, source: "autocomplete" },
+  );
+});
+
+test("codepoint: undo/redo and formatting record the net length change with unknown position", () => {
+  assert.deepEqual(netLengthChangeMutation({ lengthBefore: 10, lengthAfter: 13 }), { op: "insert", pos: null, del_len: 0, ins_len: 3, source: "unknown" });
+  assert.deepEqual(netLengthChangeMutation({ lengthBefore: 10, lengthAfter: 7 }), { op: "delete", pos: null, del_len: 3, ins_len: 0, source: "unknown" });
+  assert.equal(netLengthChangeMutation({ lengthBefore: 10, lengthAfter: 10 }), null);
+});
+
+test("codepoint: an IME composition is one ime event sized by the committed text", () => {
+  assert.deepEqual(compositionMutation({ pos: 2, del_len: 0, committedText: "日本語" }), { op: "insert", pos: 2, del_len: 0, ins_len: 3, source: "ime" });
+  assert.deepEqual(compositionMutation({ pos: 2, del_len: 1, committedText: "語" }), { op: "replace", pos: 2, del_len: 1, ins_len: 1, source: "ime" });
+  assert.deepEqual(compositionMutation({ pos: null, del_len: null, committedText: "語" }), { op: "insert", pos: null, del_len: null, ins_len: 1, source: "ime" });
+  assert.equal(compositionMutation({ pos: 2, del_len: 0, committedText: "" }), null);
+});
+
+test("codepoint: dragging text out of a field is a drag-and-drop source, never typing", () => {
+  assert.equal(sourceFromInputType("deleteByDrag"), "drop");
+});
+
+test("codepoint: contenteditable insert sizes fall back to the transferred text and otherwise stay unknown", () => {
+  assert.equal(contentEditableInsertedCodepoints("insertFromPaste", null, "hello 🎉"), 7);
+  assert.equal(contentEditableInsertedCodepoints("insertText", "x", null), 1);
+  assert.equal(contentEditableInsertedCodepoints("insertParagraph", null, null), 1);
+  assert.equal(contentEditableInsertedCodepoints("insertFromPaste", null, null), null);
+});
+
+test("content script handles compositions, dedupes listeners, and finishes collapsed deletes on input", async () => {
+  const source = await readFile("apps/browser-extension/src/content/capture.ts", "utf8");
+  assert.match(source, /addEventListener\("compositionstart"/);
+  assert.match(source, /addEventListener\("compositionend"/);
+  assert.match(source, /addEventListener\("input"/);
+  assert.match(source, /listening\.has\(element\)/);
+  assert.match(source, /collapsedDeletionMutation/);
+  assert.match(source, /netLengthChangeMutation/);
+});
+
+test("dispatcher: editing after upload reopens the session instead of erroring", async () => {
+  const { dispatcher } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+
+  const append = await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" } });
+  assert.equal(append.kind, "append_mutation_result");
+  const live = dispatcher.registry.get(sid);
+  assert.equal(live.state, "active");
+  assert.equal(live.events.length, 2, "the earlier events stay part of the session");
+});
+
+test("dispatcher: a non-empty field whose session was uploaded is resumable and reopens", async () => {
+  const { dispatcher } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({ kind: "sign_session", session_id: sid });
+
+  const again = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 7, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false,
+  });
+  assert.equal(again.result.kind, "registered");
+  assert.equal(again.result.session_id, sid);
+  const live = dispatcher.registry.get(sid);
+  assert.equal(live.state, "active");
+  assert.equal(live.origin.tab_id, 7, "resuming records the tab the field now lives in");
+});
+
+test("dispatcher: expired sessions are swept when the worker initialises and when a field registers", async () => {
+  const clock = mutableClock(10 * 24 * 60 * 60 * 1000);
+  const storage = inMemoryStorage();
+  const stale = {
+    session_id: "00000000-0000-4000-8000-00000000aaaa",
+    format_version: "0.2",
+    base_wall_ms: 0,
+    last_edit_wall_ms: 0,
+    origin: { origin: "https://old.test", path: "/", tab_id: 1, frame_id: 0 },
+    descriptor: SAMPLE_DESCRIPTOR,
+    identity_certainty: "fresh",
+    producer: PRODUCER,
+    capture_context: { surface: "browser" },
+    events: [],
+    last_event_chain_tip: null,
+    state: "active",
+    observation: { state: "disabled", commitments: [], observed_session_id: null, last_observed_token: null, last_committed_event_count: 0, last_attempt_at_wall_ms: null, last_failure: null, in_flight: false, queued: false, next_backoff_ms: 0 },
+  };
+  await storage.write([stale]);
+  const dispatcher = new BackgroundDispatcher({ clock, uuid: deterministicUuid(), storage, upload: recordingUpload(), checkpoint: recordingCheckpoint(), producer: PRODUCER });
+  await dispatcher.ensureInitialised();
+  assert.equal(dispatcher.registry.list().length, 0);
+  assert.equal((await storage.read()).length, 0, "the sweep is persisted");
+});
+
+test("dispatcher: retrying a failed upload re-signs the same session and keeps its binding", async () => {
+  const { dispatcher, upload } = makeDispatcher();
+  upload.queueError(new Error("ingest_failed status=500 reason=down"));
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "x",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 5, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  const binding = createTextBinding("hello", sid);
+  const signResp = await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: binding });
+  assert.equal(signResp.result.kind, "failed");
+  assert.equal(dispatcher.registry.get(sid).state, "failed_upload");
+
+  upload.queueError(undefined);
+  const retry = await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid });
+  assert.equal(retry.result.kind, "uploaded");
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+  assert.deepEqual(upload.calls.at(-1).manifest.text_binding, binding);
+  assert.equal(verifyRecord({ manifest: upload.calls.at(-1).manifest, events: upload.calls.at(-1).events }).valid, true);
+});
+
+test("dispatcher: capture-context redactions chosen at sign time are applied to the uploaded manifest", async () => {
+  const { dispatcher, upload } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post?draft=1", page_title: "My secret draft title",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 5, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({
+    kind: "sign_session",
+    session_id: sid,
+    capture_context_redactions: { drop_title: true, replace_label: "forum reply" },
+  });
+  const context = upload.calls[0].manifest.capture_context;
+  assert.equal(context.label, "forum reply");
+  assert.equal(context.browser.title, undefined);
+  assert.equal(context.browser.url, "https://a.test/post");
+  assert.equal(JSON.stringify(upload.calls[0]).includes("secret draft"), false);
 });

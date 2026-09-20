@@ -1,4 +1,17 @@
-import { buildTextFieldMutation, insertedCodepointsForInput, sourceFromInputType } from "../lib/codepoint.ts";
+import {
+  buildTextFieldMutation,
+  codepointCount,
+  codepointOffsetOf,
+  collapsedDeletionMutation,
+  compositionMutation,
+  contentEditableInsertedCodepoints,
+  insertedCodepointsForInput,
+  isDeletionInputType,
+  isNetChangeInputType,
+  measuredReplacementMutation,
+  netLengthChangeMutation,
+  sourceFromInputType,
+} from "../lib/codepoint.ts";
 import { extractDescriptor, isEligibleTag } from "../lib/descriptor.ts";
 import {
   isComputeBindingRequest,
@@ -7,7 +20,7 @@ import {
   type ContentToBackground,
 } from "../lib/messages.ts";
 import type { PendingMutation } from "../../../../packages/producer-core/src/index.ts";
-import { canonicalizeTextForBinding, createTextBinding } from "../../../../packages/format/src/index.ts";
+import { canonicalizeTextForBinding, createTextBinding, type Source } from "../../../../packages/format/src/index.ts";
 
 declare const chrome: {
   runtime: {
@@ -36,6 +49,31 @@ const SESSION_ATTR = "data-pmbah-session";
 const STATE_ATTR = "data-pmbah-state";
 
 const fields = new WeakMap<HTMLElement, FieldEntry>();
+
+// Numeric-only state that has to survive from one DOM event to the next: the
+// field's codepoint length before a change whose size is only measurable after
+// the browser applies it, the span an IME composition started over, and
+// mutations captured while the field's registration round-trip is pending.
+// Holding numbers across events is content-blind; holding text is not.
+type MeasuredChangeKind = "deletion" | "net_change" | "replacement";
+
+type FieldTransient = {
+  measuring: { length_before: number; ins_len: number | null; kind: MeasuredChangeKind; source: Source } | null;
+  composition: { pos: number | null; del_len: number | null } | null;
+  queue: PendingMutation[];
+};
+
+const transients = new WeakMap<HTMLElement, FieldTransient>();
+const listening = new WeakSet<HTMLElement>();
+
+function transientFor(element: HTMLElement): FieldTransient {
+  let transient = transients.get(element);
+  if (!transient) {
+    transient = { measuring: null, composition: null, queue: [] };
+    transients.set(element, transient);
+  }
+  return transient;
+}
 
 function isTextField(element: Element): element is HTMLTextAreaElement | HTMLInputElement {
   return element.tagName === "TEXTAREA" || element.tagName === "INPUT";
@@ -150,7 +188,10 @@ function badgeColor(state: FieldEntry["state"]): string {
 }
 
 async function registerField(element: HTMLElement): Promise<void> {
-  if (fields.has(element)) return;
+  const known = fields.get(element);
+  // A field that was ineligible (it had content) or errored is re-evaluated on
+  // focus: it may be empty now, or its uploaded session may be resumable.
+  if (known && known.state !== "ineligible" && known.state !== "error") return;
   if (!isEligibleElement(element)) return;
   const descriptor = extractDescriptor({
     tagName: element.tagName,
@@ -188,6 +229,8 @@ async function registerField(element: HTMLElement): Promise<void> {
   element.setAttribute(SESSION_ATTR, response.result.session_id);
   setBadge(element, "recording", response.result.certainty === "fresh" ? "recording" : `recording (${response.result.certainty})`);
   entry.state = "recording";
+  const queued = transientFor(element).queue.splice(0);
+  for (const mutation of queued) await sendMutation(entry, mutation);
 }
 
 /**
@@ -206,7 +249,10 @@ function handleBeforeInput(event: InputEvent): void {
   const target = event.target as Element | null;
   if (!target || !(target instanceof HTMLElement)) return;
   const entry = fields.get(target);
-  if (!entry || entry.state !== "recording" || !entry.session_id) return;
+  if (!entry || (entry.state !== "recording" && entry.state !== "pending")) return;
+  const transient = transientFor(target);
+  // Composition keystrokes are recorded once, at compositionend.
+  if (transient.composition) return;
   const inputType = event.inputType ?? null;
   const insertedText = event.data ?? "";
   const insertedCodepoints = insertedCodepointsForInput(inputType, insertedText);
@@ -214,32 +260,125 @@ function handleBeforeInput(event: InputEvent): void {
   if (isTextField(target)) {
     const start = target.selectionStart ?? 0;
     const end = target.selectionEnd ?? 0;
-    if (insertedCodepoints === 0 && start === end && !inputType) {
-      sendMutation(entry, ambiguousMutation(insertedText, inputType));
+    const collapsed = start === end;
+    // Collapsed deletes, undo/redo, formatting and spellcheck replacements are
+    // sized by comparing the field length before and after the browser
+    // applies them; only the numeric length crosses to the input handler.
+    if (isNetChangeInputType(inputType) || (collapsed && isDeletionInputType(inputType)) || inputType === "insertReplacementText") {
+      transient.measuring = {
+        length_before: codepointCount(target.value),
+        ins_len: inputType === "insertReplacementText" ? insertedCodepoints : null,
+        kind: inputType === "insertReplacementText" ? "replacement" : isDeletionInputType(inputType) ? "deletion" : "net_change",
+        source: sourceFromInputType(inputType),
+      };
       return;
     }
-    const mutation = buildTextFieldMutation({
+    if (insertedCodepoints === 0 && collapsed && !inputType) {
+      queueOrSend(entry, ambiguousMutation(insertedText, inputType));
+      return;
+    }
+    queueOrSend(entry, buildTextFieldMutation({
       text: target.value,
       selectionStartUtf16: start,
       selectionEndUtf16: end,
       insertedText,
       inputType,
-    });
-    sendMutation(entry, mutation);
+    }));
     return;
   }
 
-  // ContentEditable: degraded. Emit codepoint-counted ins_len from event.data,
-  // with the DOM's structural Enter inputTypes counted as one line-break
-  // codepoint even when event.data is null. Leave pos and del_len as null
-  // rather than fabricate an offset.
-  sendMutation(entry, {
-    op: insertedCodepoints > 0 ? "insert" : "delete",
+  // ContentEditable: degraded. Positions are never fabricated. Deletions and
+  // undo/redo/formatting are sized from the editor's text length before and
+  // after; insertions from event.data or the transferred clipboard/drag text.
+  if (isDeletionInputType(inputType) || isNetChangeInputType(inputType)) {
+    transient.measuring = {
+      length_before: codepointCount(target.textContent ?? ""),
+      ins_len: null,
+      kind: isDeletionInputType(inputType) ? "deletion" : "net_change",
+      source: sourceFromInputType(inputType),
+    };
+    return;
+  }
+  const transferred = event.dataTransfer?.getData("text/plain") ?? null;
+  queueOrSend(entry, {
+    op: "insert",
     pos: null,
     del_len: null,
-    ins_len: insertedCodepoints,
+    ins_len: contentEditableInsertedCodepoints(inputType, event.data, transferred),
     source: sourceFromInputType(inputType),
   });
+}
+
+// Completes a mutation whose size was only measurable after the browser applied
+// it. Reads the field length and caret once, numerically, and discards the
+// reference when the handler returns.
+function handleInput(event: Event): void {
+  const target = event.target as Element | null;
+  if (!target || !(target instanceof HTMLElement)) return;
+  const entry = fields.get(target);
+  const transient = transients.get(target);
+  if (!entry || !transient?.measuring) return;
+  const { length_before, ins_len, kind, source } = transient.measuring;
+  transient.measuring = null;
+
+  if (isTextField(target)) {
+    const lengthAfter = codepointCount(target.value);
+    const caretAfter = codepointOffsetOf(target.value, target.selectionStart ?? lengthAfter);
+    const mutation = kind === "replacement" && ins_len !== null
+      ? measuredReplacementMutation({ lengthBefore: length_before, lengthAfter, insLen: ins_len, caretAfterCodepoints: caretAfter, source })
+      : kind === "deletion"
+        ? collapsedDeletionMutation({ lengthBefore: length_before, lengthAfter, caretAfterCodepoints: caretAfter, source })
+        : netLengthChangeMutation({ lengthBefore: length_before, lengthAfter });
+    if (mutation) queueOrSend(entry, mutation);
+    return;
+  }
+
+  const lengthAfter = codepointCount(target.textContent ?? "");
+  const mutation = netLengthChangeMutation({ lengthBefore: length_before, lengthAfter });
+  if (!mutation) return;
+  if (kind === "deletion") mutation.source = source;
+  queueOrSend(entry, mutation);
+}
+
+function handleCompositionStart(event: CompositionEvent): void {
+  const target = event.target as Element | null;
+  if (!target || !(target instanceof HTMLElement)) return;
+  const entry = fields.get(target);
+  if (!entry || (entry.state !== "recording" && entry.state !== "pending")) return;
+  const transient = transientFor(target);
+  if (isTextField(target)) {
+    const start = target.selectionStart ?? 0;
+    const end = target.selectionEnd ?? 0;
+    transient.composition = {
+      pos: codepointOffsetOf(target.value, Math.min(start, end)),
+      del_len: codepointCount(target.value.slice(Math.min(start, end), Math.max(start, end))),
+    };
+    return;
+  }
+  transient.composition = { pos: null, del_len: null };
+}
+
+function handleCompositionEnd(event: CompositionEvent): void {
+  const target = event.target as Element | null;
+  if (!target || !(target instanceof HTMLElement)) return;
+  const entry = fields.get(target);
+  const transient = transients.get(target);
+  if (!entry || !transient?.composition) return;
+  const composition = transient.composition;
+  transient.composition = null;
+  const mutation = compositionMutation({ ...composition, committedText: event.data ?? "" });
+  if (mutation) queueOrSend(entry, mutation);
+}
+
+// Mutations captured while the registration round-trip is still pending (the
+// service worker may be cold-starting) are held as numeric shapes and flushed
+// once the session id arrives, so the first keystrokes are not lost.
+function queueOrSend(entry: FieldEntry, mutation: PendingMutation): void {
+  if (entry.state === "pending") {
+    transientFor(entry.element).queue.push(mutation);
+    return;
+  }
+  void sendMutation(entry, mutation);
 }
 
 function ambiguousMutation(insertedText: string, inputType: string | null): PendingMutation {
@@ -267,11 +406,21 @@ async function sendMutation(entry: FieldEntry, mutation: PendingMutation): Promi
 }
 
 function attachListeners(element: HTMLElement): void {
+  // DOM re-parenting re-runs the scan; a field gets one set of listeners.
+  if (listening.has(element)) return;
+  listening.add(element);
   element.addEventListener("focus", () => {
     void registerField(element);
   });
   element.addEventListener("beforeinput", (event) => {
     handleBeforeInput(event as InputEvent);
+  });
+  element.addEventListener("input", handleInput);
+  element.addEventListener("compositionstart", (event) => {
+    handleCompositionStart(event as CompositionEvent);
+  });
+  element.addEventListener("compositionend", (event) => {
+    handleCompositionEnd(event as CompositionEvent);
   });
 }
 

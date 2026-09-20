@@ -28,6 +28,7 @@ const sharedOptions = {
   legalComments: "none",
   logLevel: "info",
   define: {
+    __PMBAH_EXT_VERSION__: JSON.stringify(packageJson.version),
     __PMBAH_EXT_BASE_URL__: JSON.stringify(normalizedBaseUrl),
     __PMBAH_EXT_RECORDS_ENDPOINT__: JSON.stringify(`${normalizedBaseUrl}/api/records`),
   },

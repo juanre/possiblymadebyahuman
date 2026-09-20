@@ -53,7 +53,7 @@ From the repository root:
 ```bash
 npm install
 make extension-package
-unzip -l apps/browser-extension/dist/possiblymadebyahuman-extension-0.1.0.zip
+unzip -l apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip
 ```
 
 To point a local/staging package at a different API origin:
