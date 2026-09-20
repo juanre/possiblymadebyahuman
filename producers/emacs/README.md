@@ -399,9 +399,10 @@ make check
   record can still be signed and is then uploaded as `unobserved` or `partial`.
 - Mode line shows `PMBAH:N✗`: the server's commitments diverged from the
   local session, typically because the same file was recorded from two Emacs
-  instances. No further checkpoints are sent. Signing binds the existing token;
-  if the server then rejects the upload with HTTP 409, the commitments it holds
-  do not match this session, and `M-x pmbah-discard-session` starts over.
+  instances. No further checkpoints are sent. Signing still works: the record
+  is uploaded with an explicit `unobserved` state instead of binding the
+  diverged commitments, and the upload message says so, quoting the last
+  checkpoint failure.
 - `PMBAH: the saved session for <file> ... starting a fresh session`: the saved
   state could not be resumed (too old for a record's 32-bit clock, a different
   format version, or unreadable). It was kept next to the state file with a

@@ -100,6 +100,8 @@ start time, public events, and the observation token; never document text."
   "Commitments kept locally: the oldest anchor plus the most recent ones.")
 (defconst pmbah-observation-flush-timeout-seconds 15
   "How long `pmbah-sign-buffer' waits for the final checkpoint before uploading.")
+(defconst pmbah-observation-flush-rounds 2
+  "Checkpoint rounds the pre-sign flush may run to cover late-arriving events.")
 (defvar pmbah-observation-request-timeout-seconds 30
   "Seconds a checkpoint attempt may take before it counts as a transient failure.")
 
@@ -524,6 +526,7 @@ tests."
                    (pmbah--observation-flush)
                    (pmbah-build-record-for-current-buffer context final-text)))
          (observation (pmbah--observation-envelope))
+         (observation-note (pmbah--observation-upload-note))
          (response (pmbah--post-record
                     (if observation
                         (append record (list (cons 'observation observation)))
@@ -533,8 +536,9 @@ tests."
       (kill-new url))
     (pmbah--delete-state)
     (pmbah--start-session)
-    (message "PMBAH record uploaded; copied %s; new session %s started"
+    (message "PMBAH record uploaded; copied %s%s; new session %s started"
              url
+             observation-note
              pmbah--session-id)
     response))
 
@@ -931,23 +935,43 @@ Return non-nil when nothing is in flight."
 (defun pmbah--observation-flush ()
   "Commit the uncommitted tail of an observed session before signing.
 A session the server never saw is uploaded as unobserved rather than
-observed for the first time at sign time."
+observed for the first time at sign time.  Events that arrived while a
+checkpoint was already in flight need a second round; the flush runs at
+most `pmbah-observation-flush-rounds' rounds within
+`pmbah-observation-flush-timeout-seconds'."
   (when (and pmbah-observe-process
              pmbah--observation-token
              (not (eq pmbah--observation-state 'diverged)))
-    (when (and (not pmbah--observation-in-flight)
-               (> pmbah--next-seq pmbah--observation-committed-count))
-      (setq pmbah--observation-backoff-ms 0)
-      (pmbah--observation-kick))
-    (pmbah--observation-wait pmbah-observation-flush-timeout-seconds)))
+    (let ((deadline (+ (float-time) pmbah-observation-flush-timeout-seconds))
+          (rounds 0))
+      (while (and (< rounds pmbah-observation-flush-rounds)
+                  (< (float-time) deadline)
+                  (not (eq pmbah--observation-state 'diverged))
+                  (or pmbah--observation-in-flight
+                      (> pmbah--next-seq pmbah--observation-committed-count)))
+        (unless pmbah--observation-in-flight
+          (setq pmbah--observation-backoff-ms 0)
+          (pmbah--observation-kick))
+        (setq rounds (1+ rounds))
+        (pmbah--observation-wait (max 0 (- deadline (float-time))))))))
 
 (defun pmbah--observation-envelope ()
-  "Return the `observation' upload field, or nil when observation is off."
+  "Return the `observation' upload field, or nil when observation is off.
+A diverged session is uploaded as unobserved: binding its token would make
+the server reject the record, and the writing record matters more than the
+commitments."
   (cond
    ((not pmbah-observe-process) nil)
-   (pmbah--observation-token
+   ((and pmbah--observation-token (not (eq pmbah--observation-state 'diverged)))
     (list :observed_session_id pmbah--session-id :token pmbah--observation-token))
    (t (list :state "unobserved"))))
+
+(defun pmbah--observation-upload-note ()
+  "Return text for the upload message about observation, or an empty string."
+  (if (and pmbah-observe-process (eq pmbah--observation-state 'diverged))
+      (format "; server observation diverged and was not bound (%s)"
+              pmbah--observation-last-failure)
+    ""))
 
 (defun pmbah--observation-status ()
   "Return a JSON-serializable plist describing observation for this buffer."

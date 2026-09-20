@@ -199,7 +199,7 @@ Use `C-u M-x pmbah-sign-buffer` to skip the prompts and accept the default yes a
 - **Upload HTTP errors**: run `M-x pmbah-show-session-status` and confirm `pmbah-api-base-url` is `https://possiblymadebyahuman.com` for normal public use. `http://localhost:8000` only works when you are running `make local-container` locally. The API origin must serve `POST /api/records`, and `/ready` should be healthy.
 - **No URL copied**: upload did not complete; the local session is retained for retry.
 - **Mode line stays at `PMBAH:N·`**: no checkpoint has succeeded yet, or the last ones failed. `M-x pmbah-show-session-status` shows the last failure. Failed checkpoints retry with a growing delay (1 s to 60 s) on the next edit; the record can still be signed and is then uploaded as `unobserved` or `partial`.
-- **Mode line shows `PMBAH:N✗`**: the service's commitments diverged from the local session, typically because the same file was recorded from two Emacs instances. No further checkpoints are sent. If the service then rejects the upload with HTTP 409, `M-x pmbah-discard-session` starts over.
+- **Mode line shows `PMBAH:N✗`**: the service's commitments diverged from the local session, typically because the same file was recorded from two Emacs instances. No further checkpoints are sent. Signing still works: the record is uploaded with an explicit `unobserved` state instead of binding the diverged commitments, and the upload message says so, quoting the last checkpoint failure.
 - **`PMBAH: the saved session for <file> ... starting a fresh session`**: the saved state could not be resumed (too old for a record's 32-bit clock, a different format version, or unreadable). It was kept next to the state file with a `.stale` suffix.
 
 ## Sibling producers

@@ -636,6 +636,115 @@ test("Emacs producer uploads an explicit unobserved state when no checkpoint eve
   }
 });
 
+test("Emacs producer uploads a diverged session as unobserved and tells the writer", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const { createIngestApi } = await import("../apps/ingest-api/src/index.ts");
+  const { createRuntimeServer } = await import("../apps/ingest-api/src/server.ts");
+  const { InMemoryRecordStore } = await import("../packages/storage/src/index.ts");
+  const store = new InMemoryRecordStore();
+  const api = createIngestApi({ store, baseUrl: "http://pmbah.test" });
+  const server = createRuntimeServer({ api, db: { async query() { return { rows: [] }; } } });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const { port } = server.address();
+
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-diverged-"));
+  const outputPath = join(temp, "diverged.json");
+  const scriptPath = join(temp, "diverged.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+  const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
+
+  await writeFile(scriptPath, `;;; diverged.el --- a diverged observation must not block signing -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(setq pmbah-helper-script ${JSON.stringify(helperPath)})
+(with-temp-buffer
+  (text-mode)
+  (pmbah-mode 1)
+  (insert "Committed words")
+  (pmbah--observation-wait 10)
+  ;; The server answers a later checkpoint with a conflict: the session is pinned diverged.
+  (setq pmbah--observation-in-flight t)
+  (pmbah--observation-apply (list 'conflict 409 "checkpoint_chain_tip_conflict"))
+  (insert " and more")
+  (let* ((status-before-sign (pmbah--observation-status))
+         (response (pmbah-sign-buffer (list :surface "emacs") t)))
+    (with-temp-file ${JSON.stringify(outputPath)}
+      (insert (pmbah--json-encode (list :response response :status_before_sign status-before-sign))))))
+`);
+
+  try {
+    const result = await runEmacs(scriptPath, { PMBAH_API_BASE_URL: `http://127.0.0.1:${port}` });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.status_before_sign.state, "diverged");
+    assert.equal(output.status_before_sign.token_present, true);
+    assert.match(output.response.short_signature, /^[1-9A-HJ-NP-Za-km-z]+$/, "the upload succeeded");
+    const fetched = await api.getRecord(output.response.short_signature);
+    assert.equal(fetched.status, 200);
+    assert.equal(fetched.body.events.length, 2);
+    assert.equal(fetched.body.observation.state, "unobserved", "no token is bound for a diverged session");
+    assert.match(result.stderr, /PMBAH record uploaded/);
+    assert.match(result.stderr, /server observation diverged and was not bound/);
+    assert.match(result.stderr, /conflict \(HTTP 409\): checkpoint_chain_tip_conflict/, "the last failure is shown");
+    assert.equal(result.stderr.includes("Committed words"), false);
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs pre-sign flush commits events that arrived while a checkpoint was in flight", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const { createIngestApi } = await import("../apps/ingest-api/src/index.ts");
+  const { createRuntimeServer } = await import("../apps/ingest-api/src/server.ts");
+  const { InMemoryRecordStore } = await import("../packages/storage/src/index.ts");
+  const store = new InMemoryRecordStore();
+  const api = createIngestApi({ store, baseUrl: "http://pmbah.test" });
+  const server = createRuntimeServer({ api, db: { async query() { return { rows: [] }; } } });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const { port } = server.address();
+
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-flush-"));
+  const outputPath = join(temp, "flush.json");
+  const scriptPath = join(temp, "flush.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+  const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
+
+  await writeFile(scriptPath, `;;; flush.el --- events captured during an in-flight kick are still flushed -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(setq pmbah-helper-script ${JSON.stringify(helperPath)})
+(with-temp-buffer
+  (text-mode)
+  (pmbah-mode 1)
+  (insert "One")
+  (pmbah--observation-wait 10)
+  ;; Not due by count or time, so the cadence does not queue this event.
+  (insert " two")
+  ;; The 60 s rule fires: a kick for two events goes in flight.
+  (pmbah--observation-kick)
+  ;; A third event arrives while that kick is in flight and is not queued either.
+  (insert " three")
+  (let ((during-flight (pmbah--observation-status)))
+    (let ((response (pmbah-sign-buffer (list :surface "emacs") t)))
+      (with-temp-file ${JSON.stringify(outputPath)}
+        (insert (pmbah--json-encode (list :response response :during_flight during-flight)))))))
+`);
+
+  try {
+    const result = await runEmacs(scriptPath, { PMBAH_API_BASE_URL: `http://127.0.0.1:${port}` });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.during_flight.in_flight, true);
+    assert.equal(output.during_flight.committed_event_count, 1);
+    assert.equal(output.during_flight.event_count, 3);
+    const fetched = await api.getRecord(output.response.short_signature);
+    assert.equal(fetched.status, 200);
+    assert.equal(fetched.body.events.length, 3);
+    assert.equal(fetched.body.observation.state, "observed");
+    assert.equal(fetched.body.observation.commitments.at(-1).event_count, 3);
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Emacs session survives a major-mode change and revert-buffer", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-major-mode-"));
   const outputPath = join(temp, "major-mode.json");
