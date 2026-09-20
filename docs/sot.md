@@ -147,7 +147,7 @@ Owns:
 - session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
 - capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
 - TTL sweep
-- server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before sign+upload, and a `getObservationEnvelope()` accessor for binding `(observed_session_id, token)` onto `POST /api/records`
+- server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before sign+upload that completes observation of a session with at least one commitment (final checkpoint over the uncommitted tail, plus one more round for events that arrive while it is in flight; at most two rounds) and leaves a never-committed session alone, and a `getObservationEnvelope()` accessor that yields the `(observed_session_id, token)` binding for `POST /api/records` when a commitment exists and the session has not diverged, `{ state: "unobserved" }` when it has no commitment or is `diverged`, and `null` when no checkpoint adapter is wired
 - local observation state vocabulary (`disabled` / `unknown` / `known` / `partial` / `diverged`) distinct from the public wire vocabulary on records (`observed` / `partial` / `unobserved` / `not_requested`)
 - adapter interfaces (`StorageAdapter`, `UploadAdapter`, `CheckpointAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`)
 
@@ -621,9 +621,11 @@ Input:
 {
   "manifest": {},
   "events": [],
-  "observation": { "observed_session_id": "...", "token": "..." } // optional; or { "state": "unobserved" } when observation was requested but no commitment succeeded
+  "observation": { "observed_session_id": "...", "token": "..." } // optional; or { "state": "unobserved" } when observation was requested but no commitment succeeded, or the session's checkpoints diverged from the server's
 }
 ```
+
+A producer binds `(observed_session_id, token)` only for a session with at least one commitment whose checkpoints the server has not rejected; before signing it flushes a final checkpoint over that session's uncommitted tail (and one more if events arrive while it is in flight). A session with no commitment, or one pinned `diverged`, is uploaded as `{ "state": "unobserved" }` so signing still succeeds; the producer tells the writer when that happens because of divergence.
 
 Backend behavior:
 
@@ -638,7 +640,7 @@ Backend behavior:
 9. Store immutable record row.
 10. Compute and store `record_stats`.
 11. Run v0 analyzers and store `analysis_results` if cheap enough synchronously; otherwise queue later.
-12. If an observation binding is present, recompute every stored checkpoint prefix from the submitted public events and reject finalization on mismatch.
+12. If an observation binding is present, recompute every stored checkpoint prefix from the submitted public events and reject finalization on mismatch. If the observation is `{ "state": "unobserved" }`, store the record with public observation state `unobserved` and no commitments.
 13. Return record URL.
 
 Output:
