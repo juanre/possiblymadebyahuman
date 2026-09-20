@@ -15,6 +15,8 @@ body {
 }
 button { font: inherit; }
 button:disabled { cursor: not-allowed; opacity: 0.55; }
+/* Keyboard focus is always visible; pointer focus is left to each control. */
+:focus-visible { outline: 2px solid #8b5e34; outline-offset: 2px; }
 
 .page-shell {
   max-width: 1120px;
@@ -32,7 +34,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
   color: inherit;
   text-decoration: none;
 }
-.eyebrow-home:hover, .eyebrow-home:focus-visible { text-decoration: underline; outline: none; }
+.eyebrow-home:hover, .eyebrow-home:focus-visible { text-decoration: underline; }
 
 h1 {
   font-size: clamp(2.4rem, 8vw, 5rem);
@@ -232,7 +234,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   border-bottom: 1px solid #d9c8ad;
   padding-bottom: 1px;
 }
-.check-cta a:hover, .check-cta a:focus-visible { color: #5a3819; border-bottom-color: #8b5e34; outline: none; }
+.check-cta a:hover, .check-cta a:focus-visible { color: #5a3819; border-bottom-color: #8b5e34; }
 
 /* Signet — the stamped header that tells a newcomer what this is and signs
    the process (and text). */
@@ -272,7 +274,7 @@ section.card[aria-label="Check a document"] {
 }
 .record-footer-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; margin: 0 0 10px; }
 .record-footer-links a { color: #8b5e34; text-decoration: none; }
-.record-footer-links a:hover, .record-footer-links a:focus-visible { text-decoration: underline; outline: none; }
+.record-footer-links a:hover, .record-footer-links a:focus-visible { text-decoration: underline; }
 .record-footer-note { font-size: 0.85rem; margin: 0; }
 
 /* Writing-rhythm fingerprint — log-bucketed inter-edit delay histogram. */
@@ -280,7 +282,7 @@ section.card[aria-label="Check a document"] {
 .fp-area { fill: rgba(47, 128, 237, 0.16); }
 .fp-line { fill: none; stroke: #2f80ed; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .fp-tick-line { stroke: #e3d7c0; stroke-width: 1; }
-.fp-label { fill: #8a8073; font-size: 10px; text-anchor: middle; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.fp-label { fill: #8a8073; font-size: 11px; text-anchor: middle; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
 .fingerprint-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; margin: 8px 0 0; }
 .fingerprint-stats div { background: #fbf3e8; border-radius: 12px; padding: 10px 12px; }
 .fingerprint-stats dt { color: #756b60; font-size: 0.82rem; margin: 0; }
@@ -307,7 +309,7 @@ section.card[aria-label="Check a document"] {
   cursor: pointer;
   padding: 0;
 }
-.measure-info:hover, .measure-info:focus-visible { border-color: #8b5e34; color: #3d2f17; outline: none; }
+.measure-info:hover, .measure-info:focus-visible { border-color: #8b5e34; color: #3d2f17; }
 .measure-popover {
   position: absolute;
   top: 135%;
@@ -346,7 +348,7 @@ section.card[aria-label="Check a document"] {
   padding: 2px 6px;
   border-radius: 4px;
 }
-.write-home:hover, .write-home:focus-visible { opacity: 1; text-decoration: underline; outline: none; }
+.write-home:hover, .write-home:focus-visible { opacity: 1; text-decoration: underline; }
 .write-canvas-wrap {
   flex: 1 1 auto;
   display: flex;
@@ -400,9 +402,9 @@ section.card[aria-label="Check a document"] {
   border-bottom: 1px solid #d9c8ad;
   padding-bottom: 1px;
 }
-.write-result-link:hover, .write-result-link:focus-visible { color: #5a3819; border-bottom-color: #8b5e34; outline: none; }
+.write-result-link:hover, .write-result-link:focus-visible { color: #5a3819; border-bottom-color: #8b5e34; }
 .write-result-arrow { color: #756b60; font-size: 0.86rem; text-decoration: none; }
-.write-result-arrow:hover, .write-result-arrow:focus-visible { color: #5a3819; outline: none; }
+.write-result-arrow:hover, .write-result-arrow:focus-visible { color: #5a3819; }
 @keyframes write-result-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: none; }
@@ -500,3 +502,31 @@ section.card[aria-label="Check a document"] {
 .write-sign-option { display: flex; align-items: flex-start; gap: 8px; }
 .write-sign-note { margin: 4px 0 0; color: #756b60; }
 .write-sign-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+/* Phones: one column of cards with 16px gutters, stacked key/value details,
+   two-up stat tiles, and a modeline that wraps instead of clipping. */
+@media (max-width: 640px) {
+  .page-shell { padding: 32px 16px 64px; }
+  .banner, .card { padding: 16px; border-radius: 14px; }
+  .stats-grid, .fingerprint-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .measure-grid { grid-template-columns: minmax(0, 1fr) minmax(0, auto); }
+  .details { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .details dt { margin-top: 10px; }
+  .details dt:first-child { margin-top: 0; }
+  .observation-commitment { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .signet-head { gap: 12px; }
+  .signet-seal-svg { width: 48px; height: 48px; }
+  .measure-popover { max-width: min(260px, 80vw); }
+
+  .write-canvas-wrap { padding: 38px 12px 8px; }
+  .write-canvas { padding: 1.9rem 16px; }
+  .write-message { padding: 6px 12px 0; }
+  .write-result { flex-wrap: wrap; padding: 12px 12px 4px; }
+  .write-result-link { overflow-wrap: anywhere; min-width: 0; }
+  .write-sign-sheet { width: auto; margin: 0 12px 8px; }
+  .write-modeline { flex-wrap: wrap; gap: 6px 12px; padding: 8px 12px 10px; }
+  .ml-left, .ml-right { flex: 1 1 100%; flex-wrap: wrap; }
+  .ml-left { overflow: visible; }
+  .ml-right { justify-content: flex-end; }
+  .ml-error { white-space: normal; max-width: none; }
+}

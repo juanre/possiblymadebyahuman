@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
 import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDelayMs, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
@@ -92,12 +92,44 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
 }
 
-const TIMELINE_VB_W = 1200;
+// Chart geometry is in CSS pixels: the viewBox width follows the rendered
+// width of the SVG, so labels keep their size on a phone instead of shrinking
+// with a fixed 1200-unit canvas. The fallback width is used until measured.
+const TIMELINE_FALLBACK_W = 1200;
 const TIMELINE_VB_H = 220;
 const TIMELINE_PAD_L = 50;
 const TIMELINE_PAD_R = 20;
 const TIMELINE_PAD_T = 28;
 const TIMELINE_PAD_B = 48;
+const TIMELINE_MIN_TICK_SPACING_PX = 56;
+const TIMELINE_TICK_STEPS_SECONDS = [10, 30, 60, 300, 600, 1800, 3600];
+
+// Width of an element's content box, tracked as it resizes.
+function useContentWidth<T extends Element>(fallback: number): [React.RefObject<T | null>, number] {
+  const ref = useRef<T | null>(null);
+  const [width, setWidth] = useState(fallback);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const measured = entries[0]?.contentRect.width ?? 0;
+      if (measured > 0) setWidth(Math.round(measured));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+// The coarsest step that keeps tick labels at least the minimum spacing apart.
+function timelineTickStepSeconds(totalSeconds: number, plotW: number): number {
+  const maxTicks = Math.max(1, Math.floor(plotW / TIMELINE_MIN_TICK_SPACING_PX));
+  for (const step of TIMELINE_TICK_STEPS_SECONDS) {
+    if (totalSeconds / step <= maxTicks) return step;
+  }
+  const largest = TIMELINE_TICK_STEPS_SECONDS[TIMELINE_TICK_STEPS_SECONDS.length - 1]!;
+  return largest * Math.ceil(totalSeconds / (largest * maxTicks));
+}
 
 function sourceFill(source: string): string {
   switch (source) {
@@ -131,7 +163,8 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const maxLength = timelineLengthScale(points, record.stats.observed_final_length);
   const observedDurationMs = record.manifest.duration_ms || (points.length > 0 ? points[points.length - 1]!.t : 0);
   const duration = Math.max(1, observedDurationMs);
-  const plotW = TIMELINE_VB_W - TIMELINE_PAD_L - TIMELINE_PAD_R;
+  const [chartRef, chartW] = useContentWidth<SVGSVGElement>(TIMELINE_FALLBACK_W);
+  const plotW = Math.max(1, chartW - TIMELINE_PAD_L - TIMELINE_PAD_R);
   const plotH = TIMELINE_VB_H - TIMELINE_PAD_T - TIMELINE_PAD_B;
   const baseline = TIMELINE_PAD_T + plotH;
   const tx = (t: number) => TIMELINE_PAD_L + (Math.min(duration, Math.max(0, t)) / duration) * plotW;
@@ -172,10 +205,12 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const hasLongPause = pauseSpans.length > 0;
 
   const totalSeconds = duration / 1000;
-  const tickEverySeconds = totalSeconds < 60 ? 10 : totalSeconds < 300 ? 30 : totalSeconds < 1200 ? 60 : 300;
+  const tickEverySeconds = timelineTickStepSeconds(totalSeconds, plotW);
   const ticks: number[] = [];
   for (let seconds = 0; seconds <= totalSeconds; seconds += tickEverySeconds) ticks.push(seconds);
-  if (ticks.at(-1) !== Math.floor(totalSeconds)) ticks.push(totalSeconds);
+  // Mark the end of the record too, unless its label would sit on the last tick's.
+  const lastTickSeconds = ticks[ticks.length - 1] ?? 0;
+  if (((totalSeconds - lastTickSeconds) / totalSeconds) * plotW >= TIMELINE_MIN_TICK_SPACING_PX) ticks.push(totalSeconds);
 
   return (
     <section className="card timeline-card">
@@ -187,14 +222,14 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
       ) : (
         <p className="muted">Document length is unknown for this record: the capture started inside existing text, or an early edit had no recorded position, so the events alone cannot say how long the document was. Pastes, cuts, and large inserts are marked in time; shaded bands are long pauses.</p>
       )}
-      <svg className="timeline-chart" viewBox={`0 0 ${TIMELINE_VB_W} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
+      <svg ref={chartRef} className="timeline-chart" viewBox={`0 0 ${chartW} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
         {pauseSpans.map((point) => {
           const startT = Math.max(0, point.t - point.delayFromPreviousMs);
           const x = tx(startT);
           const width = Math.max(2, tx(point.t) - x);
           return <rect key={`pause-${point.seq}`} x={x} y={TIMELINE_PAD_T} width={width} height={plotH} fill="#ead9b8" opacity={0.45} />;
         })}
-        <line x1={TIMELINE_PAD_L} y1={baseline} x2={TIMELINE_VB_W - TIMELINE_PAD_R} y2={baseline} stroke="#d8c8a6" strokeWidth={0.6} />
+        <line x1={TIMELINE_PAD_L} y1={baseline} x2={chartW - TIMELINE_PAD_R} y2={baseline} stroke="#d8c8a6" strokeWidth={0.6} />
         {lengthKnown ? <path className="length-area" d={areaPath} fill="rgba(139, 94, 52, 0.18)" stroke="none" /> : null}
         {lengthKnown ? <path className="length-curve" d={linePath} fill="none" stroke="#8b5e34" strokeWidth={1.2} strokeLinejoin="round" strokeLinecap="round" /> : null}
         {notable.map((point) => {
@@ -218,7 +253,7 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
             </g>
           );
         })}
-        <text x={TIMELINE_VB_W - TIMELINE_PAD_R} y={baseline + 34} fontSize={10} fill="#a89a82" fontFamily="ui-monospace, monospace" textAnchor="end">time →</text>
+        <text x={chartW - TIMELINE_PAD_R} y={baseline + 34} fontSize={10} fill="#a89a82" fontFamily="ui-monospace, monospace" textAnchor="end">time →</text>
       </svg>
       <div className="legend">
         {lengthKnown && <><span className="dot curve" /> document length{" "}</>}
@@ -564,6 +599,7 @@ export function CommensurabilityCard({ record }: { record: RecordApiResponse }) 
 const FP_MIN_MS = 16;
 const FP_MAX_MS = 100_000;
 const FP_BINS = 40;
+const FP_FALLBACK_W = 660;
 const FP_TICKS: { ms: number; label: string }[] = [
   { ms: 100, label: "100ms" },
   { ms: 1000, label: "1s" },
@@ -576,6 +612,7 @@ const FP_TICKS: { ms: number; label: string }[] = [
 // keep the typing cadence crisp while long pauses fall into the right tail, so
 // a single big pause never flattens the curve.
 export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
+  const [chartRef, W] = useContentWidth<SVGSVGElement>(FP_FALLBACK_W);
   const points = buildTimelinePoints(record.events);
   const delays = points.filter((point) => point.seq > 0).map((point) => point.delayFromPreviousMs).filter((delay) => delay > 0);
   if (delays.length === 0) return null;
@@ -589,7 +626,7 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   }
   const maxCount = Math.max(...counts, 1);
   const stats = record.stats;
-  const W = 660, H = 150, padL = 8, padR = 8, padT = 10, padB = 26;
+  const H = 150, padL = 8, padR = 8, padT = 10, padB = 26;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const baseY = padT + innerH;
@@ -606,7 +643,7 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
     <section className="card fingerprint-card" aria-label="Writing rhythm">
       <h2>Writing rhythm</h2>
       <p className="muted">Time between consecutive edits, on a log scale.</p>
-      <svg className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of time between edits">
+      <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of time between edits">
         {FP_TICKS.map((tick) => (
           <line key={`line-${tick.ms}`} x1={xForMs(tick.ms)} y1={padT} x2={xForMs(tick.ms)} y2={baseY} className="fp-tick-line" />
         ))}
