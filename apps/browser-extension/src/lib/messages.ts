@@ -64,7 +64,9 @@ export type RegisterFieldResult =
   | { kind: "ineligible"; reason: "non_empty_field_no_resumable_session" };
 
 export type SignSessionResult =
-  | { kind: "uploaded"; response: IngestRecordResponse }
+  // observation_note explains, for the signer, when the record was uploaded
+  // without server observation although observation had been requested.
+  | { kind: "uploaded"; response: IngestRecordResponse; observation_note?: string }
   | { kind: "failed"; reason: string };
 
 export type BackgroundResponse =

@@ -25,6 +25,10 @@ export interface DispatcherOptions {
   producer: ProducerIdentity;
 }
 
+/** Shown to the signer when the server's checkpoints stopped matching the session and the record went up unobserved. */
+export const DIVERGED_OBSERVATION_NOTE =
+  "server observation of this session diverged, so the record is saved without server-observed commitments";
+
 export class BackgroundDispatcher {
   readonly registry: SessionRegistry;
   readonly #upload: UploadAdapter;
@@ -160,6 +164,7 @@ export class BackgroundDispatcher {
       await this.registry.flushObservation(session_id);
       const draft = this.registry.sign(session_id, textBinding ? { textBinding } : {});
       const observation = this.registry.getObservationEnvelope(session_id);
+      const diverged = this.registry.get(session_id)?.observation.state === "diverged";
       this.registry.markUploading(session_id);
       const response = await this.#upload.postRecord({
         manifest: draft.manifest,
@@ -168,7 +173,11 @@ export class BackgroundDispatcher {
       });
       this.registry.markUploaded(session_id, response);
       await this.registry.persist();
-      return { kind: "uploaded", response };
+      return {
+        kind: "uploaded",
+        response,
+        ...(diverged ? { observation_note: DIVERGED_OBSERVATION_NOTE } : {}),
+      };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       const live = this.registry.get(session_id);

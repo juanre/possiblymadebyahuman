@@ -26,8 +26,8 @@ import type {
   FieldDescriptor,
   FieldOrigin,
   IngestRecordResponse,
-  ObservationEnvelope,
   ObservationLocalState,
+  ObservationUploadRequest,
   ObservedCommitment,
   PendingMutation,
   ProducerIdentity,
@@ -139,11 +139,20 @@ export class SessionRegistry {
     return record ? cloneSession(record) : undefined;
   }
 
-  getObservationEnvelope(session_id: SessionId): ObservationEnvelope | null {
+  /**
+   * What the upload should say about server observation: `null` when no
+   * checkpoint adapter is wired (observation not requested), the bound
+   * `(observed_session_id, token)` when a commitment exists and the server's
+   * view still matches ours, and `{ state: "unobserved" }` otherwise — a
+   * session the server never committed, or one whose checkpoints diverged.
+   * A diverged session's token stays local: binding it would only make the
+   * server reject the record.
+   */
+  getObservationEnvelope(session_id: SessionId): ObservationUploadRequest | null {
     const record = this.#sessions.get(session_id);
-    if (!record) return null;
-    const { observed_session_id, last_observed_token } = record.observation;
-    if (!observed_session_id || !last_observed_token) return null;
+    if (!record || !this.#checkpoint) return null;
+    const { state, observed_session_id, last_observed_token } = record.observation;
+    if (state === "diverged" || !observed_session_id || !last_observed_token) return { state: "unobserved" };
     return { observed_session_id, token: last_observed_token };
   }
 
@@ -402,23 +411,29 @@ export class SessionRegistry {
   }
 
   /**
-   * Kicks one checkpoint covering uncheckpointed events and awaits it.
-   * Producers call this before sign() + upload so the server has a final commitment.
-   * Does not retry on transient failure; the consumer reads observation state and
-   * decides whether to bind a (possibly stale) envelope on the upload.
+   * Completes server observation of an already-observed session before
+   * sign() + upload, so the final commitment covers every event. The first
+   * round awaits the in-flight checkpoint or kicks one for the uncommitted
+   * tail; a second round covers events that arrived while the first was in
+   * flight. A session the server has never committed is left alone: a
+   * commitment minted at sign time would observe nothing of the writing, and
+   * the upload carries `{ state: "unobserved" }` instead. Does not retry on
+   * failure; the consumer reads `getObservationEnvelope()` for what to bind.
    */
   async flushObservation(session_id: SessionId): Promise<void> {
     if (!this.#checkpoint) return;
-    const record = this.#sessions.get(session_id);
-    if (!record) return;
-    if (record.observation.state === "diverged") return;
-    const pending = record.events.length - record.observation.last_committed_event_count;
-    if (pending <= 0 && !record.observation.in_flight) return;
-    if (pending > 0 && !record.observation.in_flight) {
-      record.observation.next_backoff_ms = 0;
-      this.#kickCheckpoint(record);
+    for (let round = 0; round < 2; round++) {
+      const record = this.#sessions.get(session_id);
+      if (!record || record.observation.state === "diverged") return;
+      if (round > 0 && record.observation.last_failure) return;
+      if (!record.observation.in_flight) {
+        if (record.observation.last_committed_event_count === 0) return;
+        if (record.events.length <= record.observation.last_committed_event_count) return;
+        record.observation.next_backoff_ms = 0;
+        this.#kickCheckpoint(record);
+      }
+      await this.awaitObservationIdle(session_id);
     }
-    await this.awaitObservationIdle(session_id);
   }
 
   #normaliseLoadedRecord(record: SessionRecord): SessionRecord {

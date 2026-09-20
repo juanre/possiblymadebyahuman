@@ -366,11 +366,14 @@ function recordingUpload(response) {
 
 function recordingCheckpoint() {
   const calls = [];
+  const programmed = [];
   let counter = 0;
   return {
     async postCheckpoint(request) {
       calls.push(request);
       counter += 1;
+      const next = programmed.shift();
+      if (next) return next;
       return {
         ok: true,
         response: {
@@ -384,18 +387,19 @@ function recordingCheckpoint() {
         },
       };
     },
+    // Responses returned, in order, in place of the default success; `undefined` keeps the default.
+    queue(...responses) { programmed.push(...responses); },
     calls,
   };
 }
 
 const PRODUCER = { id: "browser-extension", version: "0.1.0", capabilities: ["timing", "source_attribution"] };
 
-function makeDispatcher() {
+function makeDispatcher({ checkpoint = recordingCheckpoint() } = {}) {
   const clock = mutableClock(1000);
   const uuid = deterministicUuid();
   const storage = inMemoryStorage();
   const upload = recordingUpload();
-  const checkpoint = recordingCheckpoint();
   const dispatcher = new BackgroundDispatcher({
     clock, uuid, storage, upload, checkpoint, producer: PRODUCER,
   });
@@ -438,6 +442,59 @@ test("dispatcher: register → append → sign → upload → marks uploaded", a
   assert.equal(checkpoint.calls.length >= 1, true);
   const live = dispatcher.registry.get(sid);
   assert.equal(live.state, "uploaded");
+});
+
+test("dispatcher: a session the server never committed uploads as unobserved without a sign-time checkpoint", async () => {
+  const checkpoint = recordingCheckpoint();
+  checkpoint.queue({ ok: false, kind: "transient", status: 503, reason: "upstream unavailable" });
+  const { dispatcher, upload } = makeDispatcher({ checkpoint });
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  for (let i = 0; i < 3; i++) {
+    await dispatcher.handle({
+      kind: "append_mutation", session_id: sid,
+      mutation: { op: "insert", pos: i, del_len: 0, ins_len: 1, source: "typing" },
+    });
+  }
+  await dispatcher.registry.awaitObservationIdle(sid);
+  assert.equal(checkpoint.calls.length, 1);
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "uploaded");
+  assert.equal(signed.result.observation_note, undefined);
+  assert.equal(checkpoint.calls.length, 1, "signing must not create a first commitment");
+  assert.deepEqual(upload.calls[0].observation, { state: "unobserved" });
+});
+
+test("dispatcher: a diverged session uploads as unobserved and the result says so", async () => {
+  const checkpoint = recordingCheckpoint();
+  checkpoint.queue(undefined, { ok: false, kind: "conflict", status: 409, reason: "chain mismatch" });
+  const { dispatcher, upload } = makeDispatcher({ checkpoint });
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  for (let i = 0; i < 51; i++) {
+    await dispatcher.handle({
+      kind: "append_mutation", session_id: sid,
+      mutation: { op: "insert", pos: i, del_len: 0, ins_len: 1, source: "typing" },
+    });
+  }
+  await dispatcher.registry.awaitObservationIdle(sid);
+  assert.equal(dispatcher.registry.get(sid).observation.state, "diverged");
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "uploaded", signed.result.reason);
+  assert.equal(typeof signed.result.observation_note, "string");
+  assert.ok(signed.result.observation_note.length > 0);
+  assert.deepEqual(upload.calls[0].observation, { state: "unobserved" });
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
 });
 
 test("dispatcher: signed manifest passes packages/format.verifyRecord", async () => {

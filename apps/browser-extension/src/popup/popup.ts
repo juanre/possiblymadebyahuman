@@ -211,7 +211,8 @@ async function reportUploadOutcome(response: BackgroundResponse, failurePrefix: 
     } catch {
       // clipboard may be denied; the URL stays visible as the popup link.
     }
-    showToast(copied ? `record saved · link copied (${result.response.short_signature})` : `record saved · ${result.response.short_signature} (copy the link below)`);
+    const saved = copied ? `record saved · link copied (${result.response.short_signature})` : `record saved · ${result.response.short_signature} (copy the link below)`;
+    showToast(result.observation_note ? `${saved} · ${result.observation_note}` : saved);
   } else {
     const reason = result?.kind === "failed" ? result.reason : response.kind === "error" ? response.reason : "unknown";
     showToast(`${failurePrefix}: ${reason}`, true);
