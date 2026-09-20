@@ -923,6 +923,63 @@ test("Emacs producer starts fresh, keeping the stale state, when a resumed sessi
   }
 });
 
+test("Emacs checkpoint attempt times out against a server that never answers and later edits retry", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const { createServer } = await import("node:http");
+  const seen = [];
+  const server = createServer((request) => { seen.push(request.url); });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const { port } = server.address();
+
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-timeout-"));
+  const outputPath = join(temp, "timeout.json");
+  const scriptPath = join(temp, "timeout.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+
+  await writeFile(scriptPath, `;;; timeout.el --- a checkpoint request that never completes -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(setq pmbah-observation-request-timeout-seconds 1)
+(with-temp-buffer
+  (text-mode)
+  (pmbah-mode 1)
+  (insert "Stuck")
+  (let* ((started (float-time))
+         (settled (pmbah--observation-wait 10))
+         (waited (- (float-time) started))
+         (after-timeout (pmbah--observation-status))
+         (processes (mapcar #'process-name (process-list))))
+    ;; The backoff is 1 s after one failure; wait it out, edit again, and the
+    ;; attempt is re-kicked.
+    (sleep-for 1.1)
+    (insert "!")
+    (let ((rekicked (pmbah--observation-status)))
+      (with-temp-file ${JSON.stringify(outputPath)}
+        (insert (pmbah--json-encode (list :settled (if settled t :json-false)
+                                          :waited_seconds waited
+                                          :after_timeout after-timeout
+                                          :processes (vconcat processes)
+                                          :rekicked rekicked)))))))
+`);
+
+  try {
+    const result = await runEmacs(scriptPath, { PMBAH_API_BASE_URL: `http://127.0.0.1:${port}` });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(seen.length >= 1, true, "the server accepted the request");
+    assert.equal(output.settled, true, "the wait ended because the attempt timed out");
+    assert.ok(output.waited_seconds < 8, `waited ${output.waited_seconds}s`);
+    assert.equal(output.after_timeout.in_flight, false);
+    assert.equal(output.after_timeout.state, "unknown");
+    assert.match(output.after_timeout.last_failure, /^transient .*no response/);
+    assert.equal(output.processes.some((name) => /pmbah|127\.0\.0\.1/.test(name)), false, `abandoned request left processes: ${output.processes}`);
+    assert.equal(output.rekicked.in_flight, true, "the next edit after the backoff re-kicks the checkpoint");
+    assert.equal(JSON.stringify(output).includes("Stuck"), false);
+  } finally {
+    server.closeAllConnections();
+    await new Promise((resolveClose) => server.close(resolveClose));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Emacs observation state machine backs off on transient failures, pins conflicts, and resets when unavailable", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-observation-states-"));
   const outputPath = join(temp, "states.json");
@@ -954,16 +1011,18 @@ test("Emacs observation state machine backs off on transient failures, pins conf
     (insert "a")
     (insert "b")
     (insert "c"))
-  (let* ((transient-1 (pmbah-test-outcome 'transient 0 "connection refused"))
+  (let* ((malformed-ok (pmbah-test-outcome 'ok 201 (list (cons 'event_count 1) (cons 'token "short"))))
+         (transient-1 (pmbah-test-outcome 'transient 0 "connection refused"))
          (transient-2 (pmbah-test-outcome 'transient 503 "unavailable"))
-         (transient-7 (progn (dotimes (_ 5) (pmbah-test-outcome 'rate_limited 429 "slow down"))
+         (transient-7 (progn (dotimes (_ 4) (pmbah-test-outcome 'rate_limited 429 "slow down"))
                              (pmbah-test-outcome 'transient 0 "still down")))
          (ok-1 (pmbah-test-outcome 'ok 201 (pmbah-test-ok-payload 1 "cp-1" "b3:00")))
          (ok-3 (pmbah-test-outcome 'ok 201 (pmbah-test-ok-payload 3 "cp-3" "b3:02")))
          (conflict (pmbah-test-outcome 'conflict 409 "checkpoint_stale"))
          (after-conflict-ok (pmbah-test-outcome 'ok 200 (pmbah-test-ok-payload 3 "cp-3" "b3:02")))
          (unavailable (pmbah-test-outcome 'unavailable 404 "observation_unavailable"))
-         (output (list :transient_1 transient-1 :transient_2 transient-2 :transient_7 transient-7
+         (output (list :malformed_ok malformed-ok
+                       :transient_1 transient-1 :transient_2 transient-2 :transient_7 transient-7
                        :ok_1 ok-1 :ok_3 ok-3 :conflict conflict :after_conflict_ok after-conflict-ok
                        :unavailable unavailable
                        :envelope_after_reset (or (pmbah--observation-envelope) :json-false))))
@@ -975,10 +1034,15 @@ test("Emacs observation state machine backs off on transient failures, pins conf
     const result = await runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.malformed_ok.state, "unknown", "a malformed success body is a transient failure");
+    assert.equal(output.malformed_ok.committed, 0);
+    assert.equal(output.malformed_ok.token, false);
+    assert.equal(output.malformed_ok.backoff_ms, 1000);
+    assert.equal(output.malformed_ok.in_flight, false);
     assert.equal(output.transient_1.state, "unknown");
-    assert.equal(output.transient_1.backoff_ms, 1000);
+    assert.equal(output.transient_1.backoff_ms, 2000);
     assert.equal(output.transient_1.in_flight, false);
-    assert.equal(output.transient_2.backoff_ms, 2000);
+    assert.equal(output.transient_2.backoff_ms, 4000);
     assert.equal(output.transient_7.backoff_ms, 60000, "backoff is capped");
     assert.equal(output.ok_1.state, "partial");
     assert.equal(output.ok_1.backoff_ms, 0);

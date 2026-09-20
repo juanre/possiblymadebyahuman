@@ -100,6 +100,8 @@ start time, public events, and the observation token; never document text."
   "Commitments kept locally: the oldest anchor plus the most recent ones.")
 (defconst pmbah-observation-flush-timeout-seconds 15
   "How long `pmbah-sign-buffer' waits for the final checkpoint before uploading.")
+(defvar pmbah-observation-request-timeout-seconds 30
+  "Seconds a checkpoint attempt may take before it counts as a transient failure.")
 
 (defvar pmbah-mode)
 (defvar url-http-response-status)
@@ -124,6 +126,14 @@ start time, public events, and the observation token; never document text."
   "`float-time' of the most recent checkpoint attempt, or nil.")
 (defvar-local pmbah--observation-in-flight nil)
 (defvar-local pmbah--observation-queued nil)
+(defvar-local pmbah--observation-attempt 0
+  "Counter identifying the current checkpoint attempt.
+Callbacks and the watchdog act only when their attempt is still the current
+one, so a late or duplicate result cannot touch a later attempt.")
+(defvar-local pmbah--observation-request nil
+  "Process or buffer of the helper or HTTP request currently in flight.")
+(defvar-local pmbah--observation-watchdog nil
+  "Timer that fails the in-flight attempt when it takes too long.")
 (defvar-local pmbah--observation-backoff-ms 0)
 (defvar-local pmbah--observation-commitments nil
   "Chronological list of commitment plists returned by the server.")
@@ -181,6 +191,9 @@ hashed, passed to the helper, or uploaded."
                     pmbah--observation-last-attempt
                     pmbah--observation-in-flight
                     pmbah--observation-queued
+                    pmbah--observation-attempt
+                    pmbah--observation-request
+                    pmbah--observation-watchdog
                     pmbah--observation-backoff-ms
                     pmbah--observation-commitments
                     pmbah--observation-last-failure))
@@ -370,6 +383,7 @@ from hooks and timers."
 
 (defun pmbah--observation-reset ()
   "Forget everything the server has committed to for this session."
+  (pmbah--observation-abandon-attempt)
   (setq pmbah--observation-state (if pmbah-observe-process 'unknown 'disabled)
         pmbah--observation-token nil
         pmbah--observation-committed-count 0
@@ -673,32 +687,89 @@ Errors are recorded as transient failures; nothing propagates to the
 change hook that triggered the checkpoint."
   (setq pmbah--observation-in-flight t
         pmbah--observation-queued nil
-        pmbah--observation-last-attempt (float-time))
+        pmbah--observation-last-attempt (float-time)
+        pmbah--observation-attempt (1+ pmbah--observation-attempt))
+  (pmbah--observation-arm-watchdog)
   (let* ((source (current-buffer))
          (session-id pmbah--session-id)
+         (attempt pmbah--observation-attempt)
          (event-count pmbah--next-seq)
          (payload (list :session_id session-id
                         :format_version pmbah-format-version
                         :events (vconcat (pmbah--session-events)))))
     (condition-case error
-        (pmbah--run-node-script-async
-         pmbah-chain-tip-script payload
-         (lambda (result failure)
-           (pmbah--observation-with-session source session-id
-             (lambda ()
-               (if failure
-                   (pmbah--observation-fail 'transient 0 failure)
-                 (pmbah--observation-post event-count (alist-get 'chain_tip result)))))))
+        (setq pmbah--observation-request
+              (pmbah--run-node-script-async
+               pmbah-chain-tip-script payload
+               (lambda (result failure)
+                 (pmbah--observation-continue source session-id attempt
+                   (lambda ()
+                     (if failure
+                         (pmbah--observation-fail 'transient 0 failure)
+                       (pmbah--observation-post event-count (alist-get 'chain_tip result))))))))
       (error
        (pmbah--observation-fail 'transient 0 (error-message-string error))))))
 
-(defun pmbah--observation-with-session (buffer session-id thunk)
-  "Call THUNK in BUFFER if it is live and still records SESSION-ID.
-Results for a session that was uploaded or discarded meanwhile are dropped."
+(defun pmbah--observation-continue (buffer session-id attempt thunk)
+  "Call THUNK in BUFFER if ATTEMPT is still its in-flight attempt for SESSION-ID.
+Results for a session that was uploaded or discarded meanwhile, for an
+attempt the watchdog already failed, or delivered twice are dropped."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (when (equal pmbah--session-id session-id)
+      (when (and (equal pmbah--session-id session-id)
+                 (= attempt pmbah--observation-attempt)
+                 pmbah--observation-in-flight)
         (funcall thunk)))))
+
+(defun pmbah--observation-arm-watchdog ()
+  "Fail the attempt started now if it has not finished within the timeout."
+  (pmbah--observation-disarm-watchdog)
+  (setq pmbah--observation-watchdog
+        (run-with-timer pmbah-observation-request-timeout-seconds nil
+                        #'pmbah--observation-timeout
+                        (current-buffer) pmbah--session-id pmbah--observation-attempt)))
+
+(defun pmbah--observation-disarm-watchdog ()
+  "Cancel the watchdog of the current attempt."
+  (when pmbah--observation-watchdog
+    (cancel-timer pmbah--observation-watchdog)
+    (setq pmbah--observation-watchdog nil)))
+
+(defun pmbah--observation-timeout (buffer session-id attempt)
+  "Fail ATTEMPT for SESSION-ID in BUFFER as transient if it is still in flight."
+  (pmbah--observation-continue buffer session-id attempt
+    (lambda ()
+      (pmbah--observation-abandon-attempt)
+      (pmbah--observation-fail 'transient 0
+                               (format "no response within %s s"
+                                       pmbah-observation-request-timeout-seconds)))))
+
+(defun pmbah--observation-abandon-attempt ()
+  "Invalidate the in-flight attempt and stop its helper or HTTP request."
+  (setq pmbah--observation-attempt (1+ pmbah--observation-attempt))
+  (pmbah--observation-disarm-watchdog)
+  (let ((request pmbah--observation-request))
+    (setq pmbah--observation-request nil)
+    (cond
+     ;; The helper's own sentinel cleans up its buffers and reports a failure
+     ;; that `pmbah--observation-continue' drops as belonging to a dead attempt.
+     ((processp request)
+      (when (process-live-p request)
+        (delete-process request)))
+     ((buffer-live-p request)
+      (let ((process (get-buffer-process request)))
+        (when process
+          (set-process-sentinel process #'ignore)
+          (set-process-filter process #'ignore)
+          (delete-process process)))
+      (kill-buffer request)))))
+
+(defun pmbah--observation-finish-attempt ()
+  "Mark the in-flight attempt complete."
+  (pmbah--observation-disarm-watchdog)
+  (setq pmbah--observation-request nil
+        pmbah--observation-in-flight nil
+        pmbah--observation-queued nil))
 
 (defun pmbah--observation-endpoint ()
   "Return the checkpoint URL for the current session."
@@ -710,6 +781,7 @@ Results for a session that was uploaded or discarded meanwhile are dropped."
   "POST a checkpoint for EVENT-COUNT events with CHAIN-TIP asynchronously."
   (let* ((source (current-buffer))
          (session-id pmbah--session-id)
+         (attempt pmbah--observation-attempt)
          (body (append (list :event_count event-count :chain_tip chain-tip)
                        (when pmbah--observation-token
                          (list :token pmbah--observation-token))))
@@ -717,15 +789,21 @@ Results for a session that was uploaded or discarded meanwhile are dropped."
          (url-request-extra-headers '(("Content-Type" . "application/json; charset=utf-8")))
          (url-request-data (encode-coding-string (pmbah--json-encode body) 'utf-8)))
     (condition-case error
-        (url-retrieve (pmbah--observation-endpoint)
-                      (lambda (status)
-                        (let ((response-buffer (current-buffer)))
-                          (unwind-protect
-                              (let ((outcome (pmbah--observation-read-response status)))
-                                (pmbah--observation-with-session source session-id
-                                  (lambda () (pmbah--observation-apply outcome))))
-                            (kill-buffer response-buffer))))
-                      nil t t)
+        (let ((response-buffer
+               (url-retrieve (pmbah--observation-endpoint)
+                             (lambda (status)
+                               (let ((response-buffer (current-buffer)))
+                                 (unwind-protect
+                                     (let ((outcome (pmbah--observation-read-response status)))
+                                       (pmbah--observation-continue source session-id attempt
+                                         (lambda () (pmbah--observation-apply outcome))))
+                                   (when (buffer-live-p response-buffer)
+                                     (kill-buffer response-buffer)))))
+                             nil t t)))
+          (setq pmbah--observation-request response-buffer)
+          (let ((process (and response-buffer (get-buffer-process response-buffer))))
+            (when process
+              (set-process-query-on-exit-flag process nil))))
       (error
        (pmbah--observation-fail 'transient 0 (error-message-string error))))))
 
@@ -756,15 +834,31 @@ Return (KIND HTTP-STATUS BODY-OR-REASON) where KIND is `ok', `unavailable',
 (defun pmbah--observation-apply (outcome)
   "Update observation state from OUTCOME and continue queued work."
   (pcase-let ((`(,kind ,http-status ,payload) outcome))
-    (if (eq kind 'ok)
-        (progn
-          (pmbah--observation-succeed payload)
-          (if (and pmbah--observation-queued
-                   (> pmbah--next-seq pmbah--observation-committed-count))
-              (pmbah--observation-kick)
-            (setq pmbah--observation-in-flight nil
-                  pmbah--observation-queued nil)))
-      (pmbah--observation-fail kind http-status payload))))
+    (cond
+     ((and (eq kind 'ok) (not (pmbah--observation-valid-response-p payload)))
+      (pmbah--observation-fail 'transient http-status "checkpoint response was malformed"))
+     ((eq kind 'ok)
+      (pmbah--observation-succeed payload)
+      (if (and pmbah--observation-queued
+               (> pmbah--next-seq pmbah--observation-committed-count))
+          (pmbah--observation-kick)
+        (pmbah--observation-finish-attempt)))
+     (t
+      (pmbah--observation-fail kind http-status payload)))))
+
+(defun pmbah--observation-valid-response-p (response)
+  "Return non-nil when RESPONSE, a checkpoint success alist, is well formed."
+  (and (listp response)
+       (let ((event-count (alist-get 'event_count response))
+             (token (alist-get 'token response))
+             (checkpoint-id (alist-get 'checkpoint_id response))
+             (chain-tip (alist-get 'chain_tip response))
+             (server-t (alist-get 'server_t response)))
+         (and (integerp event-count) (>= event-count 1)
+              (stringp token) (>= (length token) 32)
+              (stringp checkpoint-id) (> (length checkpoint-id) 0)
+              (stringp chain-tip) (string-prefix-p "b3:" chain-tip)
+              (stringp server-t)))))
 
 (defun pmbah--observation-succeed (response)
   "Record a successful checkpoint RESPONSE from the server."
@@ -783,9 +877,8 @@ Return (KIND HTTP-STATUS BODY-OR-REASON) where KIND is `ok', `unavailable',
 
 (defun pmbah--observation-fail (kind http-status reason)
   "Record a failed checkpoint of KIND with HTTP-STATUS and REASON; stop the loop."
-  (setq pmbah--observation-in-flight nil
-        pmbah--observation-queued nil
-        pmbah--observation-last-failure (format "%s (HTTP %s): %s" kind http-status reason))
+  (pmbah--observation-finish-attempt)
+  (setq pmbah--observation-last-failure (format "%s (HTTP %s): %s" kind http-status reason))
   (pcase kind
     ('unavailable
      (let ((failure pmbah--observation-last-failure))
@@ -878,9 +971,9 @@ observed for the first time at sign time."
               ""))))
 
 (defun pmbah--run-node-script-async (script payload callback)
-  "Run SCRIPT with JSON PAYLOAD on stdin and call CALLBACK when it exits.
+  "Run SCRIPT with JSON PAYLOAD on stdin and call CALLBACK once when it exits.
 CALLBACK receives (RESULT FAILURE): the parsed JSON output and nil on
-success, or nil and a failure description otherwise."
+success, or nil and a failure description otherwise.  Return the process."
   (unless (file-readable-p script)
     (error "PMBAH helper script is not readable: %s" script))
   (let* ((stdout (generate-new-buffer " *pmbah-node-stdout*"))
@@ -901,22 +994,38 @@ success, or nil and a failure description otherwise."
                        (let ((exit-status (process-exit-status proc))
                              (output (with-current-buffer stdout (buffer-string)))
                              (errors (with-current-buffer stderr (buffer-string))))
+                         (when (process-live-p stderr-pipe)
+                           (delete-process stderr-pipe))
                          (kill-buffer stdout)
                          (kill-buffer stderr)
-                         (if (and (eq (process-status proc) 'exit) (= exit-status 0))
-                             (condition-case nil
-                                 (funcall callback
-                                          (json-parse-string output :object-type 'alist
-                                                             :array-type 'array
-                                                             :null-object nil
-                                                             :false-object :json-false)
-                                          nil)
-                               (error (funcall callback nil "helper output was not JSON")))
-                           (funcall callback nil
-                                    (format "helper exited %s: %s"
-                                            exit-status (string-trim errors))))))))))
-    (process-send-string process (pmbah--json-encode payload))
-    (process-send-eof process)))
+                         (pmbah--deliver-node-result callback proc exit-status output errors)))))))
+    ;; A process that died before reading its input makes sending fail; its
+    ;; sentinel is the single place that reports, so the error is not reported here.
+    (condition-case nil
+        (progn
+          (process-send-string process (pmbah--json-encode payload))
+          (process-send-eof process))
+      (error
+       (when (process-live-p process)
+         (delete-process process))))
+    process))
+
+(defun pmbah--deliver-node-result (callback process exit-status output errors)
+  "Call CALLBACK once with the outcome of the helper PROCESS.
+The JSON parse happens before the call so an error inside CALLBACK is not
+mistaken for a parse failure and reported a second time."
+  (if (and (eq (process-status process) 'exit) (= exit-status 0))
+      (let ((parsed nil) (parse-failed nil))
+        (condition-case nil
+            (setq parsed (json-parse-string output :object-type 'alist
+                                            :array-type 'array
+                                            :null-object nil
+                                            :false-object :json-false))
+          (error (setq parse-failed t)))
+        (if parse-failed
+            (funcall callback nil "helper output was not JSON")
+          (funcall callback parsed nil)))
+    (funcall callback nil (format "helper exited %s: %s" exit-status (string-trim errors)))))
 
 (defun pmbah--session-events ()
   "Return chronological public events for the active session."
