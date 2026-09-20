@@ -353,6 +353,44 @@ test("/write uploads a diverged session as unobserved and says so on the page", 
   expect(uploadedPayload.observation).toEqual({ state: "unobserved" });
 });
 
+test("/write retries an upload rejected with observation_mismatch as unobserved and says so", async ({ page }) => {
+  const uploads = [];
+  await page.route("**/api/observed-sessions/*/checkpoints", async (route) => {
+    const body = route.request().postDataJSON();
+    const observedSessionId = new URL(route.request().url()).pathname.split("/").at(-2);
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ observed_session_id: observedSessionId, token: "x".repeat(32), checkpoint_id: `mismatch-cp-${body.event_count}`, event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
+    });
+  });
+  await page.route("**/api/records", async (route) => {
+    const payload = route.request().postDataJSON();
+    uploads.push(payload);
+    if (uploads.length === 1) {
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "observation_mismatch", details: ["checkpoint mismatch-cp-1 does not match final record prefix"] }) });
+      return;
+    }
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: payload.manifest.record_hash, short_signature: "mismatch1", url: "http://127.0.0.1:4173/mismatch1", created: true }) });
+  });
+
+  await page.goto("/write");
+  const message = page.getByRole("status", { name: "Drafting message" });
+  await page.getByRole("textbox", { name: "Writing canvas" }).click();
+  await page.keyboard.type("Bound once, then unobserved");
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
+  await expect(message).toContainText("Upload failed: observation_mismatch");
+  expect(uploads[0].observation.token).toBe("x".repeat(32));
+
+  await page.getByRole("button", { name: "retry" }).click();
+  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/mismatch1" })).toBeVisible();
+  await expect(message).toContainText("server observation");
+  await expect(message).toContainText("diverged");
+  expect(uploads.length).toBe(2);
+  expect(uploads[1].observation).toEqual({ state: "unobserved" });
+});
+
 test("/write explains on the empty canvas that text stays here and only the shape of editing is recorded", async ({ page }) => {
   await page.goto("/write");
   const canvas = page.getByRole("textbox", { name: "Writing canvas" });

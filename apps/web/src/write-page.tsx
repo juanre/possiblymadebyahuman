@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  IngestUploadError,
   SessionFrozenError,
   SessionRegistry,
   stripQueryAndHash,
@@ -78,8 +79,8 @@ async function uploadRecord(payload: UploadPayload): Promise<IngestRecordRespons
   });
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const reason = typeof json?.error === "string" ? json.error : `upload_failed_${response.status}`;
-    throw new Error(reason);
+    const code = typeof json?.error === "string" ? json.error : null;
+    throw new IngestUploadError(response.status, code, code ?? `upload_failed_${response.status}`);
   }
   return json as IngestRecordResponse;
 }
@@ -239,6 +240,9 @@ export function WritePage() {
       const reason = error instanceof Error ? error.message : String(error);
       try {
         registry.markFailedUpload(session.session_id, reason);
+        if (error instanceof IngestUploadError && (error.code === "observation_mismatch" || error.code === "observation_unavailable")) {
+          registry.markObservationRejected(session.session_id, error.code);
+        }
         await registry.persist();
         refreshSession(session.session_id);
       } catch {
