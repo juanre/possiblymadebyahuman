@@ -158,19 +158,10 @@ export class ObservedCheckpointConflictError extends Error {
   }
 }
 
-export type RecordStoreOptions = {
-  now?: () => Date;
-};
-
 export class InMemoryRecordStore implements RecordStore {
   readonly #byHash = new Map<B3Hash, StoredRecord>();
   readonly #byShortSignature = new Map<string, B3Hash>();
   readonly #observedSessions = new Map<string, ObservedSession>();
-  readonly #now: () => Date;
-
-  constructor(options: RecordStoreOptions = {}) {
-    this.#now = options.now ?? (() => new Date());
-  }
 
   async saveRecord(input: SaveRecordInput): Promise<SaveRecordResult> {
     const recordHash = input.record.manifest.record_hash;
@@ -197,7 +188,7 @@ export class InMemoryRecordStore implements RecordStore {
       finalObservation = validateRecordObservation(input.record, session.observed_session_id, session.checkpoints);
       session.finalized_record_hash = recordHash;
       session.observation_state = finalObservation.state;
-      session.finalized_at = input.record.manifest.ingested_server_t ?? input.created_at ?? this.#now().toISOString();
+      session.finalized_at = input.record.manifest.ingested_server_t ?? input.created_at ?? new Date().toISOString();
     }
 
     const stored: StoredRecord = {
@@ -207,7 +198,7 @@ export class InMemoryRecordStore implements RecordStore {
       stats: cloneJson(input.stats),
       signals: cloneJson(input.signals ?? []),
       observation: cloneJson(finalObservation ?? notRequestedObservation()),
-      created_at: input.created_at ?? this.#now().toISOString(),
+      created_at: input.created_at ?? new Date().toISOString(),
     };
     this.#byHash.set(recordHash, stored);
     this.#byShortSignature.set(input.short_signature, recordHash);
@@ -236,7 +227,7 @@ export class InMemoryRecordStore implements RecordStore {
   async appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult> {
     let session = this.#observedSessions.get(input.observed_session_id);
     let sessionCreated = false;
-    const observedAt = input.observed_at ?? this.#now().toISOString();
+    const observedAt = input.observed_at ?? new Date().toISOString();
     if (session && isExpiredUnfinalizedObservedSession(session, observedAt)) {
       this.#observedSessions.delete(input.observed_session_id);
       session = undefined;
@@ -301,7 +292,7 @@ export class InMemoryRecordStore implements RecordStore {
   async getObservedSessionForBinding(input: ObservationBindingInput): Promise<ObservedSession> {
     const session = this.#observedSessions.get(input.observed_session_id);
     if (!session) throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
-    if (isExpiredUnfinalizedObservedSession(session, this.#now().toISOString())) {
+    if (isExpiredUnfinalizedObservedSession(session, new Date().toISOString())) {
       this.#observedSessions.delete(input.observed_session_id);
       throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
     }
@@ -329,16 +320,14 @@ export type PostgresDatabase = PostgresQueryable & {
  */
 export class PostgresRecordStore implements RecordStore {
   readonly #db: PostgresDatabase;
-  readonly #now: () => Date;
 
-  constructor(db: PostgresDatabase, options: RecordStoreOptions = {}) {
+  constructor(db: PostgresDatabase) {
     this.#db = db;
-    this.#now = options.now ?? (() => new Date());
   }
 
   async saveRecord(input: SaveRecordInput): Promise<SaveRecordResult> {
     const manifest = input.record.manifest;
-    const createdAt = input.created_at ?? this.#now().toISOString();
+    const createdAt = input.created_at ?? new Date().toISOString();
     const signals = input.signals ?? [];
 
     const existing = await this.findByRecordHash(manifest.record_hash);
@@ -385,7 +374,7 @@ export class PostgresRecordStore implements RecordStore {
             manifest.event_count,
             manifest.duration_ms,
             manifest.created_client_t ?? null,
-            manifest.ingested_server_t ?? this.#now().toISOString(),
+            manifest.ingested_server_t ?? new Date().toISOString(),
             manifest.parent_record ?? null,
             JSON.stringify(manifest.attestations),
             JSON.stringify(input.record.events),
@@ -613,7 +602,7 @@ export class PostgresRecordStore implements RecordStore {
 
   async appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult> {
     return this.#withTransaction(async (client) => {
-      const observedAt = input.observed_at ?? this.#now().toISOString();
+      const observedAt = input.observed_at ?? new Date().toISOString();
       await deleteExpiredObservedSession(client, input.observed_session_id, observedAt);
       let session = (await client.query<ObservedSessionRow>(
         `select observed_session_id, token_hash, finalized_record_hash, observation_state, created_at, finalized_at
@@ -700,7 +689,7 @@ export class PostgresRecordStore implements RecordStore {
   }
 
   async getObservedSessionForBinding(input: ObservationBindingInput): Promise<ObservedSession> {
-    await deleteExpiredObservedSession(this.#db, input.observed_session_id, this.#now().toISOString());
+    await deleteExpiredObservedSession(this.#db, input.observed_session_id, new Date().toISOString());
     const session = (await this.#db.query<ObservedSessionRow>(
       `select observed_session_id, token_hash, finalized_record_hash, observation_state, created_at, finalized_at
        from observed_sessions where observed_session_id = $1`,

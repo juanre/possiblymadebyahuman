@@ -19,13 +19,16 @@ async function textBindingRecord() {
   return clone(golden.record);
 }
 
+// The store expires observed sessions against the wall clock, so the API clock
+// used in these tests must be the current time, not a pinned date.
+const TEST_NOW = new Date();
+
 function makeApi(options = {}) {
-  const now = options.now ?? (() => new Date("2026-05-28T10:00:00.000Z"));
-  const store = new InMemoryRecordStore({ now });
+  const store = new InMemoryRecordStore();
   const api = createIngestApi({
     store,
     baseUrl: "https://possiblymadebyahuman.test",
-    now,
+    now: () => TEST_NOW,
     ...options,
   });
   return { api, store };
@@ -117,7 +120,7 @@ test("GET /api/records/:id supports short signature and full hash lookup", async
   const byShort = await api.getRecord(ingest.body.short_signature);
   assert.equal(byShort.status, 200);
   assert.equal(byShort.body.manifest.record_hash, record.manifest.record_hash);
-  assert.equal(byShort.body.manifest.ingested_server_t, "2026-05-28T10:00:00.000Z");
+  assert.equal(byShort.body.manifest.ingested_server_t, TEST_NOW.toISOString());
   assert.deepEqual(byShort.body.events, record.events);
   assert.equal(byShort.body.observation.state, "not_requested");
   assert.equal(byShort.body.observation.checkpoint_count, 0);
