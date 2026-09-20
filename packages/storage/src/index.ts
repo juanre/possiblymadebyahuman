@@ -123,6 +123,8 @@ export interface RecordStore {
   findByShortSignature(shortSignature: string): Promise<StoredRecord | null>;
   findByShortSignatureOrHash(id: string): Promise<StoredRecord | null>;
   shortSignatureExists(shortSignature: string): Promise<boolean>;
+  /** Whether a record is stored under this short signature or full hash, without loading it. */
+  recordExists(id: string): Promise<boolean>;
   appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult>;
   getObservedSessionForBinding(input: ObservationBindingInput): Promise<ObservedSession>;
 }
@@ -222,6 +224,11 @@ export class InMemoryRecordStore implements RecordStore {
 
   async shortSignatureExists(shortSignature: string): Promise<boolean> {
     return this.#byShortSignature.has(shortSignature);
+  }
+
+  async recordExists(id: string): Promise<boolean> {
+    if (id.startsWith("b3:")) return this.#byHash.has(id as B3Hash);
+    return this.#byShortSignature.has(id);
   }
 
   async appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult> {
@@ -596,6 +603,15 @@ export class PostgresRecordStore implements RecordStore {
     const result = await this.#db.query<{ exists: boolean }>(
       "select exists(select 1 from records where short_signature = $1) as exists",
       [shortSignature],
+    );
+    return result.rows[0]?.exists ?? false;
+  }
+
+  async recordExists(id: string): Promise<boolean> {
+    const column = id.startsWith("b3:") ? "record_hash" : "short_signature";
+    const result = await this.#db.query<{ exists: boolean }>(
+      `select exists(select 1 from records where ${column} = $1) as exists`,
+      [id],
     );
     return result.rows[0]?.exists ?? false;
   }

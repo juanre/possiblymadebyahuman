@@ -399,7 +399,7 @@ test("runtime server serves the record shell with 404 for an unknown slug and 20
     assert.match(missing.headers.get("content-type"), /text\/html/);
     assert.equal(await missing.text(), shell);
 
-    for (const path of [`/${short_signature}`, `/${record_hash}`, "/write"]) {
+    for (const path of [`/${short_signature}`, `/${record_hash}`, "/write", "/write/"]) {
       const response = await fetch(`${base}${path}`);
       assert.equal(response.status, 200, path);
       assert.equal(await response.text(), shell, path);
@@ -407,6 +407,95 @@ test("runtime server serves the record shell with 404 for an unknown slug and 20
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+async function shellServer(store) {
+  const webDistDir = await mkdtemp(join(tmpdir(), "pmbah-web-dist-"));
+  await writeFile(join(webDistDir, "index.html"), "<!doctype html><div id=\"root\"></div>");
+  const siteDistDir = await mkdtemp(join(tmpdir(), "pmbah-site-dist-"));
+  await writeFile(join(siteDistDir, "index.html"), "<!doctype html><h1>home</h1>");
+  const server = createRuntimeServer({
+    api: { handleRequest: async () => new Response("{}", { status: 200 }) },
+    store,
+    db: { async query() { return { rows: [] }; } },
+    webDistDir,
+    siteDistDir,
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { server, base: `http://127.0.0.1:${server.address().port}` };
+}
+
+test("runtime server serves the 200 shell when the record lookup fails, so the client owns the failure UI", async () => {
+  const store = { async recordExists() { throw new Error("database unavailable"); } };
+  const { server, base } = await shellServer(store);
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    for (const method of ["GET", "HEAD"]) {
+      const response = await fetch(`${base}/abc123`, { method });
+      assert.equal(response.status, 200, method);
+      assert.match(response.headers.get("content-type"), /text\/html/, method);
+    }
+    assert.equal(errors.length, 2, "each failed lookup is logged once");
+  } finally {
+    console.error = originalError;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("runtime server treats repeated leading slashes as the root and never looks up an empty slug", async () => {
+  const lookups = [];
+  const store = { async recordExists(id) { lookups.push(id); return false; } };
+  const { server, base } = await shellServer(store);
+  try {
+    for (const path of ["//", "///"]) {
+      const response = await fetch(`${base}${path}`);
+      assert.equal(response.status, 200, path);
+      assert.match(response.headers.get("content-type"), /text\/html/, path);
+      assert.equal(await response.text(), "<!doctype html><h1>home</h1>", path);
+    }
+    // "//other-host/api/x" must not be read as a request for another host.
+    const hostLike = await fetch(`${base}//other-host/no-such-record`);
+    assert.equal(hostLike.status, 404);
+    assert.deepEqual(lookups, ["other-host/no-such-record"]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("InMemoryRecordStore.recordExists answers for short signatures and full hashes", async () => {
+  const store = new InMemoryRecordStore();
+  const record = await fixtureRecord();
+  await store.saveRecord({ record, short_signature: "abc123def4", stats: computeRecordStats(record), signals: [], created_at: "2026-05-28T10:00:01.000Z" });
+  assert.equal(await store.recordExists("abc123def4"), true);
+  assert.equal(await store.recordExists(record.manifest.record_hash), true);
+  assert.equal(await store.recordExists("nope"), false);
+  assert.equal(await store.recordExists(`b3:${"0".repeat(64)}`), false);
+  assert.equal(await store.recordExists(""), false);
+});
+
+test("PostgresRecordStore.recordExists is one indexed existence query on the matching column", async () => {
+  const queries = [];
+  const db = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rows: [{ exists: params[0] === "known" || params[0] === `b3:${"a".repeat(64)}` }] };
+    },
+  };
+  const store = new PostgresRecordStore(db);
+  assert.equal(await store.recordExists("known"), true);
+  assert.equal(await store.recordExists("missing"), false);
+  assert.equal(await store.recordExists(`b3:${"a".repeat(64)}`), true);
+  assert.equal(queries.length, 3);
+  for (const query of queries) {
+    assert.match(query.sql, /select exists\(select 1 from records where /i);
+    assert.doesNotMatch(query.sql, /events|stats|signals|observ/i);
+  }
+  assert.match(queries[0].sql, /short_signature = \$1/);
+  assert.match(queries[1].sql, /short_signature = \$1/);
+  assert.match(queries[2].sql, /record_hash = \$1/);
+  assert.deepEqual(queries.map((query) => query.params), [["known"], ["missing"], [`b3:${"a".repeat(64)}`]]);
 });
 
 function migrationDb() {

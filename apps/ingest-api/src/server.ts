@@ -54,7 +54,7 @@ export function createPoolConfig(env: NodeJS.ProcessEnv = process.env): pg.PoolC
 
 export type RuntimeServerOptions = {
   api: ReturnType<typeof createIngestApi>;
-  store: Pick<RecordStore, "findByShortSignatureOrHash">;
+  store: Pick<RecordStore, "recordExists">;
   db: PostgresDatabase;
   webDistDir?: string;
   siteDistDir?: string;
@@ -145,7 +145,9 @@ export async function readiness(
 }
 
 async function route(req: IncomingMessage, res: ServerResponse, options: RuntimeServerOptions): Promise<void> {
-  const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  // Repeated leading slashes collapse to one: "//" is not a valid URL and
+  // "//host/path" would otherwise parse as a different host.
+  const requestUrl = new URL((req.url ?? "/").replace(/^\/+/, "/"), `http://${req.headers.host ?? "localhost"}`);
 
   if (requestUrl.pathname.startsWith("/api/")) {
     const response = await options.api.handleRequest(await toFetchRequest(req, requestUrl, options.recordBodyLimitBytes ?? DEFAULT_RECORD_BODY_LIMIT_BYTES));
@@ -202,16 +204,23 @@ async function route(req: IncomingMessage, res: ServerResponse, options: Runtime
   // Every remaining path is the record app: /write, or a record address. An
   // address with no stored record still gets the app shell (so it can explain
   // that nothing is there) but with a 404 status, so browsers and crawlers do
-  // not treat a broken link as a page that exists.
-  if (requestUrl.pathname !== "/write") {
-    const slug = requestUrl.pathname.replace(/^\//, "").replace(/\/$/, "");
-    const stored = await options.store.findByShortSignatureOrHash(slug);
-    if (!stored) {
-      await serveStatic(res, options.webDistDir ?? WEB_DIST_DIR, "index.html", 404);
-      return;
-    }
+  // not treat a broken link as a page that exists. When the lookup itself
+  // fails, the shell is served with 200 and the app reports the failure.
+  const slug = requestUrl.pathname.replace(/^\/+/, "").replace(/\/+$/, "");
+  if (slug !== "" && slug !== "write" && !(await recordExistsOrUnknown(options.store, slug))) {
+    await serveStatic(res, options.webDistDir ?? WEB_DIST_DIR, "index.html", 404);
+    return;
   }
   await serveStatic(res, options.webDistDir ?? WEB_DIST_DIR, "index.html");
+}
+
+async function recordExistsOrUnknown(store: Pick<RecordStore, "recordExists">, slug: string): Promise<boolean> {
+  try {
+    return await store.recordExists(slug);
+  } catch (error) {
+    console.error(error);
+    return true;
+  }
 }
 
 // Files that live at the root of the Hugo site (apps/site/static/) and would
