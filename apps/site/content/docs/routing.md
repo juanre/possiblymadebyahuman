@@ -17,10 +17,12 @@ The runtime resolves requests in this order:
 
 1. `/api/*` → backend.
 2. `/health`, `/ready`, `/live` → backend.
-3. `/` and `/docs/*` → Hugo static output.
-4. `/record-assets/*` → Vite app assets.
-5. `/write` → Vite app shell (`index.html`) and first-party drafting/signing UI.
-6. `/<short_signature>` → Vite app shell (`index.html`), with the React app reading `window.location.pathname` and hitting `/api/records/<slug>`.
+3. `/record-assets/*` → Vite app assets.
+4. `/images/*`, `/og/*`, and the site-root files (`/robots.txt`, `/sitemap.xml`, `/site.webmanifest`, favicons) → Hugo static output, served with their media types.
+5. `/docs` → redirect to `/docs/`.
+6. `/` and `/docs/*` → Hugo static output.
+7. `/write` → Vite app shell (`index.html`) and first-party drafting/signing UI.
+8. `/<short_signature>` → Vite app shell (`index.html`), with the React app reading `window.location.pathname` and hitting `/api/records/<slug>`.
 
 ## Reserved short-signature prefixes
 
@@ -28,7 +30,7 @@ Short signatures are derived from BLAKE3 bytes, but the generator skips any stri
 
 `api`, `docs`, `blog`, `write`, `assets`, `record-assets`, `images`, `health`, `ready`, `live`, plus any future runtime/static prefix added to the container.
 
-When a generated signature collides with a reserved prefix, the backend lengthens or re-derives it until it does not.
+When a generated signature collides with a reserved prefix, the backend tries a deterministic `X`-prefixed candidate; when it collides with an existing record, the backend lengthens it until it is unique.
 
 ## Where Hugo fits
 

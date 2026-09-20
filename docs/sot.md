@@ -86,6 +86,8 @@ Owns:
 - event hash-chain computation
 - record-hash verification
 - content-blind process-length validation using Unicode codepoint offsets, with explicit JSON `null` for unknown process measurements
+- the format `0.2` text binding: `canon-letters/0.1` canonicalization, the salted commitment, and sealing the binding into `record_hash` (normative detail in `docs/text-binding.md` and `docs/spec/canonicalization.md`)
+- bounded metadata: `capture_context` accepts only its documented keys with capped string lengths, `attestations` only small typed objects, and integer fields only the 32-bit storage range
 
 Does not own:
 
@@ -311,7 +313,7 @@ Manifest includes:
 
 ```jsonc
 {
-  "format_version": "0.1",
+  "format_version": "0.2",
   "record_hash": "b3:...",
   "session_id": "uuid",
   "producer": {
@@ -320,6 +322,7 @@ Manifest includes:
     "capabilities": ["timing", "source_attribution", "selection", "pause_fidelity", "keystroke_level"]
   },
   "capture_context": {},
+  "text_binding": { "scheme": "canon-letters/0.1", "canonical_length": 1840, "commitment": "b3:..." }, // optional, format 0.2 only
   "event_count": 1429,
   "duration_ms": 1384502,
   "created_client_t": "client-claimed timestamp, untrusted",
@@ -328,6 +331,8 @@ Manifest includes:
   "attestations": []
 }
 ```
+
+`text_binding` is the one text-derived value a public record may carry: a salted BLAKE3 commitment to the canonical letters and digits of the text the signer chose to bind, computed locally, sealed into `record_hash` under format `0.2`. It lets a reader check that a document has the same wording as the signed text; it never reconstructs the text and it is not a check of exact text. `docs/text-binding.md` is normative. Format `0.1` records carry no binding and keep verifying unchanged.
 
 
 `parent_record` is the public manifest field for multi-session documents. It may be null for v0 records. It lets a record say “this session continues from that earlier signed record” without pretending one capture covers all writing. `parent_record_hash` is reserved for future storage/database column naming and is not part of public manifest input.
@@ -367,9 +372,11 @@ Emacs example:
 }
 ```
 
+Only the documented keys are accepted (`surface`, `label`, `browser.url`, `browser.title`, `browser.field_kind`, `emacs.buffer_name`, `emacs.major_mode`), every value is a string, and lengths are capped, so capture context cannot become a side channel for document text.
+
 Privacy rules:
 
-- The signer must be able to review, edit, or omit capture context before upload.
+- The signer must be able to review, edit, or omit capture context before upload. A producer whose context is fixed and non-identifying (`/write` uploads its own URL and a fixed label) documents exactly what it sends instead.
 - Browser URLs should strip query strings and fragments by default.
 - Browser page title may be identifying; show it before upload.
 - Emacs buffer names may be identifying; show them before upload.
@@ -616,11 +623,11 @@ Input:
 
 Backend behavior:
 
-1. Validate schema.
-2. Verify events are content-blind by default; no plaintext or text-derived hash field is accepted in public mode.
+1. Validate schema, including the bounded `capture_context` and `attestations` shapes and 32-bit integer ranges.
+2. Verify events are content-blind: no plaintext or text-derived field is accepted, with the single exception of the format `0.2` `text_binding` commitment (§4).
 3. Recompute canonical event bytes.
 4. Recompute BLAKE3 hash chain.
-5. Verify manifest `record_hash` equals final chain hash.
+5. Verify manifest `record_hash` equals the final chain hash, or the chain tip sealed with the `text_binding` when one is present.
 6. Verify `event_count`, `duration_ms`, and other manifest fields are structurally consistent where possible.
 7. Stamp `ingested_server_t`.
 8. Generate collision-checked `short_signature`.
@@ -818,13 +825,13 @@ Behavior:
 
 1. Capture passively and locally.
 2. User signs when they want a link.
-3. Signing freezes the session.
+3. Signing freezes the session while it is signed and uploaded.
 4. Extension computes the public process hash chain locally.
 5. Extension uploads content-free manifest/events.
 6. Backend returns short URL.
 7. Extension copies URL to clipboard.
-8. Local log is cleared after successful upload.
-9. Further edits start a new session.
+8. Local log is cleared shortly after successful upload unless the field is edited again.
+9. Further edits in the same field reopen the session, as on `/write`: the events are kept, and signing again produces a new record covering the whole writing process so far. A failed upload can be retried with the same signed record.
 
 Unsigned local capture TTL:
 

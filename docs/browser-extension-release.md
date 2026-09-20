@@ -87,7 +87,7 @@ For the scaffold, the extension version comes from
 `apps/browser-extension/package.json`. Before release, reconcile it with the
 human-approved repository tag:
 
-- release tag `v0.1.0` should correspond to extension package version `0.1.0`;
+- a release tag `vX.Y.Z` should correspond to the extension package version it ships;
 - the build injects that package version into `manifest.json`;
 - Chrome Web Store uploads must use a version greater than any previously
   uploaded package for the same extension ID.

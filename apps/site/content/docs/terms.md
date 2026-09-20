@@ -26,7 +26,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 - **Don't try to break the service.** No automated abuse, mass-scraping, or attempts to overload the ingest endpoint. No attempts to inject content into other people's records. No exploitation of platform features in ways that materially degrade the service for others.
 - **Don't impersonate.** When you choose what `capture_context` to include with a record, the page URL, page title, buffer name, or major mode you upload is information *you* asserted about a session *you* signed; it is not validated by the service. Don't upload context that implies another person, organisation, or platform authored the writing.
 - **Don't upload unlawful material.** Records that contain instructions, links, or other content that is illegal in the operator's jurisdiction may be removed when reported. See the moderation section below.
-- **Respect the no-deletion model when you sign.** Once a record is uploaded, the service has no public deletion API. Before you click sign, the producer shows you the capture context and lets you redact or omit it. Use that review step.
+- **Respect the no-deletion model when you sign.** Once a record is uploaded, the service has no public deletion API. Before you click sign, the browser extension and the Emacs producer show you the capture context and let you redact or omit it; the `/write` page uploads a fixed, non-identifying context (its own URL and a fixed label). Use that review step.
 
 ## What you keep
 
@@ -42,7 +42,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 ## Moderation and removal
 
 - The service does not pre-screen records before upload. Because the records are content-blind, the service operator has no view of the text the record describes.
-- A record may be removed on a case-by-case basis if it is reported and the operator concludes it contains material that is clearly abusive (spam, illegal content) or that the upload was made by someone the operator believes to be impersonating another party. Removals are recorded so a separate listing of removed record hashes can be checked later. Reports go through the [project issue tracker](https://github.com/juanre/possiblymadebyahuman/issues).
+- A record may be removed on a case-by-case basis if it is reported and the operator concludes it contains material that is clearly abusive (spam, illegal content) or that the upload was made by someone the operator believes to be impersonating another party. A removed record's URL then returns not-found; there is no published listing of removed record hashes. Reports go through the [project issue tracker](https://github.com/juanre/possiblymadebyahuman/issues).
 - The service may rate-limit, block, or refuse uploads from sources that violate the "don't try to break the service" section above.
 
 ## Liability
@@ -51,7 +51,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 
 ## Changes to this page
 
-- Material changes to this page will be noted in the project's commit history. The current version is always the one served at `/docs/terms/`. A renamed or restructured version will redirect from this path; if it doesn't, the page was changed by someone who shouldn't have, and you should consult the [GitHub history](https://github.com/juanre/possiblymadebyahuman/commits/main/apps/site/content/docs/terms.md) before relying on the new version.
+- Material changes to this page will be noted in the project's commit history. The current version is always the one served at `/docs/terms/`; if the page is renamed or restructured, this path keeps serving it. If you doubt a version, consult the [GitHub history](https://github.com/juanre/possiblymadebyahuman/commits/main/apps/site/content/docs/terms.md) before relying on it.
 
 ## Contact
 

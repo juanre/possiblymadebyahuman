@@ -5,15 +5,15 @@ group: "Read and verify a record"
 weight: 2
 ---
 
-Every public record page includes a **Signature & details** section. A record's signature is its BLAKE3 hash, and the short record URL is derived from that hash. When the page loads, it recomputes the hash from the stored events in your own browser and shows the result next to the stored hash, so the "Computed hash" row is your own re-derivation rather than something the server asserts. Nothing you do here is uploaded.
+Every public record page includes a **Signature & details** section. A record's signature is its BLAKE3 hash, and the short record URL is derived from that hash. When the page loads, it recomputes the hash from the stored events in your own browser, states plainly whether the result matches the stored hash, and shows the recomputed value next to the stored one, so the "Computed hash" row is your own re-derivation rather than something the server asserts. If the events shown do not reproduce the record hash, the section says so and lists why. Nothing you do here is uploaded.
 
 ## What the section shows
 
-- **Full record hash**: the record's signature, as stored in the manifest. The short URL is a prefix of this hash.
+- **Full record hash**: the record's signature, as stored in the manifest. The short URL is derived from it: the leading characters of the hash bytes in base58, lengthened on collision, and occasionally prefixed with `X` when the natural prefix would shadow a reserved route such as `/docs`.
 - **Computed hash**: the same hash, recomputed in your browser from the event log (and, for a bound record, the content-blind document commitment). If it equals the stored hash, the events reproduce the signature.
 - **Server metadata**: whether the server recorded an ingestion time, or only a client-claimed time.
 
-When the record was server-observed, this section also carries the one-line observation status and the collapsible list of server-observed commitments.
+The section also carries the one-line observation status for every record (observed, partially observed, not observed, or no observation requested) and, when there are any, the collapsible list of server-observed commitments.
 
 The recomputation runs automatically when the page loads; there is no button to press. Checking whether a particular text is the one that was signed is a separate tool, the [document checker](/docs/checking-a-document/).
 
