@@ -21,16 +21,19 @@ function fail(message, details = []) {
   exit(1);
 }
 
+function parseInput(raw) {
+  // The parser's own message can quote the offending input, which may be the
+  // transient final text; report only that the input was not valid JSON.
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fail("stdin is not valid JSON");
+  }
+}
+
 try {
   const raw = await readStdin();
-  // A parse error message can quote the offending input, which may hold the
-  // transient binding text; report the failure without echoing anything.
-  let input;
-  try {
-    input = JSON.parse(raw);
-  } catch {
-    fail("helper input was not valid JSON");
-  }
+  const input = parseInput(raw);
 
   if (!Array.isArray(input.events)) fail("events must be an array");
   if (typeof input.session_id !== "string") fail("session_id must be a string");

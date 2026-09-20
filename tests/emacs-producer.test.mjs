@@ -2,19 +2,30 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { verifyRecord } from "../packages/format/src/index.ts";
+import { computeEventHashChain, verifyRecord } from "../packages/format/src/index.ts";
 import { checkCapabilityAccuracy } from "../packages/conformance/src/index.ts";
 
 const emacs = spawnSync("bash", ["-lc", "command -v emacs"], { encoding: "utf8" }).stdout.trim();
 
-function runEmacs(scriptPath) {
-  return spawnSync(emacs, ["--batch", "-Q", "-l", scriptPath], {
-    cwd: resolve("."),
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
+// Scenarios that do not test observation point the producer at a closed port so
+// no test can ever reach the public service. Emacs runs asynchronously so that
+// an ingest API served from this process can answer it.
+function runEmacs(scriptPath, env = {}) {
+  return new Promise((resolveRun, rejectRun) => {
+    const child = spawn(emacs, ["--batch", "-Q", "-l", scriptPath], {
+      cwd: resolve("."),
+      env: { ...process.env, PMBAH_API_BASE_URL: "http://127.0.0.1:9", ...env },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+    child.on("error", rejectRun);
+    child.on("close", (status) => resolveRun({ status, stdout, stderr }));
   });
 }
 
@@ -28,6 +39,7 @@ test("Emacs producer captures Unicode codepoint mutations and builds a conforman
   await writeFile(scriptPath, `;;; scenario.el --- PMBAH test scenario -*- lexical-binding: t; -*-
 (load ${JSON.stringify(modePath)})
 (setq pmbah-helper-script ${JSON.stringify(helperPath)})
+(setq pmbah-observe-process nil)
 (with-temp-buffer
   (text-mode)
   (pmbah-mode 1)
@@ -49,7 +61,7 @@ test("Emacs producer captures Unicode codepoint mutations and builds a conforman
 `);
 
   try {
-    const result = runEmacs(scriptPath);
+    const result = await runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
 
     const fixture = JSON.parse(await readFile(outputPath, "utf8"));
@@ -110,7 +122,7 @@ test("Emacs producer records newline insertion as one codepoint", { skip: emacs 
 `);
 
   try {
-    const result = runEmacs(scriptPath);
+    const result = await runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(await readFile(outputPath, "utf8"));
     assert.deepEqual(output.events.map(({ op, pos, del_len, ins_len }) => ({ op, pos, del_len, ins_len })), [
@@ -135,6 +147,7 @@ test("Emacs producer starts in non-empty buffers without text or baseline fields
   await writeFile(scriptPath, `;;; nonempty.el --- PMBAH non-empty start test -*- lexical-binding: t; -*-
 (load ${JSON.stringify(modePath)})
 (setq pmbah-helper-script ${JSON.stringify(helperPath)})
+(setq pmbah-observe-process nil)
 (with-temp-buffer
   (text-mode)
   (insert "PREEXISTING-CANARY🙂")
@@ -153,7 +166,7 @@ test("Emacs producer starts in non-empty buffers without text or baseline fields
 `);
 
   try {
-    const result = runEmacs(scriptPath);
+    const result = await runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(await readFile(outputPath, "utf8"));
     const { record } = output;
@@ -187,6 +200,7 @@ test("Emacs producer starts a fresh session after successful upload", { skip: em
 (require 'cl-lib)
 (load ${JSON.stringify(modePath)})
 (setq pmbah-helper-script ${JSON.stringify(helperPath)})
+(setq pmbah-observe-process nil)
 (with-temp-buffer
   (text-mode)
   (pmbah-mode 1)
@@ -207,7 +221,7 @@ test("Emacs producer starts a fresh session after successful upload", { skip: em
 `);
 
   try {
-    const result = runEmacs(scriptPath);
+    const result = await runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(await readFile(outputPath, "utf8"));
     assert.equal(output.response.url, "http://localhost:8000/stub");
@@ -317,7 +331,7 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
 `);
 
   try {
-    const result = runEmacs(scriptPath);
+    const result = await runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(await readFile(outputPath, "utf8"));
     assert.equal(output.region_text, "beta");
@@ -362,7 +376,7 @@ test("Emacs helper payload contains only process metadata", { skip: emacs ? fals
 `);
 
   try {
-    const result = runEmacs(scriptPath);
+    const result = await runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const payload = JSON.parse(await readFile(outputPath, "utf8"));
     const serialized = JSON.stringify(payload);
@@ -464,4 +478,237 @@ test("Emacs helper never echoes its input back when the input is malformed", () 
   assert.equal(result.stderr.includes(marker), false, result.stderr);
   assert.equal(result.stdout.includes(marker), false);
   assert.match(result.stderr, /not valid JSON/);
+});
+
+
+test("Emacs chain-tip helper computes the public prefix tip and refuses text-bearing input", () => {
+  const helperPath = resolve("producers/emacs/scripts/chain-tip.mjs");
+  const sessionId = "00000000-0000-4000-8000-000000000034";
+  const events = [
+    { seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 5, source: "typing" },
+    { seq: 1, t: 90, op: "insert", pos: 5, del_len: 0, ins_len: 6, source: "typing" },
+  ];
+  const run = (input) => spawnSync(process.execPath, [helperPath], { cwd: resolve("."), encoding: "utf8", input });
+
+  const ok = run(JSON.stringify({ session_id: sessionId, format_version: "0.2", events }));
+  assert.equal(ok.status, 0, ok.stderr || ok.stdout);
+  assert.deepEqual(JSON.parse(ok.stdout), {
+    event_count: 2,
+    chain_tip: computeEventHashChain(events, sessionId, "0.2").at(-1),
+  });
+  assert.notEqual(JSON.parse(ok.stdout).chain_tip, computeEventHashChain(events, sessionId, "0.1").at(-1));
+
+  const marker = "CHAINTIP-CANARY-1c2d";
+  const textField = run(JSON.stringify({ session_id: sessionId, format_version: "0.2", events, final_text: marker }));
+  assert.notEqual(textField.status, 0);
+  assert.equal(textField.stdout, "");
+  assert.equal(textField.stderr.includes(marker), false, textField.stderr);
+  assert.match(textField.stderr, /unexpected field/);
+
+  const malformed = run(`{"events": "${marker}"`);
+  assert.notEqual(malformed.status, 0);
+  assert.equal(malformed.stderr.includes(marker), false, malformed.stderr);
+  assert.match(malformed.stderr, /not valid JSON/);
+});
+
+test("Emacs producer commits server-observed checkpoints while writing and binds them at sign time", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const { createIngestApi } = await import("../apps/ingest-api/src/index.ts");
+  const { createRuntimeServer } = await import("../apps/ingest-api/src/server.ts");
+  const { InMemoryRecordStore } = await import("../packages/storage/src/index.ts");
+  const store = new InMemoryRecordStore();
+  const api = createIngestApi({ store, baseUrl: "http://pmbah.test" });
+  const server = createRuntimeServer({ api, db: { async query() { return { rows: [] }; } } });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const { port } = server.address();
+
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-observed-"));
+  const outputPath = join(temp, "observed.json");
+  const scriptPath = join(temp, "observed.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+  const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
+
+  await writeFile(scriptPath, `;;; observed.el --- PMBAH server-observed scenario -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(setq pmbah-helper-script ${JSON.stringify(helperPath)})
+(with-temp-buffer
+  (text-mode)
+  (pmbah-mode 1)
+  (insert "First words")
+  ;; The first mutation commits immediately; wait for the server's answer.
+  (pmbah--observation-wait 10)
+  (let ((status-after-first-edit (pmbah--observation-status))
+        (mode-line-after-first-edit (pmbah--mode-line)))
+    (insert " and a few more")
+    (goto-char (point-min))
+    (delete-char 1)
+    (let* ((status-before-sign (pmbah--observation-status))
+           (mode-line-before-sign (pmbah--mode-line))
+           (response (pmbah-sign-buffer (list :surface "emacs") t))
+           (status-after-sign (pmbah--observation-status))
+           (output (list :response response
+                         :status_after_first_edit status-after-first-edit
+                         :mode_line_after_first_edit mode-line-after-first-edit
+                         :status_before_sign status-before-sign
+                         :mode_line_before_sign mode-line-before-sign
+                         :status_after_sign status-after-sign)))
+      (with-temp-file ${JSON.stringify(outputPath)}
+        (insert (pmbah--json-encode output))))))
+`);
+
+  try {
+    const result = await runEmacs(scriptPath, { PMBAH_API_BASE_URL: `http://127.0.0.1:${port}` });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.match(output.response.short_signature, /^[1-9A-HJ-NP-Za-km-z]+$/);
+
+    const fetched = await api.getRecord(output.response.short_signature);
+    assert.equal(fetched.status, 200);
+    assert.equal(fetched.body.manifest.producer.id, "emacs");
+    assert.equal(fetched.body.manifest.format_version, "0.2");
+    assert.equal(fetched.body.events.length, 3);
+    assert.equal(fetched.body.observation.state, "observed");
+    assert.ok(fetched.body.observation.checkpoint_count >= 2, "first-edit checkpoint plus the pre-sign flush");
+    assert.equal(fetched.body.observation.commitments.at(-1).event_count, 3);
+    assert.equal(fetched.body.observation.observed_session_id, fetched.body.manifest.session_id);
+    assert.equal(JSON.stringify(fetched.body).includes("First words"), false);
+    assert.equal(JSON.stringify(output).includes("First words"), false);
+    assert.equal(output.status_after_first_edit.state, "known");
+    assert.equal(output.status_after_first_edit.committed_event_count, 1);
+    assert.equal(output.mode_line_after_first_edit, " PMBAH:1✓");
+    assert.equal(output.status_before_sign.state, "partial");
+    assert.equal(output.mode_line_before_sign, " PMBAH:3·");
+    assert.equal(output.status_after_sign.state, "unknown", "a fresh session starts after upload");
+    assert.equal(output.status_after_sign.event_count, 0);
+    assert.equal(output.status_after_sign.token_present, false);
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs producer uploads an explicit unobserved state when no checkpoint ever succeeded", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const { createIngestApi } = await import("../apps/ingest-api/src/index.ts");
+  const { createRuntimeServer } = await import("../apps/ingest-api/src/server.ts");
+  const { InMemoryRecordStore } = await import("../packages/storage/src/index.ts");
+  const store = new InMemoryRecordStore();
+  const api = createIngestApi({ store, baseUrl: "http://pmbah.test" });
+  const server = createRuntimeServer({ api, db: { async query() { return { rows: [] }; } } });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const { port } = server.address();
+
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-unobserved-"));
+  const outputPath = join(temp, "unobserved.json");
+  const scriptPath = join(temp, "unobserved.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+  const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
+
+  await writeFile(scriptPath, `;;; unobserved.el --- checkpoints unreachable, upload reachable -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(setq pmbah-helper-script ${JSON.stringify(helperPath)})
+;; Checkpoints go to a closed port; only the final upload reaches the service.
+(setq pmbah-observation-base-url "http://127.0.0.1:9")
+(with-temp-buffer
+  (text-mode)
+  (pmbah-mode 1)
+  (insert "Offline words")
+  (pmbah--observation-wait 10)
+  (setq pmbah-observation-base-url nil)
+  (let* ((status-before-sign (pmbah--observation-status))
+         (response (pmbah-sign-buffer (list :surface "emacs") t))
+         (output (list :response response :status_before_sign status-before-sign)))
+    (with-temp-file ${JSON.stringify(outputPath)}
+      (insert (pmbah--json-encode output)))))
+`);
+
+  try {
+    const result = await runEmacs(scriptPath, { PMBAH_API_BASE_URL: `http://127.0.0.1:${port}` });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.status_before_sign.state, "unknown");
+    assert.equal(output.status_before_sign.token_present, false);
+    assert.match(output.status_before_sign.last_failure, /^transient/);
+    const fetched = await api.getRecord(output.response.short_signature);
+    assert.equal(fetched.status, 200);
+    assert.equal(fetched.body.observation.state, "unobserved");
+  } finally {
+    await new Promise((resolveClose) => server.close(resolveClose));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs observation state machine backs off on transient failures, pins conflicts, and resets when unavailable", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-observation-states-"));
+  const outputPath = join(temp, "states.json");
+  const scriptPath = join(temp, "states.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+
+  await writeFile(scriptPath, `;;; states.el --- checkpoint outcome handling without a server -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(defun pmbah-test-outcome (kind http-status payload)
+  (setq pmbah--observation-in-flight t)
+  (pmbah--observation-apply (list kind http-status payload))
+  (list :state (symbol-name pmbah--observation-state)
+        :backoff_ms pmbah--observation-backoff-ms
+        :committed pmbah--observation-committed-count
+        :token (or pmbah--observation-token :json-false)
+        :commitments (length pmbah--observation-commitments)
+        :in_flight (if pmbah--observation-in-flight t :json-false)))
+(defun pmbah-test-ok-payload (event-count checkpoint-id chain-tip)
+  (list (cons 'event_count event-count)
+        (cons 'token "token-0123456789abcdef0123456789abcdef")
+        (cons 'checkpoint_id checkpoint-id)
+        (cons 'chain_tip chain-tip)
+        (cons 'server_t "2026-01-01T00:00:00.000Z")))
+(with-temp-buffer
+  (text-mode)
+  (pmbah-mode 1)
+  ;; Three events, captured without triggering a real checkpoint.
+  (let ((pmbah-observe-process nil))
+    (insert "a")
+    (insert "b")
+    (insert "c"))
+  (let* ((transient-1 (pmbah-test-outcome 'transient 0 "connection refused"))
+         (transient-2 (pmbah-test-outcome 'transient 503 "unavailable"))
+         (transient-7 (progn (dotimes (_ 5) (pmbah-test-outcome 'rate_limited 429 "slow down"))
+                             (pmbah-test-outcome 'transient 0 "still down")))
+         (ok-1 (pmbah-test-outcome 'ok 201 (pmbah-test-ok-payload 1 "cp-1" "b3:00")))
+         (ok-3 (pmbah-test-outcome 'ok 201 (pmbah-test-ok-payload 3 "cp-3" "b3:02")))
+         (conflict (pmbah-test-outcome 'conflict 409 "checkpoint_stale"))
+         (after-conflict-ok (pmbah-test-outcome 'ok 200 (pmbah-test-ok-payload 3 "cp-3" "b3:02")))
+         (unavailable (pmbah-test-outcome 'unavailable 404 "observation_unavailable"))
+         (output (list :transient_1 transient-1 :transient_2 transient-2 :transient_7 transient-7
+                       :ok_1 ok-1 :ok_3 ok-3 :conflict conflict :after_conflict_ok after-conflict-ok
+                       :unavailable unavailable
+                       :envelope_after_reset (or (pmbah--observation-envelope) :json-false))))
+    (with-temp-file ${JSON.stringify(outputPath)}
+      (insert (pmbah--json-encode output)))))
+`);
+
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.transient_1.state, "unknown");
+    assert.equal(output.transient_1.backoff_ms, 1000);
+    assert.equal(output.transient_1.in_flight, false);
+    assert.equal(output.transient_2.backoff_ms, 2000);
+    assert.equal(output.transient_7.backoff_ms, 60000, "backoff is capped");
+    assert.equal(output.ok_1.state, "partial");
+    assert.equal(output.ok_1.backoff_ms, 0);
+    assert.equal(output.ok_1.committed, 1);
+    assert.equal(output.ok_1.commitments, 1);
+    assert.equal(output.ok_3.state, "known");
+    assert.equal(output.ok_3.committed, 3);
+    assert.equal(output.ok_3.commitments, 2);
+    assert.equal(output.conflict.state, "diverged");
+    assert.equal(output.conflict.token, "token-0123456789abcdef0123456789abcdef");
+    assert.equal(output.after_conflict_ok.state, "diverged", "a conflict pins the session");
+    assert.equal(output.unavailable.state, "unknown");
+    assert.equal(output.unavailable.token, false);
+    assert.equal(output.unavailable.committed, 0);
+    assert.equal(output.unavailable.commitments, 0);
+    assert.deepEqual(output.envelope_after_reset, { state: "unobserved" });
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
 });
