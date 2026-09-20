@@ -10,7 +10,7 @@ const record = structuredClone(golden.record);
 record.manifest.session_id = sessionId;
 record.manifest.record_hash = computeRecordHash(record.events, sessionId, record.manifest.format_version);
 const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
-const plaintextFixtures = [' there', 'Hi ther!'];
+const plaintextFixtures = ['Hi there!', 'Hi ther!'];
 const shortPlaintextJsonFixture = '"Hi"';
 
 await checkJson('/health', (body) => {

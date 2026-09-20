@@ -6,7 +6,9 @@ LOCAL_IMAGE ?= possiblymadebyahuman-local:latest
 RELEASE_IMAGE ?= possiblymadebyahuman
 PROD_IMAGE ?= ghcr.io/juanre/possiblymadebyahuman:latest
 IMAGE ?= possiblymadebyahuman:latest
-PMBAH_PORT ?= 8000
+# The app port comes from the local env file so the readiness and smoke checks
+# probe the same port compose publishes.
+PMBAH_PORT ?= $(or $(shell sed -n 's/^PMBAH_PORT=//p' $(ENV_FILE) 2>/dev/null),8000)
 DOCKER_PLATFORM ?= linux/amd64
 RELEASE_PLATFORM ?= linux/amd64
 LOCAL_COMPOSE = ENV_FILE=$(ENV_FILE) LOCAL_IMAGE=$(LOCAL_IMAGE) docker compose --env-file $(ENV_FILE) -f docker-compose.local-container.yml -p pmbah-local
