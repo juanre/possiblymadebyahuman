@@ -636,6 +636,74 @@ test("Emacs producer uploads an explicit unobserved state when no checkpoint eve
   }
 });
 
+test("Emacs session survives a major-mode change and revert-buffer", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-major-mode-"));
+  const outputPath = join(temp, "major-mode.json");
+  const scriptPath = join(temp, "major-mode.el");
+  const documentPath = join(temp, "draft.txt");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+  await writeFile(documentPath, "");
+
+  await writeFile(scriptPath, `;;; major-mode.el --- session state outlives kill-all-local-variables -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(setq pmbah-observe-process nil)
+(setq pmbah-state-directory ${JSON.stringify(join(temp, "state/"))})
+(defun pmbah-test-snapshot (session)
+  (list :same_session (if (equal session pmbah--session-id) t :json-false)
+        :event_count pmbah--next-seq
+        :enabled (if pmbah-mode t :json-false)
+        :hook_present (if (memq #'pmbah--after-change after-change-functions) t :json-false)
+        :major_mode (symbol-name major-mode)))
+(let ((mode-change nil) (revert nil))
+  (with-temp-buffer
+    (text-mode)
+    (pmbah-mode 1)
+    (insert "one")
+    (let ((session pmbah--session-id))
+      (emacs-lisp-mode)
+      (insert "two")
+      (setq mode-change (pmbah-test-snapshot session))))
+  (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+    (text-mode)
+    (pmbah-mode 1)
+    (insert "draft")
+    (let ((session pmbah--session-id)
+          (count-before pmbah--next-seq))
+      (revert-buffer t t)
+      (insert "again")
+      (setq revert (append (pmbah-test-snapshot session)
+                           (list :count_before count-before
+                                 :events (vconcat (pmbah--session-events)))))
+      (set-buffer-modified-p nil)))
+  (with-temp-file ${JSON.stringify(outputPath)}
+    (insert (pmbah--json-encode (list :mode_change mode-change :revert revert)))))
+`);
+
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.mode_change.same_session, true);
+    assert.equal(output.mode_change.event_count, 2);
+    assert.equal(output.mode_change.enabled, true);
+    assert.equal(output.mode_change.hook_present, true);
+    assert.equal(output.mode_change.major_mode, "emacs-lisp-mode");
+    assert.equal(output.revert.same_session, true);
+    assert.equal(output.revert.enabled, true);
+    assert.equal(output.revert.hook_present, true);
+    assert.equal(output.revert.count_before, 1);
+    assert.ok(output.revert.event_count >= 2, "the edit after revert is recorded in the same session");
+    assert.deepEqual(output.revert.events.at(-1) && { op: output.revert.events.at(-1).op, ins_len: output.revert.events.at(-1).ins_len }, { op: "insert", ins_len: 5 });
+    for (let index = 1; index < output.revert.events.length; index += 1) {
+      assert.ok(output.revert.events[index].t >= output.revert.events[index - 1].t);
+    }
+    assert.equal(JSON.stringify(output).includes("draft"), false);
+    assert.equal(JSON.stringify(output).includes("again"), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Emacs observation state machine backs off on transient failures, pins conflicts, and resets when unavailable", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-observation-states-"));
   const outputPath = join(temp, "states.json");

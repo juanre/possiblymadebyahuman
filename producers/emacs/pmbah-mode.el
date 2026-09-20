@@ -139,13 +139,43 @@ hashed, passed to the helper, or uploaded."
   (if pmbah-mode
       (condition-case error
           (progn
-            (pmbah--start-session)
-            (add-hook 'after-change-functions #'pmbah--after-change nil t))
+            (pmbah--begin-capture)
+            (add-hook 'after-change-functions #'pmbah--after-change nil t)
+            (add-hook 'after-change-major-mode-hook #'pmbah--reinstall-capture))
         (error
          (setq pmbah-mode nil)
          (remove-hook 'after-change-functions #'pmbah--after-change t)
          (signal (car error) (cdr error))))
     (remove-hook 'after-change-functions #'pmbah--after-change t)))
+
+;; Session state outlives `kill-all-local-variables', so changing the major
+;; mode or reverting the buffer keeps recording into the same session.
+(dolist (variable '(pmbah-mode
+                    pmbah--session-id
+                    pmbah--session-start-time
+                    pmbah--events
+                    pmbah--next-seq
+                    pmbah--inhibit-capture
+                    pmbah--observation-state
+                    pmbah--observation-token
+                    pmbah--observation-committed-count
+                    pmbah--observation-last-attempt
+                    pmbah--observation-in-flight
+                    pmbah--observation-queued
+                    pmbah--observation-backoff-ms
+                    pmbah--observation-commitments
+                    pmbah--observation-last-failure))
+  (put variable 'permanent-local t))
+
+(defun pmbah--reinstall-capture ()
+  "Re-add the buffer-local change hook after a major-mode change wiped it."
+  (when (and pmbah-mode pmbah--session-id)
+    (add-hook 'after-change-functions #'pmbah--after-change nil t)))
+
+(defun pmbah--begin-capture ()
+  "Continue this buffer's session when it has one, otherwise start fresh."
+  (unless pmbah--session-id
+    (pmbah--start-session)))
 
 (defun pmbah--start-session ()
   "Start a fresh per-buffer PMBAH session."
