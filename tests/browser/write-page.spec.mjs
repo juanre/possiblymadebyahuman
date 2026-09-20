@@ -284,3 +284,41 @@ test("/write focuses the canvas on load so you can type without clicking", async
   await page.keyboard.type("hello");
   await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveValue("hello");
 });
+
+test("/write shows its status message on the page, including why an upload failed", async ({ page }) => {
+  await page.route("**/api/observed-sessions/*/checkpoints", async (route) => {
+    const body = route.request().postDataJSON();
+    const observedSessionId = new URL(route.request().url()).pathname.split("/").at(-2);
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ observed_session_id: observedSessionId, token: "m".repeat(32), checkpoint_id: "message-cp", event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
+    });
+  });
+  await page.route("**/api/records", async (route) => {
+    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporary_test_failure" }) });
+  });
+
+  await page.goto("/write");
+  const message = page.getByRole("status", { name: "Drafting message" });
+  await expect(message).toBeVisible();
+  await expect(message).toContainText("Text stays in this browser");
+
+  await page.getByRole("textbox", { name: "Writing canvas" }).click();
+  await page.keyboard.type("Say it out loud");
+  await expect(message).toContainText("Capturing content-blind edit events locally.");
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
+  // The full reason is readable on the page, not only in a hover title.
+  await expect(message).toBeVisible();
+  await expect(message).toContainText("Upload failed: temporary_test_failure");
+  await expect(page.locator(".ml-error")).toHaveText("upload failed, try again");
+});
+
+test("/write explains on the empty canvas that text stays here and only the shape of editing is recorded", async ({ page }) => {
+  await page.goto("/write");
+  const canvas = page.getByRole("textbox", { name: "Writing canvas" });
+  await expect(canvas).toHaveAttribute("placeholder", /stays in this browser/);
+  await expect(canvas).toHaveAttribute("placeholder", /shape of the editing/);
+  await expect(canvas).toHaveAttribute("placeholder", /recorded/);
+});

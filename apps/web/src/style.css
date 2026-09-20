@@ -408,6 +408,21 @@ section.card[aria-label="Check a document"] {
   to   { opacity: 1; transform: none; }
 }
 
+.write-message {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 6px 18px 0;
+  text-align: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: #756b60;
+  overflow-wrap: anywhere;
+}
+.write-message[data-state="error"] { color: #a12a2a; }
+.write-message[data-state="uploaded"] { color: #166534; }
+.write-message[data-state="signing"], .write-message[data-state="loading"] { color: #8b5e34; }
+
 .write-modeline {
   flex: 0 0 auto;
   display: flex;

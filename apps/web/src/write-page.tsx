@@ -333,7 +333,7 @@ export function WritePage() {
         id="pmbah-write-canvas"
         className="write-canvas"
         aria-label="Writing canvas"
-        placeholder=""
+        placeholder="Write here. Your text stays in this browser; only the shape of the editing, when each edit happened and how large it was, is recorded and signed."
         disabled={status === "signing"}
         readOnly={status === "uploaded"}
         spellCheck="true"
@@ -374,6 +374,8 @@ export function WritePage() {
         </div>
       </div>
     ) : null}
+
+    <p className="write-message" data-state={status} role="status" aria-label="Drafting message">{message}</p>
 
     <footer className="write-modeline" aria-label="Drafting status">
       <span className="ml-left">
