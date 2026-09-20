@@ -268,8 +268,8 @@ Owns:
 - sign-buffer command
 - conformant event logs (format `0.2`)
 - capture-context prompts/redaction before upload
-- server-observed checkpoint orchestration with the `packages/producer-core` cadence and state machine (first event immediate; 50-event delta or 60 s with new events; no idle heartbeats; single in-flight plus one queued slot; 1 s→60 s backoff; `diverged` on 409/400; reset on 404 `observation_unavailable`; flush of an already-observed session before sign), with chain tips computed by the local `scripts/chain-tip.mjs` helper from public events only
-- observation binding on upload: `(observed_session_id, token)` when a checkpoint succeeded, explicit `unobserved` when observation was requested but never succeeded, absent when `pmbah-observe-process` is nil
+- server-observed checkpoint orchestration with the `packages/producer-core` cadence and state machine (first event immediate; 50-event delta or 60 s with new events; no idle heartbeats; single in-flight plus one queued slot; 30 s attempt watchdog; 1 s→60 s backoff; `diverged` on 409/400; reset on 404 `observation_unavailable`; up to two flush rounds of an already-observed session before sign), with chain tips advanced from the last known tip by the local `scripts/chain-tip.mjs` helper from public events only
+- observation binding on upload: `(observed_session_id, token)` when a checkpoint succeeded and the session is not diverged, explicit `unobserved` when observation was requested but never succeeded or diverged (the upload message says so), absent when `pmbah-observe-process` is nil
 - one session per buffer, kept across major-mode changes and `revert-buffer` (permanent-local state)
 - per-file session persistence under `pmbah-state-directory` (SHA-256 of the file's true name, owner-only, no text) with resumption anchored at the stored session start, deletion after upload or discard, and `.stale` retirement when the 32-bit event-time bound, a format-version change, or an unreadable file prevents resumption
 
