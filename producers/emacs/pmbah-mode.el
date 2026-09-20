@@ -113,7 +113,6 @@ start time, public events, and the observation token; never document text."
 (defvar-local pmbah--session-start-time nil)
 (defvar-local pmbah--events nil)
 (defvar-local pmbah--next-seq 0)
-(defvar-local pmbah--inhibit-capture nil)
 (defvar-local pmbah--state-timer nil
   "Pending idle timer that writes this buffer's session state.")
 (defvar-local pmbah--state-path nil
@@ -193,7 +192,6 @@ hashed, passed to the helper, or uploaded."
                     pmbah--session-start-time
                     pmbah--events
                     pmbah--next-seq
-                    pmbah--inhibit-capture
                     pmbah--state-timer
                     pmbah--state-path
                     pmbah--chain-tip
@@ -439,7 +437,7 @@ Runs from `after-set-visited-file-name-hook', which `write-file' and
 BEG, END, and LEN are supplied by `after-change-functions` and are Emacs
 character positions/lengths, which match the PMBAH format's Unicode codepoint
 unit for these captured text buffers."
-  (unless (or pmbah--inhibit-capture (not pmbah-mode) (not pmbah--session-id))
+  (unless (or (not pmbah-mode) (not pmbah--session-id))
     (let* ((inserted-len (- end beg))
            (op (cond
                 ((and (= len 0) (> inserted-len 0)) "insert")

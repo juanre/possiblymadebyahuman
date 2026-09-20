@@ -469,7 +469,6 @@ test("Emacs helper seals a content-blind text binding from transient final text 
   assert.equal(serialized.includes("final_text"), false);
 });
 
-
 test("Emacs helper never echoes its input back when the input is malformed", () => {
   const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
   const marker = "SECRET-DOCUMENT-WORDS-9f3a";
@@ -479,7 +478,6 @@ test("Emacs helper never echoes its input back when the input is malformed", () 
   assert.equal(result.stdout.includes(marker), false);
   assert.match(result.stderr, /not valid JSON/);
 });
-
 
 test("Emacs chain-tip helper computes the public prefix tip and refuses text-bearing input", () => {
   const helperPath = resolve("producers/emacs/scripts/chain-tip.mjs");
