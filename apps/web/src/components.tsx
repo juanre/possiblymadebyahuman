@@ -641,6 +641,7 @@ export function RecordSignet({ record }: { record: RecordApiResponse }) {
         </span>
         <div className="signet-titles">
           <h1>Signed writing record</h1>
+          <p className="signet-scope">This shows the shape of a writing process. It is not a human/AI score or verdict.</p>
           <p className="signet-statement">
             Signs the <strong>shape of the writing process</strong>
             {bound ? <> and the <strong>wording of the text it produced</strong></> : null}.

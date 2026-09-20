@@ -244,6 +244,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 .signet-seal-svg .seal-ring { fill: none; stroke: #8b5e34; stroke-width: 1; opacity: 0.5; }
 .signet-seal-svg .seal-mark { fill: none; stroke: #3d2f17; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 .signet-titles h1 { margin: 0; font-size: clamp(2rem, 6vw, 3.4rem); line-height: 1.03; }
+.signet-scope { margin: 6px 0 0; font-size: 0.95rem; color: #514a40; }
 .signet-statement { margin: 6px 0 0; font-size: 1.05rem; color: #3d2f17; }
 .signet-statement strong { color: #202124; }
 

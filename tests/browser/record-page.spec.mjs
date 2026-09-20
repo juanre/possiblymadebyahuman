@@ -19,6 +19,14 @@ test.describe("public record page", () => {
     await expect(banner).toContainText("not a human/AI score");
   });
 
+  test("signet says under the title that this is the shape of a process, not a score or verdict", async ({ page }) => {
+    const scope = page.locator("header.signet h1 + .signet-scope");
+    await expect(scope).toBeVisible();
+    await expect(scope).toContainText("shape of a writing process");
+    await expect(scope).toContainText("not a human/AI score or verdict");
+    await expect(page.getByRole("region", { name: "What this record means" })).toBeVisible();
+  });
+
   test("shows browser.title and emacs.major_mode in capture context", async ({ page }) => {
     const card = page.locator("section.card", { hasText: "Capture context" });
     await expect(card).toContainText("Page title");
