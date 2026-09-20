@@ -43,9 +43,9 @@ registry.appendMutation(session.session_id, {
   source: "typing",
 });
 
-await registry.flushObservation(session.session_id); // optional: covers any uncheckpointed tail
+await registry.flushObservation(session.session_id); // completes observation of an already-committed session
 const draft = registry.sign(session.session_id);
-const observation = registry.getObservationEnvelope(session.session_id); // null when no checkpoint adapter wired or never committed
+const observation = registry.getObservationEnvelope(session.session_id); // null when no checkpoint adapter is wired; { state: "unobserved" } when never committed or diverged
 registry.markUploading(session.session_id);
 try {
   const resp = await myUploadAdapter.postRecord({
@@ -87,10 +87,12 @@ Concurrency: at most one checkpoint is in flight; while one runs, further trigge
 Failure handling:
 
 - `transient` (network / 5xx) or `rate_limited` (429): backoff is 1s on the first failure, doubles 2s → 4s → … → 60s on each subsequent failure. No retry fires while idle and no queued trailing call inside the in-flight loop is allowed to bypass `next_backoff_ms`; the next event-driven `appendMutation` re-evaluates after the window has elapsed.
-- `conflict` (409) or `client_bug` (400): observation pins to `diverged`. No further checkpoints fire; the record will be marked `partial` (or worse) by the ingest API.
+- `conflict` (409) or `client_bug` (400): observation pins to `diverged`. No further checkpoints fire, and the record uploads as `{ state: "unobserved" }` with the stale token kept local.
 - `unavailable` (404 `observation_unavailable`, TTL-expired or token lost): observation resets to `unknown`, `observed_session_id` and `last_observed_token` are cleared, commitments dropped. The next mutation mints a fresh `observed_session_id`.
 
-Sign-time flush is explicit: callers run `await registry.flushObservation(session_id)` before `sign()` to give the server a final commitment covering the tail. `flushObservation` does not retry transient failures — the consumer is expected to read `record.observation.state` and decide whether to bind a (possibly stale) envelope on the upload anyway.
+Sign-time flush is explicit: callers run `await registry.flushObservation(session_id)` before `sign()`. It completes observation of a session the server has already committed — awaiting the in-flight checkpoint or kicking one over the uncommitted tail, then one more round for events that arrived while that checkpoint was in flight (at most two rounds) — so an observed record is observed to its final event. A session with no commitment is left alone rather than given a first commitment at sign time, and a `diverged` session is not checkpointed. `flushObservation` does not retry a checkpoint it kicked; an inherited in-flight checkpoint that fails still gets the flush's own attempt.
+
+`getObservationEnvelope(session_id)` says what the upload should carry: `null` when no checkpoint adapter is wired (observation not requested), `{ observed_session_id, token }` when a commitment exists and the session has not diverged, and `{ state: "unobserved" }` when the session has no commitment or is `diverged` (its stale token stays local). When the ingest API rejects a bound upload with `observation_mismatch` or `observation_unavailable`, callers run `markObservationRejected(session_id, code)` so the retry uploads as unobserved instead of binding the same token again; `IngestUploadError` carries that `code` for upload adapters that surface it.
 
 Commitments retained per session are capped at `commitment_retention` (default 32) using "oldest anchor + last 31 tail," so the very first commitment stays available as an anchor while the in-memory footprint stays bounded.
 

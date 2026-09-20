@@ -25,6 +25,8 @@ import {
 } from "../apps/browser-extension/src/lib/descriptor.ts";
 import { findResumableSession, isFieldEligible } from "../apps/browser-extension/src/lib/policy.ts";
 import { BackgroundDispatcher } from "../apps/browser-extension/src/lib/dispatcher.ts";
+import { createFetchUploadAdapter } from "../apps/browser-extension/src/lib/adapters.ts";
+import { IngestUploadError } from "../packages/producer-core/src/index.ts";
 
 function shapeTarget({
   tagName,
@@ -348,9 +350,15 @@ function inMemoryStorage() {
 function recordingUpload(response) {
   const calls = [];
   let next = response;
+  let oneShot = null;
   return {
     async postRecord(payload) {
       calls.push(payload);
+      if (oneShot) {
+        const error = oneShot;
+        oneShot = null;
+        throw error;
+      }
       if (next instanceof Error) throw next;
       return next ?? {
         record_hash: payload.manifest.record_hash,
@@ -361,6 +369,8 @@ function recordingUpload(response) {
     },
     calls,
     queueError(err) { next = err; },
+    // Throws on the next call only; later calls fall back to the default response.
+    failNext(err) { oneShot = err; },
   };
 }
 
@@ -494,6 +504,90 @@ test("dispatcher: a diverged session uploads as unobserved and the result says s
   assert.equal(typeof signed.result.observation_note, "string");
   assert.ok(signed.result.observation_note.length > 0);
   assert.deepEqual(upload.calls[0].observation, { state: "unobserved" });
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+});
+
+test("createFetchUploadAdapter surfaces the ingest error code on a rejected upload", async () => {
+  const rejected = createFetchUploadAdapter({
+    records_endpoint: "https://ingest.test/api/records",
+    fetch: async () => ({
+      ok: false,
+      status: 409,
+      text: async () => JSON.stringify({ error: "observation_mismatch", details: ["checkpoint cp-1 does not match final record prefix"] }),
+      json: async () => ({}),
+    }),
+  });
+  await assert.rejects(rejected.postRecord({ manifest: {}, events: [] }), (error) => {
+    assert.ok(error instanceof IngestUploadError);
+    assert.equal(error.status, 409);
+    assert.equal(error.code, "observation_mismatch");
+    assert.match(error.message, /ingest_failed status=409/);
+    return true;
+  });
+  const opaque = createFetchUploadAdapter({
+    records_endpoint: "https://ingest.test/api/records",
+    fetch: async () => ({ ok: false, status: 502, text: async () => "bad gateway", json: async () => ({}) }),
+  });
+  await assert.rejects(opaque.postRecord({ manifest: {}, events: [] }), (error) => {
+    assert.ok(error instanceof IngestUploadError);
+    assert.equal(error.status, 502);
+    assert.equal(error.code, null);
+    return true;
+  });
+});
+
+async function registerAndType(dispatcher, count) {
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  for (let i = 0; i < count; i++) {
+    await dispatcher.handle({
+      kind: "append_mutation", session_id: sid,
+      mutation: { op: "insert", pos: i, del_len: 0, ins_len: 1, source: "typing" },
+    });
+  }
+  await dispatcher.registry.awaitObservationIdle(sid);
+  return sid;
+}
+
+test("dispatcher: an upload rejected with observation_mismatch retries as unobserved and says so", async () => {
+  const { dispatcher, upload, checkpoint } = makeDispatcher();
+  const sid = await registerAndType(dispatcher, 3);
+  upload.failNext(new IngestUploadError(409, "observation_mismatch", "ingest_failed status=409 reason=observation_mismatch"));
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "failed");
+  assert.ok(upload.calls[0].observation.token, "the first attempt bound the commitment");
+  assert.equal(dispatcher.registry.get(sid).observation.state, "diverged");
+  const checkpointCalls = checkpoint.calls.length;
+  const retried = await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid });
+  assert.equal(retried.kind, "retry_result");
+  assert.equal(retried.result.kind, "uploaded", retried.result.reason);
+  assert.equal(typeof retried.result.observation_note, "string");
+  assert.equal(upload.calls.length, 2);
+  assert.deepEqual(upload.calls[1].observation, { state: "unobserved" });
+  assert.equal(checkpoint.calls.length, checkpointCalls, "a diverged session is not checkpointed again");
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+});
+
+test("dispatcher: an upload rejected with observation_unavailable retries as unobserved", async () => {
+  const { dispatcher, upload, checkpoint } = makeDispatcher();
+  const sid = await registerAndType(dispatcher, 3);
+  upload.failNext(new IngestUploadError(404, "observation_unavailable", "ingest_failed status=404 reason=observation_unavailable"));
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "failed");
+  const obs = dispatcher.registry.get(sid).observation;
+  assert.equal(obs.state, "unknown");
+  assert.equal(obs.last_observed_token, null);
+  const checkpointCalls = checkpoint.calls.length;
+  const retried = await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid });
+  assert.equal(retried.result.kind, "uploaded", retried.result.reason);
+  assert.equal(retried.result.observation_note, undefined);
+  assert.deepEqual(upload.calls[1].observation, { state: "unobserved" });
+  assert.equal(checkpoint.calls.length, checkpointCalls, "no commitment is minted at retry for a reset session");
   assert.equal(dispatcher.registry.get(sid).state, "uploaded");
 });
 

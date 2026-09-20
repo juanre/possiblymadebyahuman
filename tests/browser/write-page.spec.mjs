@@ -315,6 +315,44 @@ test("/write shows its status message on the page, including why an upload faile
   await expect(page.locator(".ml-error")).toHaveText("upload failed, try again");
 });
 
+test("/write uploads a diverged session as unobserved and says so on the page", async ({ page }) => {
+  let checkpointCalls = 0;
+  let uploadedPayload;
+  await page.route("**/api/observed-sessions/*/checkpoints", async (route) => {
+    checkpointCalls += 1;
+    const body = route.request().postDataJSON();
+    const observedSessionId = new URL(route.request().url()).pathname.split("/").at(-2);
+    if (checkpointCalls > 1) {
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "checkpoint_conflict" }) });
+      return;
+    }
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ observed_session_id: observedSessionId, token: "d".repeat(32), checkpoint_id: "diverge-cp", event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
+    });
+  });
+  await page.route("**/api/records", async (route) => {
+    uploadedPayload = route.request().postDataJSON();
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: uploadedPayload.manifest.record_hash, short_signature: "diverged1", url: "http://127.0.0.1:4173/diverged1", created: true }) });
+  });
+
+  await page.goto("/write");
+  const message = page.getByRole("status", { name: "Drafting message" });
+  await page.getByRole("textbox", { name: "Writing canvas" }).click();
+  // Enough events for a second checkpoint under any interleaving: either the
+  // events queued behind the first one, or the 50-event cadence after it.
+  await page.keyboard.type("The server will reject every checkpoint after the first one it sees");
+  await expect.poll(() => checkpointCalls).toBeGreaterThanOrEqual(2);
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
+
+  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/diverged1" })).toBeVisible();
+  await expect(message).toContainText("server observation");
+  await expect(message).toContainText("diverged");
+  expect(uploadedPayload.observation).toEqual({ state: "unobserved" });
+});
+
 test("/write explains on the empty canvas that text stays here and only the shape of editing is recorded", async ({ page }) => {
   await page.goto("/write");
   const canvas = page.getByRole("textbox", { name: "Writing canvas" });

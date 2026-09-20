@@ -1,3 +1,4 @@
+import { IngestUploadError } from "../../../../packages/producer-core/src/index.ts";
 import type {
   CheckpointAdapter,
   CheckpointRequest,
@@ -7,7 +8,6 @@ import type {
   ClockAdapter,
   IngestRecordInput,
   IngestRecordResponse,
-  ObservationEnvelope,
   SessionRecord,
   StorageAdapter,
   UploadAdapter,
@@ -77,7 +77,7 @@ export type FetchLike = (input: string, init: { method: string; headers: Record<
 
 export function createFetchUploadAdapter(args: { records_endpoint: string; fetch: FetchLike }): UploadAdapter {
   return {
-    async postRecord(payload: IngestRecordInput & { observation?: ObservationEnvelope }): Promise<IngestRecordResponse> {
+    async postRecord(payload: IngestRecordInput): Promise<IngestRecordResponse> {
       const body = JSON.stringify({
         manifest: payload.manifest,
         events: payload.events,
@@ -90,12 +90,25 @@ export function createFetchUploadAdapter(args: { records_endpoint: string; fetch
       });
       if (!response.ok) {
         const text = await response.text();
-        throw new Error(`ingest_failed status=${response.status} reason=${text}`);
+        throw new IngestUploadError(response.status, ingestErrorCode(text), `ingest_failed status=${response.status} reason=${text}`);
       }
       const json = (await response.json()) as IngestRecordResponse;
       return json;
     },
   };
+}
+
+/** The `error` field of an ingest failure body, or null when the body is not such JSON. */
+function ingestErrorCode(text: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && typeof (parsed as { error?: unknown }).error === "string") {
+      return (parsed as { error: string }).error;
+    }
+  } catch {
+    // Not a JSON body; there is no code to surface.
+  }
+  return null;
 }
 
 export function createFetchCheckpointAdapter(args: { base_url: string; fetch: FetchLike }): CheckpointAdapter {

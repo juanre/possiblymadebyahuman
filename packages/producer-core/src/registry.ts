@@ -156,6 +156,10 @@ export class SessionRegistry {
     return { observed_session_id, token: last_observed_token };
   }
 
+  getObservationState(session_id: SessionId): ObservationLocalState | null {
+    return this.#sessions.get(session_id)?.observation.state ?? null;
+  }
+
   findOrCreate(
     origin: FieldOrigin,
     descriptor: FieldDescriptor,
@@ -294,6 +298,24 @@ export class SessionRegistry {
   }
 
   /**
+   * Records the server's rejection of the observation bound on an upload, so a
+   * retry does not bind the same token again. `observation_mismatch` (the
+   * stored checkpoints do not match the final record) pins the session
+   * `diverged`; `observation_unavailable` (the observed session is gone)
+   * resets observation. Either way the retry uploads as unobserved.
+   */
+  markObservationRejected(session_id: SessionId, code: "observation_mismatch" | "observation_unavailable"): void {
+    const record = this.#requireInState(session_id, ["uploading", "failed_upload"]);
+    record.observation.last_failure = { reason: code, status_or_kind: code === "observation_mismatch" ? "409" : "404" };
+    if (code === "observation_unavailable") {
+      this.#resetObservation(record);
+      return;
+    }
+    record.observation.state = "diverged";
+    record.observation.next_backoff_ms = 0;
+  }
+
+  /**
    * Starts a new session for a field whose previous session was signed and
    * uploaded. The signed session stays frozen with its link; the new session
    * records only the further edits and names the uploaded record as its
@@ -417,20 +439,24 @@ export class SessionRegistry {
    * tail; a second round covers events that arrived while the first was in
    * flight. A session the server has never committed is left alone: a
    * commitment minted at sign time would observe nothing of the writing, and
-   * the upload carries `{ state: "unobserved" }` instead. Does not retry on
-   * failure; the consumer reads `getObservationEnvelope()` for what to bind.
+   * the upload carries `{ state: "unobserved" }` instead. A checkpoint this
+   * flush kicked is not retried on failure (an inherited in-flight one that
+   * fails still gets the flush's own attempt); the consumer reads
+   * `getObservationEnvelope()` for what to bind.
    */
   async flushObservation(session_id: SessionId): Promise<void> {
     if (!this.#checkpoint) return;
+    let kicked = false;
     for (let round = 0; round < 2; round++) {
       const record = this.#sessions.get(session_id);
       if (!record || record.observation.state === "diverged") return;
-      if (round > 0 && record.observation.last_failure) return;
+      if (kicked && record.observation.last_failure) return;
       if (!record.observation.in_flight) {
         if (record.observation.last_committed_event_count === 0) return;
         if (record.events.length <= record.observation.last_committed_event_count) return;
         record.observation.next_backoff_ms = 0;
         this.#kickCheckpoint(record);
+        kicked = true;
       }
       await this.awaitObservationIdle(session_id);
     }

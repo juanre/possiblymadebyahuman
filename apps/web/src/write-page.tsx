@@ -229,7 +229,9 @@ export function WritePage() {
       await registry.persist();
       setUploaded(response);
       setStatus("uploaded");
-      setMessage("Record uploaded. The link points to the public writing-process record; it contains no document text.");
+      setMessage(registry.getObservationState(session.session_id) === "diverged"
+        ? "Record uploaded without server observation: the server's checkpoints for this session diverged. The link points to the public writing-process record; it contains no document text."
+        : "Record uploaded. The link points to the public writing-process record; it contains no document text.");
       void navigator.clipboard?.writeText(response.url).catch(() => undefined);
       signedDraft.current = null;
       setSession(registry.get(session.session_id) ?? null);

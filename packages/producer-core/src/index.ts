@@ -1,5 +1,6 @@
 export const PRODUCER_CORE_PACKAGE = "@possiblymadebyahuman/producer-core";
 
+export { IngestUploadError } from "./adapters.ts";
 export type {
   CheckpointAdapter,
   CheckpointFailureKind,

@@ -6,6 +6,7 @@ import {
 } from "../packages/format/src/index.ts";
 import {
   SessionRegistry,
+  UnknownSessionError,
   advanceChain,
   buildCaptureContext,
 } from "../packages/producer-core/src/index.ts";
@@ -702,4 +703,78 @@ test("20. getObservationEnvelope yields an unobserved upload request for a diver
   assert.equal(registry.get(session.session_id).observation.state, "diverged");
   assert.ok(registry.get(session.session_id).observation.last_observed_token, "the stale token stays local");
   assert.deepEqual(registry.getObservationEnvelope(session.session_id), { state: "unobserved" });
+});
+
+test("21. flushObservation makes one attempt of its own after an inherited in-flight checkpoint fails", async () => {
+  let releaseSecond;
+  const secondGate = new Promise((resolve) => {
+    releaseSecond = resolve;
+  });
+  let callIndex = 0;
+  const checkpoint = {
+    calls: [],
+    async postCheckpoint(request) {
+      checkpoint.calls.push(request);
+      callIndex += 1;
+      if (callIndex === 2) {
+        await secondGate;
+        return { ok: false, kind: "transient", status: 503, reason: "down" };
+      }
+      return {
+        ok: true,
+        response: {
+          observed_session_id: request.observed_session_id ?? `obs-${callIndex}`,
+          token: `tok-${callIndex}`,
+          checkpoint_id: `cp-${callIndex}`,
+          event_count: request.event_count,
+          chain_tip: request.chain_tip,
+          server_t: new Date(1_700_000_040_000 + callIndex).toISOString(),
+          created: true,
+        },
+      };
+    },
+  };
+  const { registry } = makeRegistry({ checkpoint });
+  const session = newSession(registry);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  await registry.awaitObservationIdle(session.session_id);
+  // The 50-event cadence kicks a checkpoint that is still in flight when the writer signs.
+  appendMany(registry, session.session_id, 50, 1);
+  assert.equal(checkpoint.calls.length, 2);
+  const flushing = registry.flushObservation(session.session_id);
+  releaseSecond();
+  await flushing;
+  assert.deepEqual(checkpoint.calls.map((call) => call.event_count), [1, 51, 51]);
+  const obs = registry.get(session.session_id).observation;
+  assert.equal(obs.state, "known");
+  assert.equal(obs.last_committed_event_count, 51);
+});
+
+test("22. markObservationRejected pins a mismatch as diverged and resets an unavailable observation", async () => {
+  const mismatch = makeRegistry({ checkpoint: recordingCheckpoint() });
+  const first = newSession(mismatch.registry);
+  mismatch.registry.appendMutation(first.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  await mismatch.registry.awaitObservationIdle(first.session_id);
+  mismatch.registry.sign(first.session_id);
+  mismatch.registry.markUploading(first.session_id);
+  mismatch.registry.markObservationRejected(first.session_id, "observation_mismatch");
+  assert.equal(mismatch.registry.get(first.session_id).observation.state, "diverged");
+  assert.deepEqual(mismatch.registry.getObservationEnvelope(first.session_id), { state: "unobserved" });
+
+  const unavailable = makeRegistry({ checkpoint: recordingCheckpoint() });
+  const second = newSession(unavailable.registry);
+  unavailable.registry.appendMutation(second.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  await unavailable.registry.awaitObservationIdle(second.session_id);
+  unavailable.registry.sign(second.session_id);
+  unavailable.registry.markUploading(second.session_id);
+  unavailable.registry.markFailedUpload(second.session_id, "observation_unavailable");
+  unavailable.registry.markObservationRejected(second.session_id, "observation_unavailable");
+  const obs = unavailable.registry.get(second.session_id).observation;
+  assert.equal(obs.state, "unknown");
+  assert.equal(obs.last_committed_event_count, 0);
+  assert.equal(obs.last_observed_token, null);
+  assert.deepEqual(obs.commitments, []);
+  assert.deepEqual(unavailable.registry.getObservationEnvelope(second.session_id), { state: "unobserved" });
+
+  assert.throws(() => unavailable.registry.markObservationRejected("missing", "observation_mismatch"), UnknownSessionError);
 });

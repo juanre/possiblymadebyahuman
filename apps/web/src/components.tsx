@@ -395,7 +395,7 @@ function observationStatusCopy(observation: RecordObservation, eventCount: numbe
     case "unobserved":
       return {
         headline: "Not observed.",
-        body: "No server commitment was received for this session. The hash chain in this record is still verifiable in your browser; the server cannot confirm when it saw the editing process.",
+        body: "No server commitment is bound to this record. The hash chain in this record is still verifiable in your browser; the server cannot confirm when it saw the editing process.",
       };
     case "not_requested":
     default:

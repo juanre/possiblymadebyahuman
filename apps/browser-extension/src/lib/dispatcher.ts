@@ -1,5 +1,5 @@
 import type { TextBinding } from "../../../../packages/format/src/index.ts";
-import { SessionFrozenError, SessionRegistry, buildCaptureContext } from "../../../../packages/producer-core/src/index.ts";
+import { IngestUploadError, SessionFrozenError, SessionRegistry, buildCaptureContext } from "../../../../packages/producer-core/src/index.ts";
 import type {
   ClockAdapter,
   CheckpointAdapter,
@@ -164,7 +164,7 @@ export class BackgroundDispatcher {
       await this.registry.flushObservation(session_id);
       const draft = this.registry.sign(session_id, textBinding ? { textBinding } : {});
       const observation = this.registry.getObservationEnvelope(session_id);
-      const diverged = this.registry.get(session_id)?.observation.state === "diverged";
+      const diverged = this.registry.getObservationState(session_id) === "diverged";
       this.registry.markUploading(session_id);
       const response = await this.#upload.postRecord({
         manifest: draft.manifest,
@@ -181,7 +181,12 @@ export class BackgroundDispatcher {
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       const live = this.registry.get(session_id);
-      if (live && live.state === "uploading") this.registry.markFailedUpload(session_id, reason);
+      if (live && live.state === "uploading") {
+        this.registry.markFailedUpload(session_id, reason);
+        if (error instanceof IngestUploadError && (error.code === "observation_mismatch" || error.code === "observation_unavailable")) {
+          this.registry.markObservationRejected(session_id, error.code);
+        }
+      }
       await this.registry.persist();
       return { kind: "failed", reason };
     }
