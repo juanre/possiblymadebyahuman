@@ -74,8 +74,21 @@ records are uploaded without any observation request."
   :type '(choice (const :tag "Same as pmbah-api-base-url" nil) string)
   :group 'pmbah)
 
+(defcustom pmbah-state-directory (locate-user-emacs-file "pmbah/")
+  "Directory holding per-file session state so recording resumes across restarts.
+A file-visiting buffer's session is stored under the SHA-256 of the file's
+true name, readable only by the owner.  State files hold the session id,
+start time, public events, and the observation token; never document text."
+  :type 'directory
+  :group 'pmbah)
+
 (defconst pmbah-producer-version "0.1.0")
 (defconst pmbah-format-version "0.2")
+
+(defconst pmbah-max-session-ms 2147483647
+  "Largest event time or duration a record can carry: signed 32-bit milliseconds.")
+(defconst pmbah-state-write-idle-seconds 2
+  "Idle time after an edit before the session state is written to disk.")
 
 (defconst pmbah-observation-every-n-events 50
   "Checkpoint once this many events accumulate since the last commitment.")
@@ -97,6 +110,8 @@ records are uploaded without any observation request."
 (defvar-local pmbah--events nil)
 (defvar-local pmbah--next-seq 0)
 (defvar-local pmbah--inhibit-capture nil)
+(defvar-local pmbah--state-timer nil
+  "Pending idle timer that writes this buffer's session state.")
 
 ;; Observation state: what the server has committed to for this session.
 (defvar-local pmbah--observation-state 'disabled
@@ -141,12 +156,15 @@ hashed, passed to the helper, or uploaded."
           (progn
             (pmbah--begin-capture)
             (add-hook 'after-change-functions #'pmbah--after-change nil t)
-            (add-hook 'after-change-major-mode-hook #'pmbah--reinstall-capture))
+            (add-hook 'after-change-major-mode-hook #'pmbah--reinstall-capture)
+            (add-hook 'kill-buffer-hook #'pmbah--write-state)
+            (add-hook 'kill-emacs-hook #'pmbah--write-all-state))
         (error
          (setq pmbah-mode nil)
          (remove-hook 'after-change-functions #'pmbah--after-change t)
          (signal (car error) (cdr error))))
-    (remove-hook 'after-change-functions #'pmbah--after-change t)))
+    (remove-hook 'after-change-functions #'pmbah--after-change t)
+    (pmbah--write-state)))
 
 ;; Session state outlives `kill-all-local-variables', so changing the major
 ;; mode or reverting the buffer keeps recording into the same session.
@@ -156,6 +174,7 @@ hashed, passed to the helper, or uploaded."
                     pmbah--events
                     pmbah--next-seq
                     pmbah--inhibit-capture
+                    pmbah--state-timer
                     pmbah--observation-state
                     pmbah--observation-token
                     pmbah--observation-committed-count
@@ -173,9 +192,17 @@ hashed, passed to the helper, or uploaded."
     (add-hook 'after-change-functions #'pmbah--after-change nil t)))
 
 (defun pmbah--begin-capture ()
-  "Continue this buffer's session when it has one, otherwise start fresh."
+  "Continue this buffer's session, resume it from disk, or start fresh."
   (unless pmbah--session-id
-    (pmbah--start-session)))
+    (let* ((path (pmbah--state-file))
+           (state (and path (file-exists-p path) (pmbah--read-state path)))
+           (blocker (and path (file-exists-p path) (pmbah--state-resume-blocker state))))
+      (cond
+       (blocker
+        (pmbah--retire-state-file path blocker)
+        (pmbah--start-session))
+       (state (pmbah--resume-session state))
+       (t (pmbah--start-session))))))
 
 (defun pmbah--start-session ()
   "Start a fresh per-buffer PMBAH session."
@@ -184,6 +211,162 @@ hashed, passed to the helper, or uploaded."
         pmbah--events nil
         pmbah--next-seq 0)
   (pmbah--observation-reset))
+
+(defun pmbah--resume-session (state)
+  "Continue the session described by the STATE plist read from disk."
+  (let ((events (plist-get state :events))
+        (observation (plist-get state :observation)))
+    (setq pmbah--session-id (plist-get state :session_id)
+          pmbah--session-start-time (pmbah--ms-to-time (plist-get state :session_start_ms))
+          pmbah--events (reverse events)
+          pmbah--next-seq (length events))
+    (pmbah--observation-reset)
+    (setq pmbah--observation-token (plist-get observation :token)
+          pmbah--observation-committed-count (or (plist-get observation :committed_event_count) 0)
+          pmbah--observation-commitments (plist-get observation :commitments))
+    (pmbah--observation-recompute-state)))
+
+(defun pmbah--state-resume-blocker (state)
+  "Return why the STATE plist cannot be resumed, or nil when it can."
+  (cond
+   ((not (and state
+              (stringp (plist-get state :session_id))
+              (integerp (plist-get state :session_start_ms))
+              (listp (plist-get state :events))))
+    "could not be read")
+   ((not (equal (plist-get state :format_version) pmbah-format-version))
+    (format "was recorded as format %s, not %s"
+            (plist-get state :format_version) pmbah-format-version))
+   ((>= (- (pmbah--time-to-ms (current-time)) (plist-get state :session_start_ms))
+        pmbah-max-session-ms)
+    "started more than 24 days ago, the most a record's clock can hold")
+   (t nil)))
+
+(defun pmbah--retire-state-file (path reason)
+  "Rename the state file at PATH with a .stale suffix and tell the user why."
+  (let ((stale-path (concat path ".stale")))
+    (condition-case error
+        (rename-file path stale-path t)
+      (error
+       (message "PMBAH could not set aside stale session state: %s"
+                (error-message-string error))))
+    (message "PMBAH: the saved session for %s %s; starting a fresh session (old state kept at %s)"
+             (file-name-nondirectory (or buffer-file-name (buffer-name)))
+             reason
+             stale-path)))
+
+(defun pmbah--retire-live-session ()
+  "Set aside a session whose clock has reached the record time bound."
+  (let ((path (pmbah--state-file)))
+    (pmbah--write-state)
+    (if (and path (file-exists-p path))
+        (pmbah--retire-state-file path "reached the most a record's clock can hold")
+      (message "PMBAH: the session for %s reached the most a record's clock can hold; starting a fresh session"
+               (buffer-name)))
+    (pmbah--start-session)))
+
+;;; Session state on disk
+;;
+;; File-visiting buffers keep their session in `pmbah-state-directory' so a
+;; writer who closes the file, or Emacs, and returns later continues the
+;; same session.  Writes are debounced on an idle timer and forced when the
+;; buffer or Emacs is killed, when the mode is turned off, and when the server
+;; accepts a checkpoint (the token must not be lost).
+
+(defun pmbah--state-file ()
+  "Return the state file for the visited file, or nil for non-file buffers."
+  (when buffer-file-name
+    (expand-file-name (concat (secure-hash 'sha256 (file-truename buffer-file-name)) ".json")
+                      pmbah-state-directory)))
+
+(defun pmbah--state-snapshot ()
+  "Return the JSON-serializable session state for this buffer."
+  (list :session_id pmbah--session-id
+        :session_start_ms (pmbah--time-to-ms pmbah--session-start-time)
+        :format_version pmbah-format-version
+        :events (vconcat (pmbah--session-events))
+        :observation (list :token pmbah--observation-token
+                           :committed_event_count pmbah--observation-committed-count
+                           :commitments (vconcat pmbah--observation-commitments))))
+
+(defun pmbah--write-state ()
+  "Write this buffer's session state to its state file, if it visits a file.
+Failures are reported with `message' and never signalled, because this runs
+from hooks and timers."
+  (pmbah--cancel-state-write)
+  (let ((path (pmbah--state-file)))
+    (when (and path pmbah--session-id (> pmbah--next-seq 0))
+      (condition-case error
+          (let ((directory (file-name-directory path))
+                (temp-path (concat path ".tmp"))
+                (json (pmbah--json-encode (pmbah--state-snapshot)))
+                (coding-system-for-write 'utf-8))
+            (unless (file-directory-p directory)
+              (make-directory directory t)
+              (set-file-modes directory #o700))
+            (with-file-modes #o600
+              (with-temp-file temp-path
+                (insert json)))
+            (rename-file temp-path path t))
+        (error
+         (message "PMBAH could not save session state: %s" (error-message-string error)))))))
+
+(defun pmbah--write-all-state ()
+  "Write the session state of every recording buffer."
+  (dolist (buffer (buffer-list))
+    (with-current-buffer buffer
+      (when pmbah--session-id
+        (pmbah--write-state)))))
+
+(defun pmbah--schedule-state-write ()
+  "Write the session state once Emacs has been idle for a moment."
+  (when (and buffer-file-name (not pmbah--state-timer))
+    (setq pmbah--state-timer
+          (run-with-idle-timer pmbah-state-write-idle-seconds nil
+                               #'pmbah--write-state-in-buffer (current-buffer)))))
+
+(defun pmbah--write-state-in-buffer (buffer)
+  "Write BUFFER's session state if the buffer is still live."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (pmbah--write-state))))
+
+(defun pmbah--cancel-state-write ()
+  "Cancel a pending idle write for this buffer."
+  (when pmbah--state-timer
+    (cancel-timer pmbah--state-timer)
+    (setq pmbah--state-timer nil)))
+
+(defun pmbah--delete-state ()
+  "Remove this buffer's state file after the session was uploaded or discarded."
+  (pmbah--cancel-state-write)
+  (let ((path (pmbah--state-file)))
+    (when (and path (file-exists-p path))
+      (condition-case error
+          (delete-file path)
+        (error
+         (message "PMBAH could not remove session state: %s" (error-message-string error)))))))
+
+(defun pmbah--read-state (path)
+  "Parse the session state file at PATH, or return nil when it is unreadable."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((coding-system-for-read 'utf-8))
+          (insert-file-contents path))
+        (json-parse-string (buffer-string)
+                           :object-type 'plist
+                           :array-type 'list
+                           :null-object nil
+                           :false-object :json-false))
+    (error nil)))
+
+(defun pmbah--time-to-ms (time)
+  "Return TIME as integer milliseconds since the epoch."
+  (floor (* 1000 (float-time time))))
+
+(defun pmbah--ms-to-time (ms)
+  "Return the Lisp time value for MS milliseconds since the epoch."
+  (seconds-to-time (/ ms 1000.0)))
 
 (defun pmbah--observation-reset ()
   "Forget everything the server has committed to for this session."
@@ -215,6 +398,8 @@ unit for these captured text buffers."
 
 (defun pmbah--append-event (op pos del-len ins-len source &optional timestamp-ms)
   "Append a content-blind PMBAH public event."
+  (when (>= (pmbah--elapsed-ms) pmbah-max-session-ms)
+    (pmbah--retire-live-session))
   (let* ((seq pmbah--next-seq)
          (event (list :seq seq
                       :t (or timestamp-ms (pmbah--elapsed-ms))
@@ -225,7 +410,8 @@ unit for these captured text buffers."
                       :source source)))
     (push event pmbah--events)
     (setq pmbah--next-seq (1+ pmbah--next-seq))
-    (pmbah--observation-after-event)))
+    (pmbah--observation-after-event)
+    (pmbah--schedule-state-write)))
 
 (defun pmbah--source-for-current-command ()
   "Return a conservative PMBAH source for `this-command`.
@@ -271,6 +457,7 @@ Capture remains enabled and a fresh session starts from the next edit."
     (user-error "pmbah-mode is not active"))
   (when (or (not (called-interactively-p 'interactive))
             (yes-or-no-p "Discard this local PMBAH session without uploading? "))
+    (pmbah--delete-state)
     (pmbah--start-session)
     (message "PMBAH session discarded; new session %s started" pmbah--session-id)))
 
@@ -330,6 +517,7 @@ tests."
          (url (or (alist-get 'url response) (alist-get 'record_hash response))))
     (when url
       (kill-new url))
+    (pmbah--delete-state)
     (pmbah--start-session)
     (message "PMBAH record uploaded; copied %s; new session %s started"
              url
@@ -590,7 +778,8 @@ Return (KIND HTTP-STATUS BODY-OR-REASON) where KIND is `ok', `unavailable',
            :event_count event-count
            :chain_tip (alist-get 'chain_tip response)
            :observed_at (alist-get 'server_t response)))
-    (pmbah--observation-recompute-state)))
+    (pmbah--observation-recompute-state)
+    (pmbah--write-state)))
 
 (defun pmbah--observation-fail (kind http-status reason)
   "Record a failed checkpoint of KIND with HTTP-STATUS and REASON; stop the loop."

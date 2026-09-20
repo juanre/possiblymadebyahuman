@@ -704,6 +704,225 @@ test("Emacs session survives a major-mode change and revert-buffer", { skip: ema
   }
 });
 
+test("Emacs producer persists a file buffer's session without text and resumes it when the file is reopened", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-resume-"));
+  const outputPath = join(temp, "resume.json");
+  const scriptPath = join(temp, "resume.el");
+  const documentPath = join(temp, "essay.txt");
+  const stateDirectory = join(temp, "state/");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+  await writeFile(documentPath, "");
+
+  await writeFile(scriptPath, `;;; resume.el --- persist and resume a file buffer's session -*- lexical-binding: t; -*-
+(require 'cl-lib)
+(load ${JSON.stringify(modePath)})
+(setq pmbah-observe-process nil)
+(setq pmbah-state-directory ${JSON.stringify(stateDirectory)})
+;; Saving must not append a final newline, which would be one more recorded edit.
+(setq mode-require-final-newline nil)
+(defun pmbah-test-kill-file-buffer ()
+  (set-buffer-modified-p nil)
+  (kill-buffer (current-buffer)))
+(let ((first nil) (second nil) (after-sign nil) (after-discard nil))
+  (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+    (text-mode)
+    (pmbah-mode 1)
+    (insert "Hello")
+    (insert " world")
+    (setq pmbah--observation-token "resume-token-0123456789abcdef0123456789")
+    (pmbah--write-state)
+    (let ((path (pmbah--state-file)))
+      (setq first (list :session pmbah--session-id
+                        :event_count pmbah--next-seq
+                        :events (vconcat (pmbah--session-events))
+                        :state_file path
+                        :state_file_modes (logand (file-modes path) #o777)
+                        :state_directory_modes (logand (file-modes (file-name-directory path)) #o777)
+                        :state_json (pmbah--read-file path))))
+    (let ((make-backup-files nil))
+      (save-buffer))
+    (pmbah-test-kill-file-buffer))
+  (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+    (text-mode)
+    (pmbah-mode 1)
+    (let ((resumed-count pmbah--next-seq))
+      (goto-char (point-max))
+      (insert "!")
+      (setq second (list :session pmbah--session-id
+                         :resumed_count resumed-count
+                         :event_count pmbah--next-seq
+                         :events (vconcat (pmbah--session-events))
+                         :token pmbah--observation-token
+                         :observation_state (symbol-name pmbah--observation-state)
+                         :elapsed_ms (pmbah--elapsed-ms))))
+    (cl-letf (((symbol-function 'pmbah--post-record)
+               (lambda (_body) (list :url "https://example.test/record" :short_signature "stub"))))
+      (pmbah-sign-buffer (list :surface "emacs") t))
+    (setq after-sign (list :state_file_exists (if (file-exists-p (pmbah--state-file)) t :json-false)
+                           :session pmbah--session-id
+                           :event_count pmbah--next-seq))
+    (insert "?")
+    (pmbah--write-state)
+    (let ((existed (file-exists-p (pmbah--state-file))))
+      (pmbah-discard-session)
+      (setq after-discard (list :state_file_existed_before (if existed t :json-false)
+                                :state_file_exists (if (file-exists-p (pmbah--state-file)) t :json-false))))
+    (pmbah-test-kill-file-buffer))
+  (with-temp-file ${JSON.stringify(outputPath)}
+    (insert (pmbah--json-encode (list :first first :second second :after_sign after-sign :after_discard after-discard)))))
+`);
+
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    const { first, second } = output;
+
+    assert.equal(first.event_count, 2);
+    assert.equal(first.state_file_modes, 0o600, "the state file holds a bearer token");
+    assert.equal(first.state_directory_modes, 0o700);
+    assert.ok(first.state_file.startsWith(stateDirectory));
+    assert.match(first.state_file, /\/[0-9a-f]{64}\.json$/);
+    const state = JSON.parse(first.state_json);
+    assert.equal(state.session_id, first.session);
+    assert.equal(state.format_version, "0.2");
+    assert.equal(typeof state.session_start_ms, "number");
+    assert.equal(state.events.length, 2);
+    assert.equal(state.observation.token, "resume-token-0123456789abcdef0123456789");
+    for (const forbidden of ["Hello", "world", "essay", "text", "content"]) {
+      assert.equal(first.state_json.includes(forbidden), false, `state file leaked ${forbidden}`);
+    }
+
+    assert.equal(second.session, first.session, "the same session resumes for the same file");
+    assert.equal(second.resumed_count, 2);
+    assert.equal(second.event_count, 3);
+    assert.deepEqual(second.events.slice(0, 2), first.events);
+    assert.equal(second.events[2].op, "insert");
+    assert.equal(second.events[2].pos, 11);
+    assert.ok(second.events[2].t >= second.events[1].t, "t stays monotonic across the resume");
+    assert.ok(second.elapsed_ms >= second.events[2].t);
+    assert.equal(second.token, "resume-token-0123456789abcdef0123456789");
+    assert.equal(second.observation_state, "disabled");
+
+    assert.equal(output.after_sign.state_file_exists, false, "upload removes the state file");
+    assert.notEqual(output.after_sign.session, first.session);
+    assert.equal(output.after_sign.event_count, 0);
+    assert.equal(output.after_discard.state_file_existed_before, true);
+    assert.equal(output.after_discard.state_file_exists, false, "discard removes the state file");
+    assert.equal(JSON.stringify(output).includes("Hello"), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs file buffers open at the same time keep independent sessions", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-two-buffers-"));
+  const outputPath = join(temp, "two.json");
+  const scriptPath = join(temp, "two.el");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+  await writeFile(join(temp, "a.txt"), "");
+  await writeFile(join(temp, "b.txt"), "");
+
+  await writeFile(scriptPath, `;;; two.el --- two buffers, two sessions -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(setq pmbah-observe-process nil)
+(setq pmbah-state-directory ${JSON.stringify(join(temp, "state/"))})
+(defun pmbah-test-snapshot ()
+  (list :session pmbah--session-id :event_count pmbah--next-seq :state_file (pmbah--state-file)))
+(defun pmbah-test-kill-file-buffer ()
+  (set-buffer-modified-p nil)
+  (kill-buffer (current-buffer)))
+(let ((a (find-file-noselect ${JSON.stringify(join(temp, "a.txt"))}))
+      (b (find-file-noselect ${JSON.stringify(join(temp, "b.txt"))}))
+      (output nil))
+  (with-current-buffer a (pmbah-mode 1) (insert "a1") (insert "a2"))
+  (with-current-buffer b (pmbah-mode 1) (insert "b1"))
+  (with-current-buffer a (insert "a3"))
+  (setq output (list :a (with-current-buffer a (pmbah-test-snapshot))
+                     :b (with-current-buffer b (pmbah-test-snapshot))))
+  ;; kill-buffer persists both; reopening resumes each one separately.
+  (with-current-buffer a (pmbah-test-kill-file-buffer))
+  (with-current-buffer b (pmbah-test-kill-file-buffer))
+  (with-current-buffer (find-file-noselect ${JSON.stringify(join(temp, "b.txt"))})
+    (pmbah-mode 1)
+    (setq output (plist-put output :b_again (pmbah-test-snapshot)))
+    (pmbah-test-kill-file-buffer))
+  (with-current-buffer (find-file-noselect ${JSON.stringify(join(temp, "a.txt"))})
+    (pmbah-mode 1)
+    (setq output (plist-put output :a_again (pmbah-test-snapshot)))
+    (pmbah-test-kill-file-buffer))
+  (with-temp-file ${JSON.stringify(outputPath)}
+    (insert (pmbah--json-encode output))))
+`);
+
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.notEqual(output.a.session, output.b.session);
+    assert.equal(output.a.event_count, 3);
+    assert.equal(output.b.event_count, 1);
+    assert.notEqual(output.a.state_file, output.b.state_file);
+    assert.equal(output.a_again.session, output.a.session);
+    assert.equal(output.a_again.event_count, 3);
+    assert.equal(output.b_again.session, output.b.session);
+    assert.equal(output.b_again.event_count, 1);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs producer starts fresh, keeping the stale state, when a resumed session would exceed the 32-bit time bound", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-time-bound-"));
+  const outputPath = join(temp, "bound.json");
+  const scriptPath = join(temp, "bound.el");
+  const documentPath = join(temp, "old.txt");
+  const modePath = resolve("producers/emacs/pmbah-mode.el");
+  await writeFile(documentPath, "");
+  const thirtyDaysAgoMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+
+  await writeFile(scriptPath, `;;; bound.el --- a session older than the time bound is retired -*- lexical-binding: t; -*-
+(load ${JSON.stringify(modePath)})
+(setq pmbah-observe-process nil)
+(setq pmbah-state-directory ${JSON.stringify(join(temp, "state/"))})
+(with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+  (let ((path (pmbah--state-file)))
+    (make-directory (file-name-directory path) t)
+    (with-temp-file path
+      (insert (pmbah--json-encode
+               (list :session_id "11111111-2222-4333-8444-555555555555"
+                     :session_start_ms ${thirtyDaysAgoMs}
+                     :format_version pmbah-format-version
+                     :events [(:seq 0 :t 0 :op "insert" :pos 0 :del_len 0 :ins_len 4 :source "typing")]
+                     :observation (list :token nil :committed_event_count 0 :commitments [])))))
+    (pmbah-mode 1)
+    (insert "new")
+    (let ((output (list :session pmbah--session-id
+                        :event_count pmbah--next-seq
+                        :first_t (plist-get (car (pmbah--session-events)) :t)
+                        :state_file_exists (if (file-exists-p path) t :json-false)
+                        :stale_file_exists (if (file-exists-p (concat path ".stale")) t :json-false))))
+      (with-temp-file ${JSON.stringify(outputPath)}
+        (insert (pmbah--json-encode output))))
+    (set-buffer-modified-p nil)
+    (kill-buffer (current-buffer))))
+`);
+
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.notEqual(output.session, "11111111-2222-4333-8444-555555555555");
+    assert.equal(output.event_count, 1);
+    assert.ok(output.first_t < 60_000, "the fresh session's clock starts now");
+    assert.equal(output.state_file_exists, false);
+    assert.equal(output.stale_file_exists, true, "the old state is kept, not discarded");
+    assert.match(result.stderr, /stale/);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 test("Emacs observation state machine backs off on transient failures, pins conflicts, and resets when unavailable", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-observation-states-"));
   const outputPath = join(temp, "states.json");
