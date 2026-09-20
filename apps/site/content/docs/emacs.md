@@ -18,7 +18,7 @@ weight: 2
 
 ## What it does not capture
 
-- Your document text. No plaintext leaves the producer. The local Node helper that builds the public record is passed numeric process metadata only, with one sanctioned exception: if you choose to bind the document at sign time, the helper receives the active region when one is active, otherwise the whole buffer, transiently so it can compute the content-blind binding commitment, then discards it. Only the commitment is uploaded; the text never leaves your machine. See [Bind and check a document](/docs/checking-a-document/). Checkpoints are computed by a second helper that accepts only the session id, format version, and public events.
+- Your document text. No plaintext leaves the producer. The local Node helper that builds the public record is passed numeric process metadata only, with one sanctioned exception: if you choose to bind the document at sign time, the helper receives the active region when one is active, otherwise the whole buffer, transiently so it can compute the content-blind binding commitment, then discards it. Only the commitment is uploaded; the text never leaves your machine. See [Bind and check a document](/docs/checking-a-document/). Checkpoints are computed by a second helper that accepts only the session id, format version, public events, and the previously computed chain tip with its event count; after the first checkpoint only the events since that tip are hashed.
 - Absolute local file paths. The sign-time prompts note that the path is omitted by default. Saved session state is filed under a hash of the path, not the path itself.
 - Anything outside the buffer `pmbah-mode` is attached to. The mode is per-buffer.
 

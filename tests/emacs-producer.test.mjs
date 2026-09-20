@@ -498,6 +498,28 @@ test("Emacs chain-tip helper computes the public prefix tip and refuses text-bea
   });
   assert.notEqual(JSON.parse(ok.stdout).chain_tip, computeEventHashChain(events, sessionId, "0.1").at(-1));
 
+  const tail = [
+    { seq: 2, t: 400, op: "delete", pos: 3, del_len: 2, ins_len: 0, source: "typing" },
+    { seq: 3, t: 900, op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" },
+  ];
+  const fullChain = computeEventHashChain([...events, ...tail], sessionId, "0.2");
+  const incremental = run(JSON.stringify({
+    session_id: sessionId,
+    format_version: "0.2",
+    previous_chain_tip: fullChain[1],
+    previous_event_count: 2,
+    events: tail,
+  }));
+  assert.equal(incremental.status, 0, incremental.stderr || incremental.stdout);
+  assert.deepEqual(JSON.parse(incremental.stdout), { event_count: 4, chain_tip: fullChain.at(-1) }, "advancing from a prefix tip equals a full recompute");
+
+  const gap = run(JSON.stringify({ session_id: sessionId, format_version: "0.2", previous_chain_tip: fullChain[1], previous_event_count: 1, events: tail }));
+  assert.notEqual(gap.status, 0);
+  assert.match(gap.stderr, /previous_event_count/);
+
+  const tipWithoutCount = run(JSON.stringify({ session_id: sessionId, format_version: "0.2", previous_chain_tip: fullChain[1], events: tail }));
+  assert.notEqual(tipWithoutCount.status, 0);
+
   const marker = "CHAINTIP-CANARY-1c2d";
   const textField = run(JSON.stringify({ session_id: sessionId, format_version: "0.2", events, final_text: marker }));
   assert.notEqual(textField.status, 0);
@@ -528,31 +550,44 @@ test("Emacs producer commits server-observed checkpoints while writing and binds
   const helperPath = resolve("producers/emacs/scripts/build-record.mjs");
 
   await writeFile(scriptPath, `;;; observed.el --- PMBAH server-observed scenario -*- lexical-binding: t; -*-
+(require 'cl-lib)
 (load ${JSON.stringify(modePath)})
 (setq pmbah-helper-script ${JSON.stringify(helperPath)})
-(with-temp-buffer
-  (text-mode)
-  (pmbah-mode 1)
-  (insert "First words")
-  ;; The first mutation commits immediately; wait for the server's answer.
-  (pmbah--observation-wait 10)
-  (let ((status-after-first-edit (pmbah--observation-status))
-        (mode-line-after-first-edit (pmbah--mode-line)))
-    (insert " and a few more")
-    (goto-char (point-min))
-    (delete-char 1)
-    (let* ((status-before-sign (pmbah--observation-status))
-           (mode-line-before-sign (pmbah--mode-line))
-           (response (pmbah-sign-buffer (list :surface "emacs") t))
-           (status-after-sign (pmbah--observation-status))
-           (output (list :response response
-                         :status_after_first_edit status-after-first-edit
-                         :mode_line_after_first_edit mode-line-after-first-edit
-                         :status_before_sign status-before-sign
-                         :mode_line_before_sign mode-line-before-sign
-                         :status_after_sign status-after-sign)))
-      (with-temp-file ${JSON.stringify(outputPath)}
-        (insert (pmbah--json-encode output))))))
+;; Record what the real chain-tip helper is asked to compute, then run it.
+(defvar pmbah-test-helper-payloads nil)
+(let ((run-helper (symbol-function 'pmbah--run-node-script-async)))
+  (cl-letf (((symbol-function 'pmbah--run-node-script-async)
+             (lambda (script payload callback)
+               (push (list :previous_event_count (plist-get payload :previous_event_count)
+                           :previous_chain_tip (plist-get payload :previous_chain_tip)
+                           :seqs (vconcat (mapcar (lambda (event) (plist-get event :seq))
+                                                  (plist-get payload :events))))
+                     pmbah-test-helper-payloads)
+               (funcall run-helper script payload callback))))
+    (with-temp-buffer
+      (text-mode)
+      (pmbah-mode 1)
+      (insert "First words")
+      ;; The first mutation commits immediately; wait for the server's answer.
+      (pmbah--observation-wait 10)
+      (let ((status-after-first-edit (pmbah--observation-status))
+            (mode-line-after-first-edit (pmbah--mode-line)))
+        (insert " and a few more")
+        (goto-char (point-min))
+        (delete-char 1)
+        (let* ((status-before-sign (pmbah--observation-status))
+               (mode-line-before-sign (pmbah--mode-line))
+               (response (pmbah-sign-buffer (list :surface "emacs") t))
+               (status-after-sign (pmbah--observation-status))
+               (output (list :response response
+                             :status_after_first_edit status-after-first-edit
+                             :mode_line_after_first_edit mode-line-after-first-edit
+                             :status_before_sign status-before-sign
+                             :mode_line_before_sign mode-line-before-sign
+                             :status_after_sign status-after-sign
+                             :helper_payloads (vconcat (nreverse pmbah-test-helper-payloads)))))
+          (with-temp-file ${JSON.stringify(outputPath)}
+            (insert (pmbah--json-encode output))))))))
 `);
 
   try {
@@ -580,6 +615,12 @@ test("Emacs producer commits server-observed checkpoints while writing and binds
     assert.equal(output.status_after_sign.state, "unknown", "a fresh session starts after upload");
     assert.equal(output.status_after_sign.event_count, 0);
     assert.equal(output.status_after_sign.token_present, false);
+    assert.equal(output.status_after_first_edit.chain_tip_event_count, 1);
+    assert.equal(output.helper_payloads.length, 2, "first-edit checkpoint plus the pre-sign flush");
+    assert.deepEqual(output.helper_payloads[0], { previous_event_count: null, previous_chain_tip: null, seqs: [0] });
+    assert.equal(output.helper_payloads[1].previous_event_count, 1);
+    assert.equal(output.helper_payloads[1].previous_chain_tip, fetched.body.observation.commitments[0].chain_tip);
+    assert.deepEqual(output.helper_payloads[1].seqs, [1, 2], "only the events after the last tip are sent");
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
     await rm(temp, { recursive: true, force: true });
@@ -838,7 +879,9 @@ test("Emacs producer persists a file buffer's session without text and resumes i
     (pmbah-mode 1)
     (insert "Hello")
     (insert " world")
-    (setq pmbah--observation-token "resume-token-0123456789abcdef0123456789")
+    (setq pmbah--observation-token "resume-token-0123456789abcdef0123456789"
+          pmbah--chain-tip "b3:ab"
+          pmbah--chain-tip-event-count 2)
     (pmbah--write-state)
     (let ((path (pmbah--state-file)))
       (setq first (list :session pmbah--session-id
@@ -863,6 +906,8 @@ test("Emacs producer persists a file buffer's session without text and resumes i
                          :events (vconcat (pmbah--session-events))
                          :token pmbah--observation-token
                          :observation_state (symbol-name pmbah--observation-state)
+                         :chain_tip pmbah--chain-tip
+                         :chain_tip_event_count pmbah--chain-tip-event-count
                          :elapsed_ms (pmbah--elapsed-ms))))
     (cl-letf (((symbol-function 'pmbah--post-record)
                (lambda (_body) (list :url "https://example.test/record" :short_signature "stub"))))
@@ -898,6 +943,8 @@ test("Emacs producer persists a file buffer's session without text and resumes i
     assert.equal(typeof state.session_start_ms, "number");
     assert.equal(state.events.length, 2);
     assert.equal(state.observation.token, "resume-token-0123456789abcdef0123456789");
+    assert.equal(state.chain_tip, "b3:ab");
+    assert.equal(state.chain_tip_event_count, 2);
     for (const forbidden of ["Hello", "world", "essay", "text", "content"]) {
       assert.equal(first.state_json.includes(forbidden), false, `state file leaked ${forbidden}`);
     }
@@ -912,6 +959,8 @@ test("Emacs producer persists a file buffer's session without text and resumes i
     assert.ok(second.elapsed_ms >= second.events[2].t);
     assert.equal(second.token, "resume-token-0123456789abcdef0123456789");
     assert.equal(second.observation_state, "disabled");
+    assert.equal(second.chain_tip, "b3:ab", "the last chain tip resumes with the session");
+    assert.equal(second.chain_tip_event_count, 2);
 
     assert.equal(output.after_sign.state_file_exists, false, "upload removes the state file");
     assert.notEqual(output.after_sign.session, first.session);

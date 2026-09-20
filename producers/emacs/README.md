@@ -35,8 +35,10 @@ days later.
   `/api/observed-sessions/<session_id>/checkpoints`. The server stamps when it
   saw that prefix. Checkpoints carry no text and no text-derived hashes, and
   they are computed by a second local helper, `scripts/chain-tip.mjs`, which
-  refuses any input field other than the session id, format version, and
-  public events.
+  refuses any input field other than the session id, format version, public
+  events, and the previously computed tip with its event count. After the
+  first checkpoint only the events since the last tip are hashed, so a
+  checkpoint costs the new events rather than the whole session.
 - Session state saved under `pmbah-state-directory` holds the session id, start
   time, format version, public events, and the checkpoint token. It never
   holds document text, the file name, or the file path: the file is named by

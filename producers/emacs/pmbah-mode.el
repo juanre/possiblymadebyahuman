@@ -116,6 +116,10 @@ start time, public events, and the observation token; never document text."
 (defvar-local pmbah--inhibit-capture nil)
 (defvar-local pmbah--state-timer nil
   "Pending idle timer that writes this buffer's session state.")
+(defvar-local pmbah--chain-tip nil
+  "Public hash-chain tip over the first `pmbah--chain-tip-event-count' events.
+Checkpoints advance from it instead of rehashing the whole session.")
+(defvar-local pmbah--chain-tip-event-count 0)
 
 ;; Observation state: what the server has committed to for this session.
 (defvar-local pmbah--observation-state 'disabled
@@ -187,6 +191,8 @@ hashed, passed to the helper, or uploaded."
                     pmbah--next-seq
                     pmbah--inhibit-capture
                     pmbah--state-timer
+                    pmbah--chain-tip
+                    pmbah--chain-tip-event-count
                     pmbah--observation-state
                     pmbah--observation-token
                     pmbah--observation-committed-count
@@ -224,7 +230,9 @@ hashed, passed to the helper, or uploaded."
   (setq pmbah--session-id (pmbah--uuid-v4)
         pmbah--session-start-time (current-time)
         pmbah--events nil
-        pmbah--next-seq 0)
+        pmbah--next-seq 0
+        pmbah--chain-tip nil
+        pmbah--chain-tip-event-count 0)
   (pmbah--observation-reset))
 
 (defun pmbah--resume-session (state)
@@ -235,6 +243,8 @@ hashed, passed to the helper, or uploaded."
           pmbah--session-start-time (pmbah--ms-to-time (plist-get state :session_start_ms))
           pmbah--events (reverse events)
           pmbah--next-seq (length events))
+    (pmbah--set-chain-tip (plist-get state :chain_tip)
+                          (or (plist-get state :chain_tip_event_count) 0))
     (pmbah--observation-reset)
     (setq pmbah--observation-token (plist-get observation :token)
           pmbah--observation-committed-count (or (plist-get observation :committed_event_count) 0)
@@ -300,6 +310,8 @@ hashed, passed to the helper, or uploaded."
         :session_start_ms (pmbah--time-to-ms pmbah--session-start-time)
         :format_version pmbah-format-version
         :events (vconcat (pmbah--session-events))
+        :chain_tip pmbah--chain-tip
+        :chain_tip_event_count pmbah--chain-tip-event-count
         :observation (list :token pmbah--observation-token
                            :committed_event_count pmbah--observation-committed-count
                            :commitments (vconcat pmbah--observation-commitments))))
@@ -698,9 +710,7 @@ change hook that triggered the checkpoint."
          (session-id pmbah--session-id)
          (attempt pmbah--observation-attempt)
          (event-count pmbah--next-seq)
-         (payload (list :session_id session-id
-                        :format_version pmbah-format-version
-                        :events (vconcat (pmbah--session-events)))))
+         (payload (pmbah--chain-tip-payload)))
     (condition-case error
         (setq pmbah--observation-request
               (pmbah--run-node-script-async
@@ -708,11 +718,47 @@ change hook that triggered the checkpoint."
                (lambda (result failure)
                  (pmbah--observation-continue source session-id attempt
                    (lambda ()
-                     (if failure
-                         (pmbah--observation-fail 'transient 0 failure)
-                       (pmbah--observation-post event-count (alist-get 'chain_tip result))))))))
+                     (let ((chain-tip (and (not failure) (alist-get 'chain_tip result))))
+                       (cond
+                        (failure
+                         (pmbah--observation-fail 'transient 0 failure))
+                        ((not (and (stringp chain-tip)
+                                   (eql (alist-get 'event_count result) event-count)))
+                         (pmbah--observation-fail 'transient 0 "helper returned an unexpected chain tip"))
+                        (t
+                         (pmbah--set-chain-tip chain-tip event-count)
+                         (pmbah--observation-post event-count chain-tip)))))))))
       (error
        (pmbah--observation-fail 'transient 0 (error-message-string error))))))
+
+(defun pmbah--chain-tip-payload ()
+  "Return the chain-tip helper input for the events captured so far.
+When an earlier tip is known, only the events after it are sent, together
+with that tip and its event count, so a checkpoint costs the new events
+rather than the whole session."
+  (let ((events (pmbah--session-events)))
+    (if (and pmbah--chain-tip (> pmbah--chain-tip-event-count 0)
+             (< pmbah--chain-tip-event-count (length events)))
+        (list :session_id pmbah--session-id
+              :format_version pmbah-format-version
+              :previous_chain_tip pmbah--chain-tip
+              :previous_event_count pmbah--chain-tip-event-count
+              :events (vconcat (nthcdr pmbah--chain-tip-event-count events)))
+      (list :session_id pmbah--session-id
+            :format_version pmbah-format-version
+            :events (vconcat events)))))
+
+(defun pmbah--set-chain-tip (chain-tip event-count)
+  "Remember CHAIN-TIP as the tip over the first EVENT-COUNT events.
+A tip that does not describe a non-empty prefix of this session's events
+forgets the known tip instead, so the next checkpoint recomputes in full."
+  (if (and (stringp chain-tip) (integerp event-count)
+           (> event-count 0) (<= event-count pmbah--next-seq))
+      (when (> event-count pmbah--chain-tip-event-count)
+        (setq pmbah--chain-tip chain-tip
+              pmbah--chain-tip-event-count event-count))
+    (setq pmbah--chain-tip nil
+          pmbah--chain-tip-event-count 0)))
 
 (defun pmbah--observation-continue (buffer session-id attempt thunk)
   "Call THUNK in BUFFER if ATTEMPT is still its in-flight attempt for SESSION-ID.
@@ -978,6 +1024,7 @@ commitments."
   (list :state (symbol-name (if pmbah-observe-process pmbah--observation-state 'disabled))
         :event_count pmbah--next-seq
         :committed_event_count pmbah--observation-committed-count
+        :chain_tip_event_count pmbah--chain-tip-event-count
         :commitment_count (length pmbah--observation-commitments)
         :token_present (if pmbah--observation-token t :json-false)
         :in_flight (if pmbah--observation-in-flight t :json-false)
