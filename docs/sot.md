@@ -266,8 +266,12 @@ Owns:
 - `after-change-functions` capture
 - buffer/session status
 - sign-buffer command
-- conformant event logs
+- conformant event logs (format `0.2`)
 - capture-context prompts/redaction before upload
+- server-observed checkpoint orchestration with the `packages/producer-core` cadence and state machine (first event immediate; 50-event delta or 60 s with new events; no idle heartbeats; single in-flight plus one queued slot; 1 s→60 s backoff; `diverged` on 409/400; reset on 404 `observation_unavailable`; flush of an already-observed session before sign), with chain tips computed by the local `scripts/chain-tip.mjs` helper from public events only
+- observation binding on upload: `(observed_session_id, token)` when a checkpoint succeeded, explicit `unobserved` when observation was requested but never succeeded, absent when `pmbah-observe-process` is nil
+- one session per buffer, kept across major-mode changes and `revert-buffer` (permanent-local state)
+- per-file session persistence under `pmbah-state-directory` (SHA-256 of the file's true name, owner-only, no text) with resumption anchored at the stored session start, deletion after upload or discard, and `.stale` retirement when the 32-bit event-time bound, a format-version change, or an unreadable file prevents resumption
 
 ### 3.10 Producer scope invariant
 
@@ -852,8 +856,10 @@ pmbah-discard-session
 
 UX:
 
-- mode-line capture indicator
-- sign-buffer command
+- mode-line capture indicator: `PMBAH:N` plus `✓` (server has stamped every event), `·` (some events not yet stamped), or `✗` (diverged) when observation is on
+- session status reports event count, duration, observation state with the last checkpoint failure, and API URL
+- several buffers record at once, each in its own session; a file buffer resumes its saved session when the mode is re-enabled, and a message explains when saved state is set aside as `.stale`
+- sign-buffer command, flushing the final checkpoint first
 - capture-context review/redaction before upload
 - upload returns and copies short URL
 

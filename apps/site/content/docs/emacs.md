@@ -6,7 +6,7 @@ group: "Write a record"
 weight: 2
 ---
 
-`pmbah-mode` is a buffer-local minor mode for GNU Emacs 29.1+ that records the shape of your editing as a content-blind process record. When you choose to sign, it uploads only the public, content-blind manifest and event log to the configured ingest service and copies the returned record URL to your kill ring. Nothing about what you typed leaves your machine; only the shape of the editing does.
+`pmbah-mode` is a buffer-local minor mode for GNU Emacs 29.1+ that records the shape of your editing as a content-blind process record. While you write, it asks the ingest service to stamp checkpoints of the public hash chain, so the record can show that the service saw the writing unfold. When you choose to sign, it uploads only the public, content-blind manifest and event log (format `0.2`) to the configured ingest service and copies the returned record URL to your kill ring. Nothing about what you typed leaves your machine; only the shape of the editing does.
 
 ## What it captures
 
@@ -14,12 +14,22 @@ weight: 2
 - If the buffer is already non-empty, the mode still records only later mutation positions/lengths/timing. It does not store a starting buffer length, snapshot, hash, or replay fixture. Some length-derived stats may be `unknown` because the verifier cannot infer total document length from the captured suffix alone.
 - Codepoint-anchored process metadata: insert, delete, and replace operations with zero-based Unicode codepoint offsets and lengths. Wall-clock timing relative to the session start.
 - Source attribution where reliable. Common Emacs commands (`self-insert-command`, `yank`, `kill-region`, and so on) map to typing / paste / cut / etc.; ambiguous cases fall back to `unknown` rather than guess.
+- Server-observed checkpoints: the event count and the public hash-chain tip of the events captured so far, sent to the ingest service on the first edit, then after every 50 events or once a minute while you keep editing. Nothing is sent while you are idle. The service stamps when it saw each prefix; the record page shows the span between the first and last stamps as a server-observed span.
 
 ## What it does not capture
 
-- Your document text. No plaintext leaves the producer. The local Node helper that builds the public record is passed numeric process metadata only, with one sanctioned exception: if you choose to bind the document at sign time, the helper receives the active region when one is active, otherwise the whole buffer, transiently so it can compute the content-blind binding commitment, then discards it. Only the commitment is uploaded; the text never leaves your machine. See [Bind and check a document](/docs/checking-a-document/).
-- Absolute local file paths. The sign-time prompts note that the path is omitted by default.
+- Your document text. No plaintext leaves the producer. The local Node helper that builds the public record is passed numeric process metadata only, with one sanctioned exception: if you choose to bind the document at sign time, the helper receives the active region when one is active, otherwise the whole buffer, transiently so it can compute the content-blind binding commitment, then discards it. Only the commitment is uploaded; the text never leaves your machine. See [Bind and check a document](/docs/checking-a-document/). Checkpoints are computed by a second helper that accepts only the session id, format version, and public events.
+- Absolute local file paths. The sign-time prompts note that the path is omitted by default. Saved session state is filed under a hash of the path, not the path itself.
 - Anything outside the buffer `pmbah-mode` is attached to. The mode is per-buffer.
+
+## Sessions, buffers, and files
+
+- Each buffer records its own session. You can keep several buffers recording at once; each checkpoints, resumes, and signs on its own.
+- The session survives `M-x <major-mode>` and `revert-buffer`; recording continues into the same session.
+- For a file-visiting buffer, the session is saved to `pmbah-state-directory` (default `~/.emacs.d/pmbah/`) after a moment of idle time, when the buffer or Emacs is killed, when the mode is turned off, and whenever the service accepts a checkpoint. Enabling `pmbah-mode` on that file later resumes the session: earlier events are kept and new event times continue from the original start, so leaving for hours or days shows up as a pause inside one record. The state file holds the session id, start time, format version, public events, and the checkpoint token — never document text — and is readable only by you.
+- A successful upload, or `M-x pmbah-discard-session`, removes the saved state and starts a fresh session.
+- Non-file buffers keep their session in memory only.
+- A record's clock is a 32-bit millisecond counter, so one session can span at most about 24.8 days. If resuming would exceed that, the mode keeps the old state with a `.stale` suffix, tells you, and starts fresh.
 
 ## Requirements
 
@@ -122,16 +132,24 @@ or:
 
 Use the path printed by `command -v node` in a shell where Node is available.
 
+### Server-observed checkpoints
+
+`pmbah-observe-process` (default `t`) asks the ingest service to stamp checkpoints while you write. Set it to `nil` to upload records without any observation request. Checkpoints go to `pmbah-api-base-url`; `pmbah-observation-base-url` redirects them elsewhere for testing and should stay `nil` in normal use.
+
+### Session state directory
+
+`pmbah-state-directory` (default `~/.emacs.d/pmbah/`) holds one owner-only state file per visited file. Point it elsewhere if your Emacs directory is synced between machines.
+
 ## Usage
 
 1. Open a writing buffer. It may already contain text; PMBAH records only later mutation metadata.
-2. Enable capture: `M-x pmbah-mode`. The mode line shows `PMBAH:N`, where `N` is the local event count.
-3. Write normally.
-4. Check status when desired: `M-x pmbah-show-session-status`.
-5. Freeze, optionally bind the active region or whole buffer, answer y/n capture-context prompts, upload, and copy the record URL: `M-x pmbah-sign-buffer`.
+2. Enable capture: `M-x pmbah-mode`. The mode line shows `PMBAH:N`, where `N` is the local event count, followed by `✓` when the service has stamped every event so far, `·` while some are not yet stamped, or `✗` if the service's view diverged from the local session.
+3. Write normally. Leave and come back whenever you like; a file buffer resumes its session when you re-enable the mode.
+4. Check status when desired: `M-x pmbah-show-session-status` reports the session id, event count, duration, observation state, and API URL.
+5. Freeze, optionally bind the active region or whole buffer, answer y/n capture-context prompts, upload, and copy the record URL: `M-x pmbah-sign-buffer`. Before uploading, one last checkpoint covers any events the service has not stamped yet. A session whose checkpoints never reached the service is uploaded with an explicit `unobserved` state rather than being stamped for the first time at sign time.
 6. If you want to throw away the local session without uploading: `M-x pmbah-discard-session`.
 
-After a successful upload, the local event log is cleared and a fresh session starts for the current buffer. If upload fails, the local event log is retained so you can retry.
+After a successful upload, the local event log and any saved state are cleared and a fresh session starts for the current buffer. If upload fails, the local event log is retained so you can retry.
 
 ## Verify the installation
 
@@ -180,6 +198,9 @@ Use `C-u M-x pmbah-sign-buffer` to skip the prompts and accept the default yes a
 - **`generated record failed verification`**: keep the local session and report the sequence; the helper rejected an internally inconsistent public process record before upload.
 - **Upload HTTP errors**: run `M-x pmbah-show-session-status` and confirm `pmbah-api-base-url` is `https://possiblymadebyahuman.com` for normal public use. `http://localhost:8000` only works when you are running `make local-container` locally. The API origin must serve `POST /api/records`, and `/ready` should be healthy.
 - **No URL copied**: upload did not complete; the local session is retained for retry.
+- **Mode line stays at `PMBAH:N·`**: no checkpoint has succeeded yet, or the last ones failed. `M-x pmbah-show-session-status` shows the last failure. Failed checkpoints retry with a growing delay (1 s to 60 s) on the next edit; the record can still be signed and is then uploaded as `unobserved` or `partial`.
+- **Mode line shows `PMBAH:N✗`**: the service's commitments diverged from the local session, typically because the same file was recorded from two Emacs instances. No further checkpoints are sent. If the service then rejects the upload with HTTP 409, `M-x pmbah-discard-session` starts over.
+- **`PMBAH: the saved session for <file> ... starting a fresh session`**: the saved state could not be resumed (too old for a record's 32-bit clock, a different format version, or unreadable). It was kept next to the state file with a `.stale` suffix.
 
 ## Sibling producers
 
