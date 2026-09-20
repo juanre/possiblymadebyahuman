@@ -301,6 +301,16 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // A plain page with a textarea and a contenteditable and nothing else: the
+    // installed extension's own content script does the recording here.
+    if (url.pathname === "/extension-page") {
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      res.setHeader("cache-control", "no-store");
+      res.end(EXTENSION_PAGE_HTML);
+      return;
+    }
+
     // A plain page hosting the built content script as Chrome would inject it
     // (a classic script), with chrome.runtime stubbed to record what the script
     // sends. Lets the browser suite drive real key events through the capture code.
@@ -362,6 +372,14 @@ function contentType(path) {
     default: return "application/octet-stream";
   }
 }
+
+const EXTENSION_PAGE_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>extension e2e page</title></head>
+<body>
+<h1>A page with text fields</h1>
+<textarea id="plain" aria-label="plain field"></textarea>
+<div id="rich" contenteditable="true" aria-label="rich field" style="min-height:2em;border:1px solid #999"></div>
+</body></html>`;
 
 const EXTENSION_HARNESS_HTML = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>extension harness</title></head>

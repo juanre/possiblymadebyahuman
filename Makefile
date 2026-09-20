@@ -1,4 +1,4 @@
-.PHONY: help install check test typecheck dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container-build local-container local-container-down local-container-reset local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser build-site release-ready ship-tag
+.PHONY: help install check test typecheck dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container-build local-container local-container-down local-container-reset local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser test-extension-e2e build-site release-ready ship-tag
 
 ENV_FILE ?= .env.local-container
 PROD_ENV_FILE ?= .env.localprod
@@ -39,6 +39,7 @@ help:
 	@echo "  make prod-container-migrate Run migrations against external Neon DATABASE_URL"
 	@echo "  make prod-container-down   Stop prod-like stack"
 	@echo "  make test-web-browser      Build web app and run Playwright smoke for the record page"
+	@echo "  make test-extension-e2e    Drive the built extension in Chromium against PMBAH_LOCAL_BASE_URL (skips when unset)"
 	@echo "  make build-site            Build the Hugo landing/docs into apps/site/public"
 	@echo "  make release-ready         Run release readiness checks and build a release image"
 	@echo "  make ship-tag VERSION=X.Y.Z Run release-ready, tag vX.Y.Z, and push tag"
@@ -147,6 +148,13 @@ test-web-browser:
 	npm run build:web
 	$(MAKE) extension-build
 	npm run test:web-browser
+
+test-extension-e2e:
+	@if [ -z "$(PMBAH_LOCAL_BASE_URL)" ]; then \
+		echo "Skipping extension e2e: PMBAH_LOCAL_BASE_URL is not set. Start the local stack (make local-container) and run: make test-extension-e2e PMBAH_LOCAL_BASE_URL=http://localhost:$(PMBAH_PORT)"; \
+	else \
+		PMBAH_LOCAL_BASE_URL="$(PMBAH_LOCAL_BASE_URL)" npm run test:extension-e2e; \
+	fi
 
 build-site:
 	command -v hugo >/dev/null || (echo "hugo is required for build-site" && exit 1)

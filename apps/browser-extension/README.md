@@ -114,7 +114,17 @@ EXT_BASE_URL=http://localhost:8787 make extension-package
 
 ### Manual testing
 
-The agent that wrote this code cannot load a real browser. The following manual checks are the responsibility of the human or reviewer who installs the unpacked extension. Each check corresponds to an acceptance criterion in the task.
+The textarea flow below (focus, type with a Backspace, sign from the popup with the binding on, upload, open the public record page, keep editing into a continuation session) also runs automatically in a real Chromium with the built extension loaded, against a locally running service:
+
+```bash
+make local-container                      # app + Postgres on the port in .env.local-container
+make test-extension-e2e PMBAH_LOCAL_BASE_URL=http://localhost:8000
+# or: PMBAH_LOCAL_BASE_URL=http://localhost:8000 npm run test:extension-e2e
+```
+
+`tests/browser/extension-e2e.spec.mjs` builds the extension with `EXT_BASE_URL` pointing at that service, loads it with `--load-extension`, and asserts the uploaded record verifies, has the expected event count and a `text_binding`, and contains none of the typed text. It skips with a message when `PMBAH_LOCAL_BASE_URL` is unset, so the default browser suite stays offline. Never point it at the production origin.
+
+The remaining checks are manual and are the responsibility of the human or reviewer who installs the unpacked extension. Each check corresponds to an acceptance criterion in the task.
 
 - **Textarea capture and binding (Chrome).** Open `chrome://newtab`, navigate to any page with a `<textarea>`, focus it, type a few characters, select a subset of the field text, observe the `recording` badge, open the popup, click **Sign & upload**, confirm the sign panel says it will bind selected text or all field content, and confirm upload returns a `short_signature` copied to the clipboard. Repeat without a selection to confirm it binds all field content.
 - **Contenteditable degraded capture and binding (Chrome/Gmail-like surface).** Open a contenteditable surface (e.g. any rich-text reply box that is fundamentally a contenteditable div), focus it, type. The badge should read `recording`. Select only the reply/body text you intend to sign, leaving surrounding quoted/header/footer material unselected if present. Open the popup — the event count grows as you type. Sign and confirm the upload succeeds. Note: positions are `null` (unknown) for contenteditable; the record page reports the observed length as unknown.
