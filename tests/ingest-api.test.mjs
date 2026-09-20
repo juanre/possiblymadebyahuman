@@ -20,11 +20,12 @@ async function textBindingRecord() {
 }
 
 function makeApi(options = {}) {
-  const store = new InMemoryRecordStore();
+  const now = options.now ?? (() => new Date("2026-05-28T10:00:00.000Z"));
+  const store = new InMemoryRecordStore({ now });
   const api = createIngestApi({
     store,
     baseUrl: "https://possiblymadebyahuman.test",
-    now: () => new Date("2026-05-28T10:00:00.000Z"),
+    now,
     ...options,
   });
   return { api, store };
