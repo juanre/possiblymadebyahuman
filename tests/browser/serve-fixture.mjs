@@ -131,6 +131,61 @@ const observation = {
 
 const fixtureRecord = { manifest: record.manifest, events: record.events, stats, signals, observation };
 
+// /api/records/tampered: the same record with one event altered after signing,
+// so the browser's recomputed hash no longer matches manifest.record_hash.
+const tamperedEvents = JSON.parse(JSON.stringify(record.events));
+tamperedEvents[0].ins_len += 1;
+const tamperedRecord = {
+  manifest: record.manifest,
+  events: tamperedEvents,
+  stats,
+  signals,
+  observation: {
+    state: "not_requested",
+    observed_session_id: null,
+    commitments: [],
+    checkpoint_count: 0,
+    first_observed_at: null,
+    last_observed_at: null,
+    server_observed_span_ms: null,
+  },
+};
+
+// /api/records/unknownlength: a capture that started inside a non-empty buffer,
+// so absolute positions exceed the length inferable from the events alone and
+// the observed length is unknown. Observation was requested but never committed.
+const unknownSessionId = record.manifest.session_id;
+const unknownEvents = [
+  { seq: 0, t: 0, op: "insert", pos: 40, del_len: 0, ins_len: 1, source: "typing" },
+  { seq: 1, t: 120, op: "insert", pos: 41, del_len: 0, ins_len: 1, source: "typing" },
+  { seq: 2, t: 260, op: "insert", pos: 42, del_len: 0, ins_len: 24, source: "paste" },
+  { seq: 3, t: 400, op: "delete", pos: 60, del_len: 2, ins_len: 0, source: "typing" },
+];
+const unknownManifest = {
+  ...record.manifest,
+  format_version: "0.2",
+  capture_context: { surface: "emacs", label: "essay.md", emacs: { buffer_name: "essay.md", major_mode: "markdown-mode" } },
+  event_count: unknownEvents.length,
+  duration_ms: 400,
+  record_hash: computeRecordHash(unknownEvents, unknownSessionId, "0.2"),
+};
+delete unknownManifest.text_binding;
+const unknownRecord = {
+  manifest: unknownManifest,
+  events: unknownEvents,
+  stats: { ...stats, record_hash: unknownManifest.record_hash, event_count: 4, duration_ms: 400, observed_final_length: null, paste_event_count: 1, cut_event_count: 0, largest_atomic_insert_codepoints: 24 },
+  signals,
+  observation: {
+    state: "unobserved",
+    observed_session_id: null,
+    commitments: [],
+    checkpoint_count: 0,
+    first_observed_at: null,
+    last_observed_at: null,
+    server_observed_span_ms: null,
+  },
+};
+
 // A second fixture served at /api/records/bound: a format 0.2 record that
 // actually carries a text binding, so the record-page checker has a real
 // commitment to verify against. record_hash is resealed over the binding so
@@ -221,6 +276,10 @@ const server = createServer(async (req, res) => {
       const requestedSlug = url.pathname.slice("/api/records/".length);
       const body = requestedSlug === "bound"
         ? boundRecord
+        : requestedSlug === "tampered"
+        ? tamperedRecord
+        : requestedSlug === "unknownlength"
+        ? unknownRecord
         : requestedSlug === "real" && realRecord
         ? realRecord
         : fixtureRecord;

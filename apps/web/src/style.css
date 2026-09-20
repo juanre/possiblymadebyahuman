@@ -133,6 +133,11 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   margin-top: 14px;
   padding-top: 14px;
 }
+.chain-status { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; }
+.chain-status p { margin: 0; }
+.chain-status.ok { background: #eaf6ec; border: 1px solid #b7dcc0; }
+.chain-status.error { background: #fbeeee; border: 1px solid #e6c3c3; }
+.chain-status-errors { margin: 8px 0 0; padding-left: 18px; font-size: 0.9rem; }
 .observation-status-line { margin: 0; }
 .observation-status-line strong { color: #202124; margin-right: 4px; }
 .observation-status-observed { color: #44504a; }

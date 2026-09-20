@@ -1,8 +1,8 @@
 import React, { useMemo, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
-import type { RecordApiResponse } from "./types.ts";
+import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDelayMs, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
+import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 export function DisclaimerBanner() {
   return (
@@ -17,10 +17,10 @@ export function DisclaimerBanner() {
 // is the trusted answer. Otherwise we anchor on the trusted server upload time
 // (ingested_server_t) as the end and subtract the recorded duration for the
 // begin — consistent across producers and never claiming more than it knows.
-function recordTimingWindow(record: RecordApiResponse): { began: string; ended: string } | null {
+function recordTimingWindow(record: RecordApiResponse): { began: string; ended: string; estimated: boolean } | null {
   const observation = record.observation;
   if (observation.first_observed_at && observation.last_observed_at) {
-    return { began: observation.first_observed_at, ended: observation.last_observed_at };
+    return { began: observation.first_observed_at, ended: observation.last_observed_at, estimated: false };
   }
   const ingested = record.manifest.ingested_server_t;
   if (ingested) {
@@ -28,6 +28,7 @@ function recordTimingWindow(record: RecordApiResponse): { began: string; ended: 
     return {
       began: new Date(ended - record.manifest.duration_ms).toISOString(),
       ended: new Date(ended).toISOString(),
+      estimated: true,
     };
   }
   return null;
@@ -38,8 +39,8 @@ export function CaptureContextSummary({ record }: { record: RecordApiResponse })
   const timing = recordTimingWindow(record);
   const timingRows = timing ? (
     <>
-      <dt>Began</dt><dd><UtcInstant iso={timing.began} /></dd>
-      <dt>Ended</dt><dd><UtcInstant iso={timing.ended} /></dd>
+      <dt>{timing.estimated ? "Began (estimated)" : "Began"}</dt><dd><UtcInstant iso={timing.began} /></dd>
+      <dt>{timing.estimated ? "Ended (upload)" : "Ended"}</dt><dd><UtcInstant iso={timing.ended} /></dd>
     </>
   ) : null;
   if (!context) {
@@ -81,7 +82,7 @@ export function QuickStatsPanel({ record }: { record: RecordApiResponse }) {
         <Stat label="Paste / unknown" value={`${stats.paste_event_count} / ${stats.unknown_source_count}`} />
         <Stat label="Largest atomic insert" value={`${stats.largest_atomic_insert_codepoints} codepoints`} />
         <Stat label="Active / idle" value={`${formatDuration(stats.active_time_ms)} / ${formatDuration(stats.idle_time_ms)}`} />
-        <Stat label="Delay p50 / p95" value={`${stats.inter_event_delay_p50_ms ?? "n/a"}ms / ${stats.inter_event_delay_p95_ms ?? "n/a"}ms`} />
+        <Stat label="Delay p50 / p95" value={`${formatDelayMs(stats.inter_event_delay_p50_ms)} / ${formatDelayMs(stats.inter_event_delay_p95_ms)}`} />
       </div>
     </section>
   );
@@ -120,6 +121,7 @@ function formatTimelineTick(seconds: number): string {
 
 export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
+  const lengthKnown = points.length > 0 && points.every((point) => point.documentLength !== null);
   const maxLength = timelineLengthScale(points, record.stats.observed_final_length);
   const observedDurationMs = record.manifest.duration_ms || (points.length > 0 ? points[points.length - 1]!.t : 0);
   const duration = Math.max(1, observedDurationMs);
@@ -128,6 +130,8 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const baseline = TIMELINE_PAD_T + plotH;
   const tx = (t: number) => TIMELINE_PAD_L + (Math.min(duration, Math.max(0, t)) / duration) * plotW;
   const ly = (len: number) => baseline - (Math.min(maxLength, Math.max(0, len)) / maxLength) * plotH;
+  // With no inferable length there is no curve; markers sit on a neutral mid line.
+  const markerY = (point: { documentLength: number | null }) => lengthKnown ? ly(point.documentLength ?? 0) : baseline - plotH / 2;
 
   // Document length over time. The fill closes down to the baseline at both
   // ends (correct for an area); the stroked line traces ONLY the curve, so it
@@ -170,7 +174,11 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   return (
     <section className="card timeline-card">
       <h2>Edit timeline</h2>
-      <p className="muted">Document length over time. Pastes, cuts, and large inserts are marked on the curve; shaded bands are long pauses. Steady typing is the rising line itself.</p>
+      {lengthKnown ? (
+        <p className="muted">Document length over time. Pastes, cuts, and large inserts are marked on the curve; shaded bands are long pauses. Steady typing is the rising line itself.</p>
+      ) : (
+        <p className="muted">Document length is unknown for this record: the capture started inside existing text, so the events alone cannot say how long the document was. Pastes, cuts, and large inserts are marked in time; shaded bands are long pauses.</p>
+      )}
       <svg className="timeline-chart" viewBox={`0 0 ${TIMELINE_VB_W} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
         {pauseSpans.map((point) => {
           const startT = Math.max(0, point.t - point.delayFromPreviousMs);
@@ -179,11 +187,11 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
           return <rect key={`pause-${point.seq}`} x={x} y={TIMELINE_PAD_T} width={width} height={plotH} fill="#ead9b8" opacity={0.45} />;
         })}
         <line x1={TIMELINE_PAD_L} y1={baseline} x2={TIMELINE_VB_W - TIMELINE_PAD_R} y2={baseline} stroke="#d8c8a6" strokeWidth={0.6} />
-        <path d={areaPath} fill="rgba(139, 94, 52, 0.18)" stroke="none" />
-        <path d={linePath} fill="none" stroke="#8b5e34" strokeWidth={1.2} strokeLinejoin="round" strokeLinecap="round" />
+        {lengthKnown ? <path className="length-area" d={areaPath} fill="rgba(139, 94, 52, 0.18)" stroke="none" /> : null}
+        {lengthKnown ? <path className="length-curve" d={linePath} fill="none" stroke="#8b5e34" strokeWidth={1.2} strokeLinejoin="round" strokeLinecap="round" /> : null}
         {notable.map((point) => {
           const x = tx(point.t);
-          const y = ly(point.documentLength ?? 0);
+          const y = markerY(point);
           const r = point.isLargeInsert ? 4.5 : 3.2;
           return (
             <circle key={point.seq} cx={x} cy={y} r={r} fill={sourceFill(point.source)} stroke="#fffaf2" strokeWidth={1.2}>
@@ -191,8 +199,8 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
             </circle>
           );
         })}
-        <text x={TIMELINE_PAD_L - 6} y={TIMELINE_PAD_T + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">{maxLength} cp</text>
-        <text x={TIMELINE_PAD_L - 6} y={baseline + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">0</text>
+        {lengthKnown ? <text x={TIMELINE_PAD_L - 6} y={TIMELINE_PAD_T + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">{maxLength} cp</text> : null}
+        {lengthKnown ? <text x={TIMELINE_PAD_L - 6} y={baseline + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">0</text> : null}
         {ticks.map((seconds) => {
           const x = tx(seconds * 1000);
           return (
@@ -205,7 +213,7 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
         <text x={TIMELINE_VB_W - TIMELINE_PAD_R} y={baseline + 34} fontSize={10} fill="#a89a82" fontFamily="ui-monospace, monospace" textAnchor="end">time →</text>
       </svg>
       <div className="legend">
-        <span className="dot curve" /> document length{" "}
+        {lengthKnown && <><span className="dot curve" /> document length{" "}</>}
         {notableSources.has("paste") && <><span className="dot source-paste" /> paste </>}
         {notableSources.has("drop") && <><span className="dot source-drop" /> drop </>}
         {(notableSources.has("cut") || notableSources.has("delete")) && <><span className="dot source-cut" /> cut/delete </>}
@@ -280,12 +288,11 @@ export function VerificationPanel({ record }: { record: RecordApiResponse }) {
   // it up as a verdict, because comparing it to the server's own hash field
   // is only a check of internal consistency.
   const verification = useMemo(() => verifyRecordChain(record), [record]);
-  const observation = record.observation;
-  const showObservation = observation.state === "observed" || observation.state === "partial";
   return (
     <section className="card">
       <h2>Signature &amp; details</h2>
-      {showObservation ? <ObservationStatusLine record={record} /> : null}
+      <ChainStatus verification={verification} />
+      <ObservationStatusLine record={record} />
       <ManifestDetails record={record} computedRecordHash={verification.computedRecordHash} />
     </section>
   );
@@ -362,6 +369,27 @@ function UtcInstant({ iso }: { iso: string | null }) {
     <time className="utc-instant" dateTime={iso} title={iso}>
       {formatUtcMinute(iso)}
     </time>
+  );
+}
+
+// The reader's own recomputation of the hash chain, stated plainly. This is a
+// check of internal consistency (the events shown are the events signed), not
+// a verdict about authorship.
+function ChainStatus({ verification }: { verification: VerificationState }) {
+  if (verification.ok) {
+    return (
+      <p className="chain-status ok" role="status">
+        <strong>Hash chain recomputed in your browser.</strong> It matches the record hash, so the events shown here are the events that were signed.
+      </p>
+    );
+  }
+  return (
+    <div className="chain-status error" role="status">
+      <p><strong>Hash chain does not match.</strong> Recomputing the chain from the events shown here does not reproduce the record hash, so this record has been altered since it was signed or is malformed.</p>
+      <ul className="chain-status-errors">
+        {verification.messages.map((message) => <li key={message}>{message}</li>)}
+      </ul>
+    </div>
   );
 }
 
@@ -599,7 +627,7 @@ export function RecordSignet({ record }: { record: RecordApiResponse }) {
           <h1>Signed writing record</h1>
           <p className="signet-statement">
             Signs the <strong>shape of the writing process</strong>
-            {bound ? <> and the <strong>text it produced</strong></> : null}.
+            {bound ? <> and the <strong>wording of the text it produced</strong></> : null}.
           </p>
         </div>
       </div>
