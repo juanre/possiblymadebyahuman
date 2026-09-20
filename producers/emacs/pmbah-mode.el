@@ -116,6 +116,9 @@ start time, public events, and the observation token; never document text."
 (defvar-local pmbah--inhibit-capture nil)
 (defvar-local pmbah--state-timer nil
   "Pending idle timer that writes this buffer's session state.")
+(defvar-local pmbah--state-path nil
+  "State file this buffer's session was last written to.
+When the visited file is renamed, the state file moves with it.")
 (defvar-local pmbah--chain-tip nil
   "Public hash-chain tip over the first `pmbah--chain-tip-event-count' events.
 Checkpoints advance from it instead of rehashing the whole session.")
@@ -174,7 +177,8 @@ hashed, passed to the helper, or uploaded."
             (add-hook 'after-change-functions #'pmbah--after-change nil t)
             (add-hook 'after-change-major-mode-hook #'pmbah--reinstall-capture)
             (add-hook 'kill-buffer-hook #'pmbah--write-state)
-            (add-hook 'kill-emacs-hook #'pmbah--write-all-state))
+            (add-hook 'kill-emacs-hook #'pmbah--write-all-state)
+            (add-hook 'after-set-visited-file-name-hook #'pmbah--follow-visited-file nil t))
         (error
          (setq pmbah-mode nil)
          (remove-hook 'after-change-functions #'pmbah--after-change t)
@@ -191,6 +195,7 @@ hashed, passed to the helper, or uploaded."
                     pmbah--next-seq
                     pmbah--inhibit-capture
                     pmbah--state-timer
+                    pmbah--state-path
                     pmbah--chain-tip
                     pmbah--chain-tip-event-count
                     pmbah--observation-state
@@ -334,7 +339,8 @@ from hooks and timers."
             (with-file-modes #o600
               (with-temp-file temp-path
                 (insert json)))
-            (rename-file temp-path path t))
+            (rename-file temp-path path t)
+            (setq pmbah--state-path path))
         (error
          (message "PMBAH could not save session state: %s" (error-message-string error)))))))
 
@@ -373,6 +379,26 @@ from hooks and timers."
           (delete-file path)
         (error
          (message "PMBAH could not remove session state: %s" (error-message-string error)))))))
+
+(defun pmbah--follow-visited-file ()
+  "Move the state file to the visited file's new name after a rename.
+Runs from `after-set-visited-file-name-hook', which `write-file' and
+`set-visited-file-name' call."
+  (let ((old-path pmbah--state-path)
+        (new-path (pmbah--state-file)))
+    (when (and old-path (not (equal old-path new-path)) (file-exists-p old-path))
+      (condition-case error
+          (if new-path
+              (progn
+                (rename-file old-path new-path t)
+                (setq pmbah--state-path new-path))
+            (delete-file old-path)
+            (setq pmbah--state-path nil))
+        (error
+         (message "PMBAH could not move session state to the renamed file: %s"
+                  (error-message-string error)))))
+    (when new-path
+      (pmbah--write-state))))
 
 (defun pmbah--read-state (path)
   "Parse the session state file at PATH, or return nil when it is unreadable."
@@ -519,6 +545,10 @@ tests."
     (user-error "Enable pmbah-mode before signing a buffer"))
   (when (= pmbah--next-seq 0)
     (user-error "No PMBAH events captured for this buffer"))
+  (when (>= (pmbah--elapsed-ms) pmbah-max-session-ms)
+    (pmbah--retire-live-session)
+    (user-error "PMBAH session ran past the 24.8 days a record's clock can hold; it was set aside as .stale and a fresh session %s started"
+                pmbah--session-id))
   (let* ((context (or capture-context
                       (if no-prompts
                           (pmbah--capture-context t t)

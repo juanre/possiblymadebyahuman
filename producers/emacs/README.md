@@ -215,13 +215,17 @@ synced between machines:
   hours or days shows up as a pause, not as a new record.
 - A successful upload, or `pmbah-discard-session`, removes the state file and
   starts a fresh session in the buffer.
+- Renaming the visited file (`write-file`, `set-visited-file-name`) moves the
+  state file with it, so the renamed file resumes the same session.
 - Non-file buffers (`*scratch*`, temporary buffers) keep their session in
   memory only; killing the buffer discards it.
 - Event times and durations are 32-bit millisecond integers, so one record can
   span at most about 24.8 days. If resuming a saved session would exceed that,
   or the saved state was recorded under a different format version or cannot
   be read, the mode keeps the old state file with a `.stale` suffix, tells you
-  with a message, and starts a fresh session.
+  with a message, and starts a fresh session. A live session that reaches the
+  bound, at the next edit or when you sign, is set aside the same way rather
+  than uploaded as a record the service would reject.
 - Opening the same file in two Emacs instances at once is not supported: both
   would resume the same session and their checkpoints would conflict.
 

@@ -28,8 +28,9 @@ weight: 2
 - The session survives `M-x <major-mode>` and `revert-buffer`; recording continues into the same session.
 - For a file-visiting buffer, the session is saved to `pmbah-state-directory` (default `~/.emacs.d/pmbah/`) after a moment of idle time, when the buffer or Emacs is killed, when the mode is turned off, and whenever the service accepts a checkpoint. Enabling `pmbah-mode` on that file later resumes the session: earlier events are kept and new event times continue from the original start, so leaving for hours or days shows up as a pause inside one record. The state file holds the session id, start time, format version, public events, and the checkpoint token — never document text — and is readable only by you.
 - A successful upload, or `M-x pmbah-discard-session`, removes the saved state and starts a fresh session.
+- Renaming the visited file (`write-file`, `set-visited-file-name`) moves the saved state with it, so the renamed file resumes the same session.
 - Non-file buffers keep their session in memory only.
-- A record's clock is a 32-bit millisecond counter, so one session can span at most about 24.8 days. If resuming would exceed that, the mode keeps the old state with a `.stale` suffix, tells you, and starts fresh.
+- A record's clock is a 32-bit millisecond counter, so one session can span at most about 24.8 days. If resuming would exceed that, the mode keeps the old state with a `.stale` suffix, tells you, and starts fresh. A live session that reaches the bound, at the next edit or when you sign, is set aside the same way rather than uploaded.
 
 ## Requirements
 
