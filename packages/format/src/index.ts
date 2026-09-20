@@ -9,6 +9,13 @@ export const FORMAT_VERSION = FORMAT_VERSION_0_2;
 export const FORMAT_VERSIONS = [FORMAT_VERSION_0_1, FORMAT_VERSION_0_2] as const;
 export const HASH_PREFIX = "b3:";
 export const BLAKE3_HEX_LENGTH = 64;
+// Integer fields are stored in 32-bit Postgres columns and summed into 32-bit stats.
+export const MAX_INTEGER_FIELD_VALUE = 2_147_483_647;
+export const MAX_CAPTURE_CONTEXT_STRING_LENGTH = 512;
+export const MAX_CAPTURE_CONTEXT_URL_LENGTH = 2_048;
+export const MAX_ATTESTATION_COUNT = 16;
+export const MAX_ATTESTATION_FIELD_COUNT = 16;
+export const MAX_ATTESTATION_STRING_LENGTH = 512;
 
 export type FormatVersion = (typeof FORMAT_VERSIONS)[number];
 export type B3Hash = `${typeof HASH_PREFIX}${string}`;
@@ -75,12 +82,11 @@ export type CaptureContext = {
     buffer_name?: string;
     major_mode?: string;
   };
-  [key: string]: JsonValue | undefined;
 };
 
 export type Attestation = {
   type: string;
-  [key: string]: JsonValue | undefined;
+  [key: string]: string | undefined;
 };
 
 export type TextBinding = {
@@ -147,6 +153,9 @@ const SOURCE_SET = new Set<string>(SOURCES);
 const CAPABILITY_SET = new Set<string>(CAPABILITIES);
 const FORMAT_VERSION_SET = new Set<string>(FORMAT_VERSIONS);
 const EVENT_KEYS = new Set(["seq", "t", "op", "pos", "del_len", "ins_len", "source"]);
+const CAPTURE_CONTEXT_KEYS = new Set(["surface", "label", "browser", "emacs"]);
+const CAPTURE_CONTEXT_BROWSER_KEYS = new Set(["url", "title", "field_kind"]);
+const CAPTURE_CONTEXT_EMACS_KEYS = new Set(["buffer_name", "major_mode"]);
 
 export function canonicalizeJson(value: unknown): string {
   if (value === null) return "null";
@@ -214,7 +223,7 @@ export function canonicalizeTextForBinding(input: string): string {
 
 export function computeTextBindingCommitment(sessionId: string, canonicalForm: string): B3Hash {
   if (typeof sessionId !== "string" || !isUuid(sessionId)) {
-    throw new TypeError("session_id must be a UUIDv4 string");
+    throw new TypeError("session_id must be a lowercase UUIDv4 string");
   }
   if (canonicalForm.length === 0) {
     throw new TypeError("text binding canonical form must not be empty");
@@ -237,7 +246,7 @@ export function verifyTextBindingCandidate(
   sessionId: string,
 ): TextBindingVerificationResult {
   const errors = validateTextBinding(binding);
-  if (typeof sessionId !== "string" || !isUuid(sessionId)) errors.push("session_id must be a UUIDv4 string");
+  if (typeof sessionId !== "string" || !isUuid(sessionId)) errors.push("session_id must be a lowercase UUIDv4 string");
   const candidateCanonical = canonicalizeTextForBinding(candidateText);
   const candidateCodepoints = Array.from(candidateCanonical);
   let valid = false;
@@ -512,7 +521,7 @@ export function validateManifest(manifest: unknown): string[] {
   }
   if (!isB3Hash(candidate.record_hash)) errors.push(`record_hash must be a ${HASH_PREFIX} hash`);
   if (typeof candidate.session_id !== "string" || !isUuid(candidate.session_id)) {
-    errors.push("session_id must be a UUIDv4 string");
+    errors.push("session_id must be a lowercase UUIDv4 string");
   }
   if (!isPlainObject(candidate.producer)) {
     errors.push("producer must be an object");
@@ -533,12 +542,8 @@ export function validateManifest(manifest: unknown): string[] {
       }
     }
   }
-  if (
-    candidate.capture_context !== undefined &&
-    candidate.capture_context !== null &&
-    !isPlainObject(candidate.capture_context)
-  ) {
-    errors.push("capture_context must be an object, null, or absent");
+  if (candidate.capture_context !== undefined && candidate.capture_context !== null) {
+    errors.push(...validateCaptureContext(candidate.capture_context));
   }
   if (candidate.format_version === FORMAT_VERSION_0_1 && "text_binding" in candidate) {
     errors.push("text_binding is not valid for format_version 0.1");
@@ -550,14 +555,69 @@ export function validateManifest(manifest: unknown): string[] {
   validateNonNegativeInteger(candidate.duration_ms, "duration_ms", errors);
   if ("final_text_hash" in candidate) errors.push("final_text_hash is not a content-blind public manifest field");
   if ("final_text_length" in candidate) errors.push("final_text_length is not a content-blind public manifest field");
-  validateNullableString(candidate.created_client_t, "created_client_t", errors);
-  validateNullableString(candidate.ingested_server_t, "ingested_server_t", errors);
+  validateNullableTimestamp(candidate.created_client_t, "created_client_t", errors);
+  validateNullableTimestamp(candidate.ingested_server_t, "ingested_server_t", errors);
   if ("parent_record_hash" in candidate) {
     errors.push("parent_record_hash is not a public manifest field; use parent_record");
   }
   validateNullableB3(candidate.parent_record, "parent_record", errors);
-  if (!Array.isArray(candidate.attestations)) errors.push("attestations must be an array");
+  errors.push(...validateAttestations(candidate.attestations));
 
+  return errors;
+}
+
+export function validateCaptureContext(context: unknown): string[] {
+  if (!isPlainObject(context)) return ["capture_context must be an object, null, or absent"];
+  const errors: string[] = [];
+  for (const [key, value] of Object.entries(context)) {
+    if (!CAPTURE_CONTEXT_KEYS.has(key)) {
+      errors.push(`capture_context contains unknown field ${key}`);
+      continue;
+    }
+    if (key === "browser" || key === "emacs") {
+      const allowed = key === "browser" ? CAPTURE_CONTEXT_BROWSER_KEYS : CAPTURE_CONTEXT_EMACS_KEYS;
+      if (!isPlainObject(value)) {
+        errors.push(`capture_context.${key} must be an object`);
+        continue;
+      }
+      for (const [childKey, childValue] of Object.entries(value)) {
+        if (!allowed.has(childKey)) {
+          errors.push(`capture_context.${key} contains unknown field ${childKey}`);
+          continue;
+        }
+        const limit = childKey === "url" ? MAX_CAPTURE_CONTEXT_URL_LENGTH : MAX_CAPTURE_CONTEXT_STRING_LENGTH;
+        validateBoundedString(childValue, `capture_context.${key}.${childKey}`, limit, errors);
+      }
+      continue;
+    }
+    validateBoundedString(value, `capture_context.${key}`, MAX_CAPTURE_CONTEXT_STRING_LENGTH, errors);
+  }
+  return errors;
+}
+
+export function validateAttestations(attestations: unknown): string[] {
+  if (!Array.isArray(attestations)) return ["attestations must be an array"];
+  const errors: string[] = [];
+  if (attestations.length > MAX_ATTESTATION_COUNT) {
+    errors.push(`attestations must contain at most ${MAX_ATTESTATION_COUNT} entries`);
+  }
+  attestations.forEach((attestation, index) => {
+    const name = `attestations[${index}]`;
+    if (!isPlainObject(attestation)) {
+      errors.push(`${name} must be an object`);
+      return;
+    }
+    if (typeof attestation.type !== "string" || attestation.type.length === 0) {
+      errors.push(`${name}.type must be a non-empty string`);
+    }
+    const entries = Object.entries(attestation);
+    if (entries.length > MAX_ATTESTATION_FIELD_COUNT) {
+      errors.push(`${name} must contain at most ${MAX_ATTESTATION_FIELD_COUNT} fields`);
+    }
+    for (const [key, value] of entries) {
+      validateBoundedString(value, `${name}.${key}`, MAX_ATTESTATION_STRING_LENGTH, errors);
+    }
+  });
   return errors;
 }
 
@@ -637,21 +697,38 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function validateNonNegativeInteger(value: unknown, name: string, errors: string[]): void {
-  if (!Number.isInteger(value) || (value as number) < 0) errors.push(`${name} must be a non-negative integer`);
+  if (!isBoundedNonNegativeInteger(value)) {
+    errors.push(`${name} must be a non-negative integer (at most ${MAX_INTEGER_FIELD_VALUE})`);
+  }
 }
 
 function validateNullableNonNegativeInteger(value: unknown, name: string, errors: string[]): void {
-  if (value !== null && (!Number.isInteger(value) || (value as number) < 0)) {
-    errors.push(`${name} must be a non-negative integer or null`);
+  if (value !== null && !isBoundedNonNegativeInteger(value)) {
+    errors.push(`${name} must be a non-negative integer or null (at most ${MAX_INTEGER_FIELD_VALUE})`);
   }
+}
+
+function isBoundedNonNegativeInteger(value: unknown): boolean {
+  return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= MAX_INTEGER_FIELD_VALUE;
+}
+
+function validateBoundedString(value: unknown, name: string, maxLength: number, errors: string[]): void {
+  if (typeof value !== "string") {
+    errors.push(`${name} must be a string`);
+    return;
+  }
+  if (value.length > maxLength) errors.push(`${name} must be at most ${maxLength} characters`);
 }
 
 function isLetterNumberOrMark(input: string): boolean {
   return /[\p{Letter}\p{Number}\p{Mark}]/u.test(input);
 }
 
-function validateNullableString(value: unknown, name: string, errors: string[]): void {
-  if (value !== undefined && value !== null && typeof value !== "string") errors.push(`${name} must be a string, null, or absent`);
+function validateNullableTimestamp(value: unknown, name: string, errors: string[]): void {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "string" || Number.isNaN(Date.parse(value))) {
+    errors.push(`${name} must be a parseable timestamp string, null, or absent`);
+  }
 }
 
 function validateNullableB3(value: unknown, name: string, errors: string[]): void {
@@ -659,7 +736,7 @@ function validateNullableB3(value: unknown, name: string, errors: string[]): voi
 }
 
 function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }
 
 function last<T>(items: T[]): T {

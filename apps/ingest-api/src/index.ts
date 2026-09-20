@@ -41,6 +41,8 @@ export const DEFAULT_SHORT_SIGNATURE_LENGTH = 10;
 // Reserved route collisions use a deterministic leading-X rescue candidate in generateShortSignature.
 // Do not reserve x/X as a route prefix unless the rescue strategy is changed at the same time.
 export const RESERVED_ROUTE_PREFIXES = ["api", "docs", "blog", "write", "assets", "record-assets", "images", "health", "ready", "live"] as const;
+export const MAX_ERROR_DETAILS = 25;
+export const MAX_PAYLOAD_DEPTH = 32;
 
 export type IngestApiOptions = {
   store: RecordStore;
@@ -101,13 +103,13 @@ export function createIngestApi(options: IngestApiOptions) {
     input: unknown,
   ): Promise<ApiResult<PostObservedCheckpointResponse>> {
     if (!isUuid(observedSessionId)) {
-      return { status: 400, body: { error: "invalid_payload", details: ["observed_session_id must be a UUIDv4 string"] } };
+      return failure(400, "invalid_payload", ["observed_session_id must be a lowercase UUIDv4 string"]);
     }
     const contentErrors = findContentBearingFields(input);
-    if (contentErrors.length > 0) return { status: 400, body: { error: "content_not_allowed", details: contentErrors } };
+    if (contentErrors.length > 0) return failure(400, "content_not_allowed", contentErrors);
 
     const parsed = parseCheckpointInput(input);
-    if (!parsed.ok) return { status: 400, body: { error: "invalid_payload", details: parsed.errors } };
+    if (!parsed.ok) return failure(400, "invalid_payload", parsed.errors);
 
     const observedToken = parsed.token ?? generateObservedToken();
     const observedAt = now().toISOString();
@@ -140,18 +142,14 @@ export function createIngestApi(options: IngestApiOptions) {
   }
 
   async function postRecord(input: unknown): Promise<ApiResult<IngestRecordResponse>> {
+    const contentErrors = findContentBearingFields(input);
+    if (contentErrors.length > 0) return failure(400, "content_not_allowed", contentErrors);
+
     const parse = parseIngestInput(input);
-    if (!parse.ok) return { status: 400, body: { error: "invalid_record", details: parse.errors } };
+    if (!parse.ok) return failure(400, "invalid_record", parse.errors);
 
     const manifestFieldErrors = validatePublicManifestFields(parse.record.manifest);
-    if (manifestFieldErrors.length > 0) {
-      return { status: 400, body: { error: "invalid_manifest", details: manifestFieldErrors } };
-    }
-
-    const contentErrors = findContentBearingFields(input);
-    if (contentErrors.length > 0) {
-      return { status: 400, body: { error: "content_not_allowed", details: contentErrors } };
-    }
+    if (manifestFieldErrors.length > 0) return failure(400, "invalid_manifest", manifestFieldErrors);
 
     const stampedRecord: WritingRecord = {
       manifest: {
@@ -162,8 +160,11 @@ export function createIngestApi(options: IngestApiOptions) {
     };
 
     const verification = verifyRecord(stampedRecord);
-    if (!verification.valid) {
-      return { status: 400, body: { error: "verification_failed", details: verification.errors } };
+    if (!verification.valid) return failure(400, "verification_failed", verification.errors);
+
+    const parentRecord = stampedRecord.manifest.parent_record;
+    if (parentRecord && !(await options.store.findByRecordHash(parentRecord))) {
+      return failure(400, "invalid_manifest", ["parent_record does not refer to a stored record"]);
     }
 
     let observation: RecordObservation | undefined;
@@ -225,7 +226,7 @@ export function createIngestApi(options: IngestApiOptions) {
     computedChain: B3Hash[] | undefined,
   ): Promise<BoundRecordObservation | ApiFailure> {
     const bindingErrors = validateObservationBinding(observation);
-    if (bindingErrors.length > 0) return { status: 400, body: { error: "invalid_payload", details: bindingErrors } };
+    if (bindingErrors.length > 0) return failure(400, "invalid_payload", bindingErrors);
 
     let session;
     try {
@@ -305,7 +306,9 @@ export function createIngestApi(options: IngestApiOptions) {
     const checkpointMatch = url.pathname.match(/^\/api\/observed-sessions\/([^/]+)\/checkpoints$/);
     if (request.method === "POST" && checkpointMatch) {
       const body = await request.json().catch(() => undefined);
-      return jsonResponse(await postObservedCheckpoint(decodeURIComponent(checkpointMatch[1] as string), body));
+      const observedSessionId = decodePathSegment(checkpointMatch[1] as string);
+      if (observedSessionId === null) return jsonResponse(failure(400, "invalid_payload", ["observed_session_id is not valid percent-encoding"]));
+      return jsonResponse(await postObservedCheckpoint(observedSessionId, body));
     }
     if (request.method === "POST" && url.pathname === "/api/records") {
       const body = await request.json().catch(() => undefined);
@@ -313,7 +316,9 @@ export function createIngestApi(options: IngestApiOptions) {
     }
     const match = url.pathname.match(/^\/api\/records\/(.+)$/);
     if (request.method === "GET" && match) {
-      return jsonResponse(await getRecord(decodeURIComponent(match[1] as string)));
+      const id = decodePathSegment(match[1] as string);
+      if (id === null) return jsonResponse({ status: 404, body: { error: "record_not_found" } });
+      return jsonResponse(await getRecord(id));
     }
     return jsonResponse({ status: 404, body: { error: "not_found" } });
   }
@@ -433,7 +438,7 @@ function validateObservationBinding(observation: Extract<ObservationBindingReque
   const unexpected = Object.keys(observation).filter((key) => key !== "observed_session_id" && key !== "token");
   errors.push(...unexpected.map((key) => `unexpected observation field ${key}`));
   if (typeof observation.observed_session_id !== "string" || !isUuid(observation.observed_session_id)) {
-    errors.push("observed_session_id must be a UUIDv4 string");
+    errors.push("observed_session_id must be a lowercase UUIDv4 string");
   }
   if (typeof observation.token !== "string" || observation.token.length < 32) {
     errors.push("token must be a bearer token string");
@@ -470,26 +475,43 @@ function validatePublicManifestFields(manifest: unknown): string[] {
     .map((key) => `manifest contains unexpected public field ${key}`);
 }
 
+const CONTENT_BEARING_KEYS = new Set(["text", "plaintext", "content", "ins_text", "ins_hash", "final_text", "final_text_hash", "final_text_length"]);
+
 function findContentBearingFields(input: unknown): string[] {
   const errors: string[] = [];
-  visit(input, "$", (path, key) => {
-    if (["text", "plaintext", "content", "ins_text", "ins_hash", "final_text", "final_text_hash", "final_text_length"].includes(key)) {
-      errors.push(`${path} is not allowed in public content-blind records`);
+  const pending: Array<{ value: unknown; path: string; depth: number }> = [{ value: input, path: "$", depth: 0 }];
+  while (pending.length > 0) {
+    const { value, path, depth } = pending.pop() as { value: unknown; path: string; depth: number };
+    if (depth > MAX_PAYLOAD_DEPTH) {
+      return [`${path} is nested deeper than ${MAX_PAYLOAD_DEPTH} levels`];
     }
-  });
+    if (Array.isArray(value)) {
+      value.forEach((item, index) => pending.push({ value: item, path: `${path}[${index}]`, depth: depth + 1 }));
+      continue;
+    }
+    if (!isPlainObject(value)) continue;
+    for (const [key, child] of Object.entries(value)) {
+      const childPath = `${path}.${key}`;
+      if (CONTENT_BEARING_KEYS.has(key)) errors.push(`${childPath} is not allowed in public content-blind records`);
+      pending.push({ value: child, path: childPath, depth: depth + 1 });
+    }
+  }
   return errors;
 }
 
-function visit(value: unknown, path: string, onKey: (path: string, key: string) => void): void {
-  if (Array.isArray(value)) {
-    value.forEach((item, index) => visit(item, `${path}[${index}]`, onKey));
-    return;
-  }
-  if (!isPlainObject(value)) return;
-  for (const [key, child] of Object.entries(value)) {
-    const childPath = `${path}.${key}`;
-    onKey(childPath, key);
-    visit(child, childPath, onKey);
+function failure(status: number, error: string, details: string[]): ApiFailure {
+  if (details.length <= MAX_ERROR_DETAILS) return { status, body: { error, details } };
+  return {
+    status,
+    body: { error, details: [...details.slice(0, MAX_ERROR_DETAILS), `…and ${details.length - MAX_ERROR_DETAILS} more`] },
+  };
+}
+
+function decodePathSegment(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
   }
 }
 
@@ -566,5 +588,5 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isUuid(value: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
 }

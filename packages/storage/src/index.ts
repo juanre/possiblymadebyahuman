@@ -1,4 +1,4 @@
-import { computeEventHashChain, type B3Hash, type EventLog, type JsonValue, type RecordManifest, type Signal, type WritingRecord } from "../../format/src/index.ts";
+import { computeEventHashChain, type Attestation, type B3Hash, type CaptureContext, type EventLog, type RecordManifest, type Signal, type WritingRecord } from "../../format/src/index.ts";
 
 export type RecordStats = {
   record_hash: B3Hash;
@@ -726,14 +726,14 @@ type RecordRow = Record<string, unknown> & {
   producer_id: string;
   producer_version: string;
   producer_capabilities: string[];
-  capture_context: Record<string, JsonValue> | null;
+  capture_context: CaptureContext | null;
   text_binding: RecordManifest["text_binding"] | null;
   event_count: number;
   duration_ms: number;
   created_client_t: string | null;
   ingested_server_t: string;
   parent_record_hash: B3Hash | null;
-  attestations: Array<{ type: string; [key: string]: JsonValue | undefined }>;
+  attestations: Attestation[];
   events: EventLog;
   created_at: string;
   record_observation_state?: string | null;

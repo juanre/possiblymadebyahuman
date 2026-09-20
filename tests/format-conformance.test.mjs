@@ -241,5 +241,10 @@ test("manifest validation requires UUIDv4 session ids", async () => {
     ...golden.record.manifest,
     session_id: "123e4567-e89b-12d3-a456-426614174000",
   });
-  assert.ok(errors.some((error) => error.includes("session_id must be a UUIDv4 string")));
+  assert.ok(errors.some((error) => error.includes("session_id must be a lowercase UUIDv4 string")));
+  const uppercase = validateManifest({
+    ...golden.record.manifest,
+    session_id: golden.record.manifest.session_id.toUpperCase(),
+  });
+  assert.ok(uppercase.some((error) => error.includes("session_id must be a lowercase UUIDv4 string")));
 });
