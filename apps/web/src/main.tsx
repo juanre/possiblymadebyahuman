@@ -38,7 +38,7 @@ function App() {
       <main className="page-shell">
         <p className="eyebrow"><a className="eyebrow-home" href="/">← possiblymadebyahuman</a></p>
         <h1>No record at this address</h1>
-        <p>No writing record exists at <code>/{slug}</code>. Check the link you were given: a record is addressed by the short signature in its URL.</p>
+        <p>No writing record exists at <code>/{slug}</code>. Check the link you were given: a record is addressed by the short signature or full hash in its URL.</p>
         <p><a href="/">Go to the home page</a></p>
       </main>
     );

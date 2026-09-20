@@ -379,7 +379,7 @@ export function WritePage() {
 
     <footer className="write-modeline" aria-label="Drafting status">
       <span className="ml-left">
-        <span className="ml-status" data-state={uploaded ? "saved" : phase} aria-live="polite" aria-atomic="true">
+        <span className="ml-status" data-state={uploaded ? "saved" : phase}>
           {uploaded ? "saved" : phase}
         </span>
         {!uploaded ? <>

@@ -93,8 +93,8 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 // Chart geometry is in CSS pixels: the viewBox width follows the rendered
-// width of the SVG, so labels keep their size on a phone instead of shrinking
-// with a fixed 1200-unit canvas. The fallback width is used until measured.
+// width of the SVG, so one user unit is one pixel and labels keep their size
+// at any screen width. The fallback width is used until the SVG is measured.
 const TIMELINE_FALLBACK_W = 1200;
 const TIMELINE_VB_H = 220;
 const TIMELINE_PAD_L = 50;
