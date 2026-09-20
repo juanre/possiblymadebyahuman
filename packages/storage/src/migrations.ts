@@ -36,6 +36,9 @@ export type MigrationDatabase = MigrationQueryable & {
 
 // Arbitrary but fixed key so concurrent app instances serialize their startup migrations.
 export const MIGRATION_ADVISORY_LOCK_KEY = 7_162_824_871;
+// Waiting longer than this for another instance's migration run means it is stuck;
+// failing the start is better than a deploy that hangs.
+export const MIGRATION_LOCK_TIMEOUT = "30s";
 
 export class MigrationChecksumMismatchError extends Error {
   constructor(version: string, expected: string, actual: string) {
@@ -65,16 +68,22 @@ export async function loadSqlMigrations(migrationsDir: URL | string = DEFAULT_MI
     }));
 }
 
+/**
+ * Applies pending migrations in one transaction held under a transaction-scoped
+ * advisory lock. The connection may go through a pooler in transaction mode,
+ * which can spread statements outside a transaction across backends; a
+ * session-level lock could then be taken on one backend and never released.
+ * Everything, lock included, therefore lives inside the single transaction.
+ */
 export async function applyMigrations(db: MigrationDatabase, migrations: Migration[]): Promise<MigrationApplyResult> {
   const ordered = validateAndOrderMigrations(migrations);
   const client = db.connect ? await db.connect() : db;
   try {
-    await client.query("select pg_advisory_lock($1)", [MIGRATION_ADVISORY_LOCK_KEY]);
-    try {
-      return await applyOrderedMigrations(client, ordered);
-    } finally {
-      await client.query("select pg_advisory_unlock($1)", [MIGRATION_ADVISORY_LOCK_KEY]).catch(() => undefined);
-    }
+    return await withMigrationTransaction(client, async () => {
+      await client.query(`set local lock_timeout = '${MIGRATION_LOCK_TIMEOUT}'`);
+      await client.query("select pg_advisory_xact_lock($1)", [MIGRATION_ADVISORY_LOCK_KEY]);
+      return applyOrderedMigrations(client, ordered);
+    });
   } finally {
     if ("release" in client) client.release?.();
   }
@@ -104,13 +113,11 @@ async function applyOrderedMigrations(client: MigrationQueryable, ordered: Migra
       continue;
     }
 
-    await withMigrationTransaction(client, async () => {
-      await client.query(migration.sql);
-      await client.query(
-        "insert into schema_migrations (version, name, checksum) values ($1, $2, $3)",
-        [migration.version, migration.name, checksum],
-      );
-    });
+    await client.query(migration.sql);
+    await client.query(
+      "insert into schema_migrations (version, name, checksum) values ($1, $2, $3)",
+      [migration.version, migration.name, checksum],
+    );
     result.applied.push({ version: migration.version, name: migration.name, checksum });
   }
 

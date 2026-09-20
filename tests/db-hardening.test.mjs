@@ -384,7 +384,7 @@ function migrationDb() {
   };
 }
 
-test("migration manager runs the whole migration set on one advisory-locked connection", async () => {
+test("migration manager runs the whole migration set in one transaction under a transaction-scoped advisory lock", async () => {
   const clientQueries = [];
   const poolQueries = [];
   let releaseCount = 0;
@@ -400,10 +400,20 @@ test("migration manager runs the whole migration set on one advisory-locked conn
 
   await applyMigrations(db, [{ version: "001", name: "001_first", sql: "create table if not exists first(id integer);" }]);
 
-  assert.match(clientQueries[0], /pg_advisory_lock/);
-  assert.match(clientQueries.at(-1), /pg_advisory_unlock/);
+  // A pooled connection in transaction mode may route statements outside a
+  // transaction to different backends, so the lock must be transaction-scoped
+  // and everything must happen inside that one transaction.
+  assert.equal(clientQueries[0], "begin");
+  const lockIndex = clientQueries.findIndex((sql) => /pg_advisory_xact_lock/.test(sql));
+  const firstSchemaIndex = clientQueries.findIndex((sql) => /schema_migrations/i.test(sql));
+  assert.ok(lockIndex > 0, "the transaction-scoped lock is taken");
+  assert.ok(lockIndex < firstSchemaIndex, "the lock is taken before touching schema_migrations");
+  assert.equal(clientQueries.at(-1), "commit");
+  assert.equal(clientQueries.filter((sql) => sql === "begin").length, 1, "one transaction for the whole run");
+  assert.ok(clientQueries.some((sql) => /lock_timeout/i.test(sql)), "a hung lock fails instead of blocking startup forever");
   assert.ok(clientQueries.some((sql) => /create table if not exists schema_migrations/i.test(sql)));
   assert.ok(clientQueries.some((sql) => /insert into schema_migrations/i.test(sql)));
+  assert.ok(!clientQueries.some((sql) => /pg_advisory_unlock|pg_advisory_lock\(/.test(sql)));
   assert.deepEqual(poolQueries, []);
   assert.equal(releaseCount, 1);
 });
@@ -424,8 +434,8 @@ test("migration manager releases the advisory lock when a migration fails", asyn
     async query() { return { rows: [] }; },
   };
   await assert.rejects(applyMigrations(db, [{ version: "001", name: "001_broken", sql: "create table broken(id integer);" }]), /boom/);
-  assert.match(clientQueries.at(-1), /pg_advisory_unlock/);
-  assert.ok(clientQueries.includes("rollback"));
+  assert.equal(clientQueries.at(-1), "rollback");
+  assert.ok(!clientQueries.includes("commit"));
 });
 
 test("runtime server serves site root files with their media types and redirects /docs to /docs/", async () => {
