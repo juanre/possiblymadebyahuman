@@ -56,6 +56,11 @@ export function buildTimelinePoints(events: BufferMutation[]): TimelinePoint[] {
   });
 }
 
+export function timelineLengthScale(points: TimelinePoint[], observedFinalLength: number | null): number {
+  const largestKnown = points.reduce((largest, point) => Math.max(largest, point.documentLength ?? 0), 0);
+  return Math.max(1, largestKnown, observedFinalLength ?? 0);
+}
+
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const seconds = ms / 1000;

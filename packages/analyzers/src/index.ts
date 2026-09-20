@@ -146,7 +146,7 @@ export function editTopologyAnalyzer(
       const deletionEvents = sizeKnownEvents.filter((event) => event.del_len > 0);
       const insertedCodepoints = sum(sizeKnownEvents.map((event) => event.ins_len));
       const deletedCodepoints = sum(sizeKnownEvents.map((event) => event.del_len));
-      const largestAtomicInsert = Math.max(0, ...sizeKnownEvents.map((event) => event.ins_len));
+      const largestAtomicInsert = sizeKnownEvents.reduce((largest, event) => Math.max(largest, event.ins_len), 0);
       const replaceCount = events.filter((event) => event.op === "replace").length;
       const interleaveRatio = sizeKnownEvents.length === 0 ? 0 : round(smallEditCount / sizeKnownEvents.length, 4);
       const deletedCodepointRatio = insertedCodepoints === 0 ? 0 : round(deletedCodepoints / insertedCodepoints, 4);

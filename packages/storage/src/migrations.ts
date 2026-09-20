@@ -34,6 +34,9 @@ export type MigrationDatabase = MigrationQueryable & {
   connect?: () => Promise<MigrationClient>;
 };
 
+// Arbitrary but fixed key so concurrent app instances serialize their startup migrations.
+export const MIGRATION_ADVISORY_LOCK_KEY = 7_162_824_871;
+
 export class MigrationChecksumMismatchError extends Error {
   constructor(version: string, expected: string, actual: string) {
     super(`migration ${version} checksum mismatch: stored ${actual}, current ${expected}`);
@@ -64,9 +67,23 @@ export async function loadSqlMigrations(migrationsDir: URL | string = DEFAULT_MI
 
 export async function applyMigrations(db: MigrationDatabase, migrations: Migration[]): Promise<MigrationApplyResult> {
   const ordered = validateAndOrderMigrations(migrations);
-  await ensureSchemaMigrationsTable(db);
+  const client = db.connect ? await db.connect() : db;
+  try {
+    await client.query("select pg_advisory_lock($1)", [MIGRATION_ADVISORY_LOCK_KEY]);
+    try {
+      return await applyOrderedMigrations(client, ordered);
+    } finally {
+      await client.query("select pg_advisory_unlock($1)", [MIGRATION_ADVISORY_LOCK_KEY]).catch(() => undefined);
+    }
+  } finally {
+    if ("release" in client) client.release?.();
+  }
+}
 
-  const existing = await db.query<AppliedMigration>(
+async function applyOrderedMigrations(client: MigrationQueryable, ordered: Migration[]): Promise<MigrationApplyResult> {
+  await ensureSchemaMigrationsTable(client);
+
+  const existing = await client.query<AppliedMigration>(
     "select version, name, checksum from schema_migrations order by version",
   );
   const byVersion = new Map(existing.rows.map((row) => [row.version, row]));
@@ -87,7 +104,7 @@ export async function applyMigrations(db: MigrationDatabase, migrations: Migrati
       continue;
     }
 
-    await withMigrationTransaction(db, async (client) => {
+    await withMigrationTransaction(client, async () => {
       await client.query(migration.sql);
       await client.query(
         "insert into schema_migrations (version, name, checksum) values ($1, $2, $3)",
@@ -127,17 +144,14 @@ function validateAndOrderMigrations(migrations: Migration[]): Migration[] {
   return ordered;
 }
 
-async function withMigrationTransaction<T>(db: MigrationDatabase, fn: (client: MigrationQueryable) => Promise<T>): Promise<T> {
-  const client = db.connect ? await db.connect() : db;
+async function withMigrationTransaction<T>(client: MigrationQueryable, fn: () => Promise<T>): Promise<T> {
   try {
     await client.query("begin");
-    const value = await fn(client);
+    const value = await fn();
     await client.query("commit");
     return value;
   } catch (error) {
     await client.query("rollback").catch(() => undefined);
     throw error;
-  } finally {
-    if ("release" in client) client.release?.();
   }
 }

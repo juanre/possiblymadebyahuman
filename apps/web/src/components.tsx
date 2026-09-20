@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
+import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
 import type { RecordApiResponse } from "./types.ts";
 
 export function DisclaimerBanner() {
@@ -120,8 +120,7 @@ function formatTimelineTick(seconds: number): string {
 
 export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
-  const knownLengths = points.map((point) => point.documentLength).filter((length): length is number => length !== null);
-  const maxLength = Math.max(1, ...knownLengths, record.stats.observed_final_length ?? 0);
+  const maxLength = timelineLengthScale(points, record.stats.observed_final_length);
   const observedDurationMs = record.manifest.duration_ms || (points.length > 0 ? points[points.length - 1]!.t : 0);
   const duration = Math.max(1, observedDurationMs);
   const plotW = TIMELINE_VB_W - TIMELINE_PAD_L - TIMELINE_PAD_R;

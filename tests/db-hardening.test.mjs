@@ -373,15 +373,98 @@ function migrationDb() {
       if (/insert into schema_migrations/i.test(sql)) {
         rows.push({ version: params[0], name: params[1], checksum: params[2] });
       }
+      if (/select version, name, checksum from schema_migrations/i.test(sql)) return { rows: [...rows].sort((a, b) => a.version.localeCompare(b.version)) };
       return { rows: [] };
     },
     release() {},
   };
   return {
     async connect() { return client; },
-    async query(sql) {
-      if (/select version, name, checksum from schema_migrations/i.test(sql)) return { rows: [...rows].sort((a, b) => a.version.localeCompare(b.version)) };
-      return { rows: [] };
-    },
+    async query() { return { rows: [] }; },
   };
 }
+
+test("migration manager runs the whole migration set on one advisory-locked connection", async () => {
+  const clientQueries = [];
+  const poolQueries = [];
+  let releaseCount = 0;
+  const db = {
+    async connect() {
+      return {
+        async query(sql) { clientQueries.push(sql.trim()); return { rows: [] }; },
+        release() { releaseCount += 1; },
+      };
+    },
+    async query(sql) { poolQueries.push(sql); return { rows: [] }; },
+  };
+
+  await applyMigrations(db, [{ version: "001", name: "001_first", sql: "create table if not exists first(id integer);" }]);
+
+  assert.match(clientQueries[0], /pg_advisory_lock/);
+  assert.match(clientQueries.at(-1), /pg_advisory_unlock/);
+  assert.ok(clientQueries.some((sql) => /create table if not exists schema_migrations/i.test(sql)));
+  assert.ok(clientQueries.some((sql) => /insert into schema_migrations/i.test(sql)));
+  assert.deepEqual(poolQueries, []);
+  assert.equal(releaseCount, 1);
+});
+
+test("migration manager releases the advisory lock when a migration fails", async () => {
+  const clientQueries = [];
+  const db = {
+    async connect() {
+      return {
+        async query(sql) {
+          clientQueries.push(sql.trim());
+          if (/create table broken/i.test(sql)) throw new Error("boom");
+          return { rows: [] };
+        },
+        release() {},
+      };
+    },
+    async query() { return { rows: [] }; },
+  };
+  await assert.rejects(applyMigrations(db, [{ version: "001", name: "001_broken", sql: "create table broken(id integer);" }]), /boom/);
+  assert.match(clientQueries.at(-1), /pg_advisory_unlock/);
+  assert.ok(clientQueries.includes("rollback"));
+});
+
+test("runtime server serves site root files with their media types and redirects /docs to /docs/", async () => {
+  const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await mkdtemp(join(tmpdir(), "pmbah-server-"));
+  const siteDir = join(root, "site");
+  const webDir = join(root, "web");
+  await mkdir(join(siteDir, "docs"), { recursive: true });
+  await mkdir(webDir, { recursive: true });
+  await writeFile(join(siteDir, "robots.txt"), "User-agent: *\n");
+  await writeFile(join(siteDir, "sitemap.xml"), "<urlset/>");
+  await writeFile(join(siteDir, "site.webmanifest"), "{}");
+  await writeFile(join(siteDir, "docs", "index.html"), "<h1>docs</h1>");
+  await writeFile(join(webDir, "index.html"), "<div id=root></div>");
+
+  const server = createRuntimeServer({
+    api: { handleRequest: async () => new Response("{}", { status: 200 }) },
+    db: { async query() { return { rows: [] }; } },
+    siteDistDir: siteDir,
+    webDistDir: webDir,
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    const get = (path) => fetch(`http://127.0.0.1:${port}${path}`, { redirect: "manual" });
+
+    assert.match((await get("/robots.txt")).headers.get("content-type"), /^text\/plain/);
+    assert.match((await get("/sitemap.xml")).headers.get("content-type"), /^application\/xml/);
+    assert.match((await get("/site.webmanifest")).headers.get("content-type"), /^application\/manifest\+json/);
+
+    const docsNoSlash = await get("/docs");
+    assert.equal(docsNoSlash.status, 301);
+    assert.equal(docsNoSlash.headers.get("location"), "/docs/");
+    const docs = await get("/docs/");
+    assert.equal(docs.status, 200);
+    assert.match(docs.headers.get("content-type"), /^text\/html/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

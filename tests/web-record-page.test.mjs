@@ -213,3 +213,13 @@ test("short bindings warn on every successful match, including whole/exact", () 
   const longSummary = describeBindingMatch(checkCandidateAgainstBinding(createTextBinding(LONG_DOC, BIND_SID), LONG_DOC, BIND_SID));
   assert.equal(longSummary.short, false);
 });
+
+test("timeline scale helper handles very long event logs and unknown lengths", async () => {
+  const { buildTimelinePoints, timelineLengthScale } = await import("../apps/web/src/record-utils.ts");
+  const events = Array.from({ length: 200_000 }, (_, seq) => ({
+    seq, t: seq * 10, op: "insert", pos: seq, del_len: 0, ins_len: 1, source: "typing",
+  }));
+  assert.equal(timelineLengthScale(buildTimelinePoints(events), events.length), 200_000);
+  assert.equal(timelineLengthScale(buildTimelinePoints(events), null), 200_000);
+  assert.equal(timelineLengthScale([], null), 1);
+});

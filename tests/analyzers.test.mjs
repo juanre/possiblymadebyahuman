@@ -184,3 +184,13 @@ test("runDefaultAnalyzers returns descriptive signals only", async () => {
     assert.match(signal.explanation, /./);
   }
 });
+
+test("edit-topology stays applicable on very long event logs", async () => {
+  const record = await goldenRecord();
+  const events = Array.from({ length: 200_000 }, (_, seq) => ({
+    seq, t: seq * 10, op: "insert", pos: seq, del_len: 0, ins_len: 1, source: "typing",
+  }));
+  const signal = editTopologyAnalyzer().analyze({ events, manifest: { ...record.manifest, event_count: events.length } });
+  assert.equal(signal.applicable, true);
+  assert.equal(measure(signal, "atomic_insert_max_len"), 1);
+});

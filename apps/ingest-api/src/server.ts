@@ -194,6 +194,13 @@ async function route(
     return;
   }
 
+  if (requestUrl.pathname === "/docs") {
+    res.statusCode = 301;
+    res.setHeader("location", "/docs/");
+    res.end();
+    return;
+  }
+
   if (requestUrl.pathname === "/" || requestUrl.pathname.startsWith("/docs/")) {
     const relative = requestUrl.pathname === "/" ? "index.html" : join(requestUrl.pathname.slice(1), "index.html");
     await serveStatic(res, options.siteDistDir ?? SITE_DIST_DIR, relative);
@@ -252,7 +259,13 @@ async function serveStatic(res: ServerResponse, root: string, relativePath: stri
     const info = await stat(path);
     if (!info.isFile()) throw new Error("not a file");
     res.setHeader("content-type", contentType(path));
-    createReadStream(path).pipe(res);
+    const stream = createReadStream(path);
+    stream.on("error", (error) => {
+      console.error(error);
+      if (!res.headersSent) json(res, 500, { error: "internal_server_error" });
+      else res.destroy();
+    });
+    stream.pipe(res);
   } catch {
     json(res, 404, { error: "not_found" });
   }
@@ -277,6 +290,9 @@ function contentType(path: string): string {
     case ".png": return "image/png";
     case ".gif": return "image/gif";
     case ".ico": return "image/x-icon";
+    case ".txt": return "text/plain; charset=utf-8";
+    case ".xml": return "application/xml; charset=utf-8";
+    case ".webmanifest": return "application/manifest+json";
     default: return "application/octet-stream";
   }
 }
