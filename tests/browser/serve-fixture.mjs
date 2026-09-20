@@ -164,6 +164,7 @@ const unknownEvents = [
 const unknownManifest = {
   ...record.manifest,
   format_version: "0.2",
+  parent_record: record.manifest.record_hash,
   capture_context: { surface: "emacs", label: "essay.md", emacs: { buffer_name: "essay.md", major_mode: "markdown-mode" } },
   event_count: unknownEvents.length,
   duration_ms: 400,

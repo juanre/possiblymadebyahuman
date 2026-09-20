@@ -99,13 +99,12 @@ export class BackgroundDispatcher {
       descriptor: message.descriptor,
       page_title: message.page_title,
     });
-    // A non-empty field whose session was already uploaded reopens that
-    // session: further edits extend the recorded process, as on /write.
-    if (!message.field_is_empty) {
-      const resumable = findResumableSession(origin, message.descriptor, this.registry.list());
-      if (resumable?.state === "uploaded") this.registry.reopen(resumable.session_id);
-    }
-    const session = this.registry.findOrCreate(origin, message.descriptor, capture);
+    // A non-empty field whose session was already uploaded gets a continuation
+    // session linked to that record; the signed session stays frozen.
+    const resumable = message.field_is_empty ? null : findResumableSession(origin, message.descriptor, this.registry.list());
+    const session = resumable?.state === "uploaded"
+      ? this.registry.continueFrom(resumable.session_id, { origin, descriptor: message.descriptor })
+      : this.registry.findOrCreate(origin, message.descriptor, capture);
     void this.registry.persist();
     return {
       kind: "register_field_result",
@@ -121,11 +120,13 @@ export class BackgroundDispatcher {
     try {
       this.registry.appendMutation(message.session_id, message.mutation);
     } catch (error) {
-      // Editing a field after its session was signed and uploaded continues the
-      // same session, so the next signature covers the whole writing process.
+      // Editing a field after its session was signed and uploaded starts a
+      // continuation session that names the uploaded record as its parent.
       if (!(error instanceof SessionFrozenError) || error.state !== "uploaded") throw error;
-      this.registry.reopen(message.session_id);
-      this.registry.appendMutation(message.session_id, message.mutation);
+      const continuation = this.registry.continueFrom(message.session_id);
+      this.registry.appendMutation(continuation.session_id, message.mutation);
+      void this.registry.persist();
+      return { kind: "append_mutation_result", session_id: continuation.session_id };
     }
     void this.registry.persist();
     return { kind: "append_mutation_result" };

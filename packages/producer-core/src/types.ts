@@ -125,6 +125,9 @@ export type SessionRecord = {
   // The content-blind binding sealed at the last sign attempt, kept so a failed
   // upload can be retried with the same record. Never the text.
   signed_text_binding?: TextBinding;
+  // The record this session continues from: set when a field is edited again
+  // after its previous session was signed and uploaded.
+  parent_record?: B3Hash | null;
   observation: SessionObservation;
 };
 

@@ -244,7 +244,7 @@ export class SessionRegistry {
       duration_ms: durationMs(events),
       created_client_t: new Date(record.base_wall_ms).toISOString(),
       ingested_server_t: null,
-      parent_record: null,
+      parent_record: record.parent_record ?? null,
       attestations,
     };
 
@@ -282,6 +282,41 @@ export class SessionRegistry {
     const record = this.#requireInState(session_id, ["uploading", "signing"]);
     record.state = "failed_upload";
     record.last_failure_reason = reason;
+  }
+
+  /**
+   * Starts a new session for a field whose previous session was signed and
+   * uploaded. The signed session stays frozen with its link; the new session
+   * records only the further edits and names the uploaded record as its
+   * parent, so a later signature says which record it continues from.
+   */
+  continueFrom(
+    session_id: SessionId,
+    location: { origin?: FieldOrigin; descriptor?: FieldDescriptor } = {},
+  ): SessionRecord {
+    const previous = this.#requireInState(session_id, ["uploaded"]);
+    if (!previous.uploaded_response) {
+      throw new Error(`uploaded session ${session_id} has no upload response to continue from`);
+    }
+    const now = this.#clock.now();
+    const record: SessionRecord = {
+      session_id: this.#uuid.uuid(),
+      format_version: FORMAT_VERSION,
+      base_wall_ms: now,
+      last_edit_wall_ms: now,
+      origin: { ...(location.origin ?? previous.origin) },
+      descriptor: { ...(location.descriptor ?? previous.descriptor) },
+      identity_certainty: "resumed",
+      producer: { ...this.#producer, capabilities: [...this.#producer.capabilities] },
+      capture_context: JSON.parse(JSON.stringify(previous.capture_context)),
+      events: [],
+      last_event_chain_tip: null,
+      state: "active",
+      parent_record: previous.uploaded_response.record_hash,
+      observation: emptyObservation(this.#checkpoint !== null),
+    };
+    this.#sessions.set(record.session_id, record);
+    return cloneSession(record);
   }
 
   /**

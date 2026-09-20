@@ -675,10 +675,11 @@ test("content script handles compositions, dedupes listeners, and finishes colla
   assert.match(source, /listening\.has\(element\)/);
   assert.match(source, /collapsedDeletionMutation/);
   assert.match(source, /netLengthChangeMutation/);
+  assert.match(source, /response\.session_id/, "content script switches to the continuation session id");
 });
 
-test("dispatcher: editing after upload reopens the session instead of erroring", async () => {
-  const { dispatcher } = makeDispatcher();
+test("dispatcher: editing after upload starts a continuation session linked to the signed record", async () => {
+  const { dispatcher, upload } = makeDispatcher();
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
@@ -691,14 +692,28 @@ test("dispatcher: editing after upload reopens the session instead of erroring",
   await dispatcher.handle({ kind: "sign_session", session_id: sid });
   assert.equal(dispatcher.registry.get(sid).state, "uploaded");
 
+  const uploadedHash = dispatcher.registry.get(sid).uploaded_response.record_hash;
   const append = await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" } });
   assert.equal(append.kind, "append_mutation_result");
-  const live = dispatcher.registry.get(sid);
-  assert.equal(live.state, "active");
-  assert.equal(live.events.length, 2, "the earlier events stay part of the session");
+  assert.ok(append.session_id && append.session_id !== sid, "the content script is told which session now records the field");
+  const signed = dispatcher.registry.get(sid);
+  assert.equal(signed.state, "uploaded", "the signed session stays frozen with its link");
+  assert.equal(signed.events.length, 1);
+  const continuation = dispatcher.registry.get(append.session_id);
+  assert.equal(continuation.state, "active");
+  assert.equal(continuation.events.length, 1, "the continuation holds only the new edit");
+  assert.equal(continuation.parent_record, uploadedHash);
+  assert.deepEqual(continuation.capture_context, signed.capture_context);
+
+  await dispatcher.registry.awaitObservationIdle(append.session_id);
+  const second = await dispatcher.handle({ kind: "sign_session", session_id: append.session_id });
+  assert.equal(second.result.kind, "uploaded");
+  const manifest = upload.calls.at(-1).manifest;
+  assert.equal(manifest.parent_record, uploadedHash);
+  assert.equal(verifyRecord({ manifest, events: upload.calls.at(-1).events }).valid, true);
 });
 
-test("dispatcher: a non-empty field whose session was uploaded is resumable and reopens", async () => {
+test("dispatcher: a non-empty field whose session was uploaded registers a continuation of it", async () => {
   const { dispatcher } = makeDispatcher();
   const reg = await dispatcher.handle({
     kind: "register_field",
@@ -718,10 +733,13 @@ test("dispatcher: a non-empty field whose session was uploaded is resumable and 
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false,
   });
   assert.equal(again.result.kind, "registered");
-  assert.equal(again.result.session_id, sid);
-  const live = dispatcher.registry.get(sid);
-  assert.equal(live.state, "active");
-  assert.equal(live.origin.tab_id, 7, "resuming records the tab the field now lives in");
+  assert.notEqual(again.result.session_id, sid);
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+  const continuation = dispatcher.registry.get(again.result.session_id);
+  assert.equal(continuation.state, "active");
+  assert.equal(continuation.parent_record, dispatcher.registry.get(sid).uploaded_response.record_hash);
+  assert.equal(continuation.origin.tab_id, 7, "the continuation records the tab the field now lives in");
+  assert.equal(continuation.identity_certainty, "resumed");
 });
 
 test("dispatcher: expired sessions are swept when the worker initialises and when a field registers", async () => {

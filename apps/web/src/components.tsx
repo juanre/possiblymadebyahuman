@@ -399,6 +399,9 @@ export function ManifestDetails({ record, computedRecordHash }: { record: Record
     <dl className="details mono">
       <dt>Full record hash</dt><dd>{manifest.record_hash}</dd>
       {computedRecordHash && <><dt>Computed hash</dt><dd>{computedRecordHash}</dd></>}
+      {manifest.parent_record && (
+        <><dt>Continues from</dt><dd><a className="parent-record-link" href={`/${manifest.parent_record}`}>{manifest.parent_record}</a></dd></>
+      )}
       <dt>Producer</dt><dd>{manifest.producer.id} v{manifest.producer.version}</dd>
       <dt>Capabilities</dt><dd>{manifest.producer.capabilities.join(", ") || "none declared"}</dd>
       <dt>Server metadata</dt><dd>{manifest.ingested_server_t ? "ingestion time present" : "client-claimed time only"}</dd>

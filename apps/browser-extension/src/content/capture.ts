@@ -402,6 +402,12 @@ async function sendMutation(entry: FieldEntry, mutation: PendingMutation): Promi
   if (response.kind === "error") {
     setBadge(entry.element, "error", response.reason);
     entry.state = "error";
+    return;
+  }
+  if (response.kind === "append_mutation_result" && response.session_id && response.session_id !== entry.session_id) {
+    entry.session_id = response.session_id;
+    entry.element.setAttribute(SESSION_ATTR, response.session_id);
+    setBadge(entry.element, "recording", "recording (continues a signed record)");
   }
 }
 

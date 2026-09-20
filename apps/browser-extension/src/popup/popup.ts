@@ -83,6 +83,12 @@ function renderSession(session: SessionRecord): HTMLElement {
   meta.className = "session-meta";
   meta.textContent = `${session.origin.path} · ${summary(session)}`;
   wrap.appendChild(meta);
+  if (session.parent_record) {
+    const parent = document.createElement("p");
+    parent.className = "session-meta";
+    parent.textContent = "continues a record you already signed in this field";
+    wrap.appendChild(parent);
+  }
 
   const actions = document.createElement("div");
   actions.className = "session-actions";

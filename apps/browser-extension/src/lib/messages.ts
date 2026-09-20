@@ -69,7 +69,9 @@ export type SignSessionResult =
 
 export type BackgroundResponse =
   | { kind: "register_field_result"; result: RegisterFieldResult }
-  | { kind: "append_mutation_result" }
+  // session_id is present when the edit started a continuation session and the
+  // content script must record further edits under that id.
+  | { kind: "append_mutation_result"; session_id?: SessionId }
   | { kind: "list_sessions_result"; sessions: SessionRecord[] }
   | { kind: "sign_session_result"; result: SignSessionResult }
   | { kind: "retry_result"; result: SignSessionResult }

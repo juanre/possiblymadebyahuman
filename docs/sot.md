@@ -825,13 +825,13 @@ Behavior:
 
 1. Capture passively and locally.
 2. User signs when they want a link.
-3. Signing freezes the session while it is signed and uploaded.
+3. Signing freezes the session.
 4. Extension computes the public process hash chain locally.
 5. Extension uploads content-free manifest/events.
 6. Backend returns short URL.
 7. Extension copies URL to clipboard.
-8. Local log is cleared shortly after successful upload unless the field is edited again.
-9. Further edits in the same field reopen the session, as on `/write`: the events are kept, and signing again produces a new record covering the whole writing process so far. A failed upload can be retried with the same signed record.
+8. Local log is cleared shortly after successful upload.
+9. Further edits in the same field start a new session whose `parent_record` names the uploaded record; the signed session stays frozen with its link. A failed upload can be retried with the same signed record. (`/write` differs: its canvas keeps the text on screen, so it reopens the same session and re-signs the whole process.)
 
 Unsigned local capture TTL:
 

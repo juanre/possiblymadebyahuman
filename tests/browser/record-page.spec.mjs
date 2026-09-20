@@ -175,6 +175,13 @@ test.describe("record with unknown document length", () => {
     const status = page.getByRole("region", { name: "Observation status" });
     await expect(status).toContainText("Not observed.");
   });
+
+  test("a continuation record links to the record it continues from", async ({ page }) => {
+    const panel = page.locator("section.card", { hasText: "Signature & details" });
+    await expect(panel).toContainText("Continues from");
+    const link = panel.locator("a.parent-record-link");
+    await expect(link).toHaveAttribute("href", /^\/b3:[0-9a-f]{64}$/);
+  });
 });
 
 test.describe("text binding — bound record", () => {
