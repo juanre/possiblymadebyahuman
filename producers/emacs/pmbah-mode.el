@@ -39,7 +39,8 @@ to use a local `make local-container` stack."
 (defcustom pmbah-node-command
   (or (getenv "PMBAH_NODE") "node")
   "Node.js executable used by the local record-building helper.
-The helper receives only process metadata and computes public process hashes."
+The helper receives process metadata and computes public process hashes.
+At signing it may also receive selected text transiently for the local binding."
   :type 'string
   :group 'pmbah)
 
@@ -166,8 +167,9 @@ one, so a late or duplicate result cannot touch a later attempt.")
   "Record this buffer's mutation history as a content-blind PMBAH session.
 
 The mode records buffer mutations, not physical keystrokes.  Uploaded records
-contain event shape and public process hashes only; plaintext is not stored,
-hashed, passed to the helper, or uploaded."
+contain event shape, public process hashes, and an optional text binding.
+Plaintext is never stored or uploaded. At signing, selected text may be
+passed transiently to the local helper solely to compute that binding."
   :lighter (:eval (pmbah--mode-line))
   (if pmbah-mode
       (condition-case error
@@ -251,7 +253,10 @@ hashed, passed to the helper, or uploaded."
     (pmbah--observation-reset)
     (setq pmbah--observation-token (plist-get observation :token)
           pmbah--observation-committed-count (or (plist-get observation :committed_event_count) 0)
-          pmbah--observation-commitments (plist-get observation :commitments))
+          pmbah--observation-commitments (plist-get observation :commitments)
+          pmbah--observation-last-failure (plist-get observation :last_failure))
+    (when (equal (plist-get observation :state) "diverged")
+      (setq pmbah--observation-state 'diverged))
     (pmbah--observation-recompute-state)))
 
 (defun pmbah--state-resume-blocker (state)
@@ -315,7 +320,9 @@ hashed, passed to the helper, or uploaded."
         :events (vconcat (pmbah--session-events))
         :chain_tip pmbah--chain-tip
         :chain_tip_event_count pmbah--chain-tip-event-count
-        :observation (list :token pmbah--observation-token
+        :observation (list :state (symbol-name pmbah--observation-state)
+                           :last_failure pmbah--observation-last-failure
+                           :token pmbah--observation-token
                            :committed_event_count pmbah--observation-committed-count
                            :commitments (vconcat pmbah--observation-commitments))))
 
@@ -553,8 +560,8 @@ tests."
                         (pmbah-review-capture-context))))
          (binding-has-region (use-region-p))
          (bind-prompt (if binding-has-region
-                          "Bind the selected region to this record? "
-                        "Bind the whole buffer to this record? "))
+                          "Anyone can test guesses against this public commitment. Bind the selected region? "
+                        "Anyone can test guesses against this public commitment. Bind the whole buffer? "))
          (bind (if no-prompts
                    t
                  (and (not noninteractive) (pmbah--y-or-n-p-default-yes bind-prompt))))
@@ -890,7 +897,7 @@ attempt the watchdog already failed, or delivered twice are dropped."
 Return (KIND HTTP-STATUS BODY-OR-REASON) where KIND is `ok', `unavailable',
 `conflict', `client_bug', `rate_limited', or `transient'."
   (let ((connection-error (plist-get status :error)))
-    (if connection-error
+    (if (and connection-error (not (integerp url-http-response-status)))
         (list 'transient 0 (error-message-string connection-error))
       (let ((http-status url-http-response-status))
         (goto-char (or url-http-end-of-headers (point-min)))
@@ -970,7 +977,8 @@ Return (KIND HTTP-STATUS BODY-OR-REASON) where KIND is `ok', `unavailable',
            (if (= pmbah--observation-backoff-ms 0)
                pmbah-observation-backoff-initial-ms
              (min pmbah-observation-backoff-max-ms (* 2 pmbah--observation-backoff-ms))))
-     (pmbah--observation-recompute-state))))
+     (pmbah--observation-recompute-state)))
+  (pmbah--write-state))
 
 (defun pmbah--observation-recompute-state ()
   "Derive `pmbah--observation-state' from committed and captured counts."

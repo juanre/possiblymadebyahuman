@@ -58,6 +58,7 @@ const fields = new WeakMap<HTMLElement, FieldEntry>();
 type MeasuredChangeKind = "deletion" | "net_change" | "replacement";
 
 type FieldTransient = {
+  pending: PendingMutation | null;
   measuring: { length_before: number; ins_len: number | null; kind: MeasuredChangeKind; source: Source } | null;
   composition: { pos: number | null; del_len: number | null } | null;
   queue: PendingMutation[];
@@ -69,7 +70,7 @@ const listening = new WeakSet<HTMLElement>();
 function transientFor(element: HTMLElement): FieldTransient {
   let transient = transients.get(element);
   if (!transient) {
-    transient = { measuring: null, composition: null, queue: [] };
+    transient = { pending: null, measuring: null, composition: null, queue: [] };
     transients.set(element, transient);
   }
   return transient;
@@ -258,6 +259,7 @@ function handleBeforeInput(event: InputEvent): void {
   // input event (a Backspace with nothing to delete, or the page cancelled it);
   // its stale measurement must not be applied to this change.
   transient.measuring = null;
+  transient.pending = null;
   // Composition keystrokes are recorded once, at compositionend.
   if (transient.composition) return;
   const inputType = event.inputType ?? null;
@@ -281,16 +283,16 @@ function handleBeforeInput(event: InputEvent): void {
       return;
     }
     if (insertedCodepoints === 0 && collapsed && !inputType) {
-      queueOrSend(entry, ambiguousMutation(insertedText, inputType));
+      transient.pending = ambiguousMutation(insertedText, inputType);
       return;
     }
-    queueOrSend(entry, buildTextFieldMutation({
+    transient.pending = buildTextFieldMutation({
       text: target.value,
       selectionStartUtf16: start,
       selectionEndUtf16: end,
       insertedText,
       inputType,
-    }));
+    });
     return;
   }
 
@@ -307,13 +309,13 @@ function handleBeforeInput(event: InputEvent): void {
     return;
   }
   const transferred = event.dataTransfer?.getData("text/plain") ?? null;
-  queueOrSend(entry, {
+  transient.pending = {
     op: "insert",
     pos: null,
     del_len: null,
     ins_len: contentEditableInsertedCodepoints(inputType, event.data, transferred),
     source: sourceFromInputType(inputType),
-  });
+  };
 }
 
 // Completes a mutation whose size was only measurable after the browser applied
@@ -324,7 +326,14 @@ function handleInput(event: Event): void {
   if (!target || !(target instanceof HTMLElement)) return;
   const entry = fields.get(target);
   const transient = transients.get(target);
-  if (!entry || !transient?.measuring) return;
+  if (!entry || !transient || transient.composition) return;
+  if (transient.pending) {
+    const mutation = transient.pending;
+    transient.pending = null;
+    queueOrSend(entry, mutation);
+    return;
+  }
+  if (!transient.measuring) return;
   const { length_before, ins_len, kind, source } = transient.measuring;
   transient.measuring = null;
 
@@ -431,7 +440,7 @@ function attachListeners(element: HTMLElement): void {
   element.addEventListener("input", handleInput);
   element.addEventListener("blur", () => {
     const transient = transients.get(element);
-    if (transient) transient.measuring = null;
+    if (transient) { transient.measuring = null; transient.pending = null; }
   });
   element.addEventListener("compositionstart", (event) => {
     handleCompositionStart(event as CompositionEvent);
@@ -442,6 +451,7 @@ function attachListeners(element: HTMLElement): void {
 }
 
 function scan(root: ParentNode): void {
+  if (root instanceof HTMLElement && isEligibleElement(root)) attachListeners(root);
   const fieldsList = root.querySelectorAll("textarea, input, [contenteditable]");
   for (const el of Array.from(fieldsList) as HTMLElement[]) {
     if (isEligibleElement(el)) attachListeners(el);

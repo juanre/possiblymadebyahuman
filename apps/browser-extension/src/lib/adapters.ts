@@ -73,7 +73,7 @@ export function createNavigatorClipboardAdapter(clipboard: NavigatorClipboardSli
   };
 }
 
-export type FetchLike = (input: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<unknown> }>;
+export type FetchLike = (input: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<unknown> }>;
 
 export function createFetchUploadAdapter(args: { records_endpoint: string; fetch: FetchLike }): UploadAdapter {
   return {
@@ -113,7 +113,7 @@ function ingestErrorCode(text: string): string | null {
 
 export function createFetchCheckpointAdapter(args: { base_url: string; fetch: FetchLike }): CheckpointAdapter {
   return {
-    async postCheckpoint(request: CheckpointRequest): Promise<CheckpointResult> {
+    async postCheckpoint(request: CheckpointRequest, signal?: AbortSignal): Promise<CheckpointResult> {
       const body: Record<string, unknown> = {
         event_count: request.event_count,
         chain_tip: request.chain_tip,
@@ -127,6 +127,7 @@ export function createFetchCheckpointAdapter(args: { base_url: string; fetch: Fe
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify(body),
+          signal,
         });
       } catch (error) {
         return {

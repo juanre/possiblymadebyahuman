@@ -89,3 +89,24 @@ test.describe("extension content script in a real page", () => {
     ]);
   });
 });
+
+test("directly appended textarea is captured, and cancelled edits emit no mutation", async ({ page }) => {
+  await page.goto("/extension-harness");
+  await page.evaluate(() => {
+    const field = document.createElement("textarea");
+    field.setAttribute("aria-label", "dynamic field");
+    document.body.append(field);
+  });
+  const field = page.getByLabel("dynamic field");
+  await field.focus();
+  await expect(page.locator("[data-pmbah-state='recording']")).toHaveCount(1);
+  await field.evaluate((element) => {
+    element.addEventListener("beforeinput", (event) => event.preventDefault(), { once: true });
+  });
+  await page.keyboard.type("x");
+  await expect(field).toHaveValue("");
+  expect(await mutations(page)).toEqual([]);
+  await page.keyboard.type("y");
+  await expect.poll(async () => (await mutations(page)).length).toBe(1);
+  expect((await mutations(page))[0]).toMatchObject({ op: "insert", pos: 0, ins_len: 1 });
+});

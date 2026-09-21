@@ -13,10 +13,8 @@ export function DisclaimerBanner() {
   );
 }
 
-// Begin/end of the writing. When the server observed checkpoints, that window
-// is the trusted answer. Otherwise we anchor on the trusted server upload time
-// (ingested_server_t) as the end and subtract the recorded duration for the
-// begin — consistent across producers and never claiming more than it knows.
+// Prefer checkpoint receipt times. Without them, show the upload time and an
+// explicitly inferred start based on the producer's claimed duration.
 function recordTimingWindow(record: RecordApiResponse): { began: string; ended: string; estimated: boolean } | null {
   const observation = record.observation;
   if (observation.first_observed_at && observation.last_observed_at) {
@@ -39,8 +37,8 @@ export function CaptureContextSummary({ record }: { record: RecordApiResponse })
   const timing = recordTimingWindow(record);
   const timingRows = timing ? (
     <>
-      <dt>{timing.estimated ? "Began (estimated)" : "Began"}</dt><dd><UtcInstant iso={timing.began} /></dd>
-      <dt>{timing.estimated ? "Ended (upload)" : "Ended"}</dt><dd><UtcInstant iso={timing.ended} /></dd>
+      <dt>{timing.estimated ? "Start inferred from upload and claimed duration" : "First checkpoint received"}</dt><dd><UtcInstant iso={timing.began} /></dd>
+      <dt>{timing.estimated ? "Uploaded" : "Last checkpoint received"}</dt><dd><UtcInstant iso={timing.ended} /></dd>
     </>
   ) : null;
   if (!context) {
@@ -279,7 +277,7 @@ const MEASURE_DEFINITIONS: Record<string, string> = {
   inter_event_delay_p95_ms: "95th-percentile time between consecutive edits.",
   inter_event_delay_max_ms: "Longest gap between consecutive edits.",
   long_pause_count: "Number of gaps of 30 seconds or more.",
-  active_time_ms: "Total time spent actively editing: the sum of gaps shorter than 30 seconds.",
+  active_time_ms: "Sum of gaps shorter than 30 seconds between recorded edits. Time before the first edit and after the last is excluded.",
   idle_time_ms: "Total time paused: the sum of gaps of 30 seconds or more.",
   small_edit_count: "Edits that inserted or deleted only a few codepoints.",
   atomic_insert_max_len: "Largest amount of text inserted in a single edit (e.g. a paste).",
@@ -422,7 +420,7 @@ function ChainStatus({ verification }: { verification: VerificationState }) {
   if (verification.ok) {
     return (
       <p className="chain-status ok" role="status">
-        <strong>Hash chain recomputed in your browser.</strong> It matches the record hash, so the events shown here are the events that were signed.
+        <strong>Hash chain recomputed in your browser.</strong> The events and any document binding reproduce the displayed record hash. This checks internal consistency; compare an independently saved hash to check an earlier record.
       </p>
     );
   }
@@ -430,7 +428,7 @@ function ChainStatus({ verification }: { verification: VerificationState }) {
   return (
     <div className="chain-status error" role="status">
       {hashMismatch ? (
-        <p><strong>Hash chain does not match.</strong> Recomputing the chain from the events shown here does not reproduce the record hash, so these are not the events that were signed.</p>
+        <p><strong>Hash chain does not match.</strong> Recomputing the chain from the events shown here does not reproduce the record hash, so this response is internally inconsistent.</p>
       ) : (
         <p><strong>Record could not be verified.</strong> This record does not pass the format's checks, so the chain was not recomputed. The details below say what failed.</p>
       )}
@@ -568,7 +566,7 @@ function BindingResult({ result }: { result: BindingCheckResult }) {
         <p className="binding-result-note">{TEXT_BINDING_DISCLAIMER}</p>
         {summary.short && (
           <p className="binding-result-warning">
-            This binds only a short run of text ({result.canonicalLength} letters), so a match on it is weak on its own; many documents share a short run.
+            This binds only a short run of text ({result.canonicalLength} canonical characters), so a match on it is weak on its own; many documents share a short run.
           </p>
         )}
       </div>
@@ -681,11 +679,11 @@ export function RecordSignet({ record }: { record: RecordApiResponse }) {
           <p className="signet-scope">This shows the shape of a writing process. It is not a human/AI score or verdict.</p>
           <p className="signet-statement">
             Signs the <strong>shape of the writing process</strong>
-            {bound ? <> and the <strong>wording of the text it produced</strong></> : null}.
+            {bound ? <> and a commitment to the <strong>wording the signer selected</strong></> : null}.
           </p>
         </div>
       </div>
-      <p className="signet-orient">A timestamped, tamper-evident record of how this text was written. <a href="/docs/what-pmbah-does/">What is this?</a></p>
+      <p className="signet-orient">An inspectable record of an editing process. A document binding, when present, does not establish that these edits produced that text. <a href="/docs/what-pmbah-does/">What is this?</a></p>
     </header>
   );
 }
@@ -703,7 +701,7 @@ export function RecordFooter() {
         <a href="/docs/verification/">Verify a record</a>
         <a href="https://github.com/juanre/possiblymadebyahuman" rel="noopener">Source</a>
       </nav>
-      <p className="record-footer-note muted">Content-blind: this page never stores or shows your text.</p>
+      <p className="record-footer-note muted">Public records contain no document text. Text pasted for a check stays in this browser.</p>
     </footer>
   );
 }

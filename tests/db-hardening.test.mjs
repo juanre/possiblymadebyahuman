@@ -611,3 +611,15 @@ test("runtime server serves site root files with their media types and redirects
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+
+test("runtime health exposes only the configured public build revision", async () => {
+  const server = createRuntimeServer({ api: createIngestApi({ store: new InMemoryRecordStore() }), store: { recordExists: async () => false }, db: { query: async () => ({ rows: [] }) }, buildRevision: "a".repeat(40) });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
+    assert.deepEqual(await response.json(), { ok: true, revision: "a".repeat(40) });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

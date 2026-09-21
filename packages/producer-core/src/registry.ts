@@ -71,6 +71,7 @@ export type CadenceOptions = {
   backoff_initial_ms?: number;
   backoff_max_ms?: number;
   commitment_retention?: number;
+  checkpoint_timeout_ms?: number;
 };
 
 export type SessionRegistryOptions = {
@@ -97,6 +98,9 @@ export class SessionRegistry {
   readonly #backoff_initial_ms: number;
   readonly #backoff_max_ms: number;
   readonly #commitment_retention: number;
+  readonly #checkpoint_timeout_ms: number;
+  #persistTail: Promise<void> = Promise.resolve();
+  #flushing = new Set<SessionId>();
   #sessions = new Map<SessionId, SessionRecord>();
   #inFlight = new Map<SessionId, Promise<void>>();
 
@@ -111,6 +115,7 @@ export class SessionRegistry {
     this.#backoff_initial_ms = options.cadence?.backoff_initial_ms ?? DEFAULT_CHECKPOINT_BACKOFF_INITIAL_MS;
     this.#backoff_max_ms = options.cadence?.backoff_max_ms ?? DEFAULT_CHECKPOINT_BACKOFF_MAX_MS;
     this.#commitment_retention = options.cadence?.commitment_retention ?? DEFAULT_COMMITMENT_RETENTION;
+    this.#checkpoint_timeout_ms = options.cadence?.checkpoint_timeout_ms ?? 30_000;
   }
 
   async init(): Promise<void> {
@@ -405,22 +410,40 @@ export class SessionRegistry {
     return cloned;
   }
 
-  sweep(options?: { ttl_ms?: number; uploaded_grace_ms?: number }): SessionRecord[] {
+  sweep(options?: { ttl_ms?: number; uploaded_grace_ms?: number; retain_uploaded_anchors?: boolean }): SessionRecord[] {
     const now = this.#clock.now();
     const snapshot = this.snapshot();
     const result = sweepExpired(snapshot, now, {
       ttl_ms: options?.ttl_ms ?? DEFAULT_TTL_MS,
       uploaded_grace_ms: options?.uploaded_grace_ms ?? DEFAULT_UPLOADED_GRACE_MS,
     });
+    const removedLogs: SessionRecord[] = [];
     for (const removed of result.removed) {
+      if (options?.retain_uploaded_anchors && removed.state === "uploaded"
+        && now - removed.last_edit_wall_ms < (options.ttl_ms ?? DEFAULT_TTL_MS)) {
+        // Keep only the identity/link needed by a live field to continue.
+        this.#sessions.set(removed.session_id, {
+          ...removed,
+          events: [],
+          continuation_anchor: true,
+          last_event_chain_tip: null,
+          signed_text_binding: undefined,
+          observation: emptyObservation(this.#checkpoint !== null),
+        });
+        continue;
+      }
+      removedLogs.push(removed);
       this.#sessions.delete(removed.session_id);
       this.#inFlight.delete(removed.session_id);
     }
-    return result.removed;
+    return removedLogs;
   }
 
   async persist(): Promise<void> {
-    await this.#storage.write(this.snapshot());
+    const snapshot = this.snapshot();
+    const write = this.#persistTail.catch(() => undefined).then(() => this.#storage.write(snapshot));
+    this.#persistTail = write;
+    await write;
   }
 
   /** Awaits all checkpoint work currently in-flight or queued for a session. Test helper. */
@@ -446,19 +469,24 @@ export class SessionRegistry {
    */
   async flushObservation(session_id: SessionId): Promise<void> {
     if (!this.#checkpoint) return;
-    let kicked = false;
-    for (let round = 0; round < 2; round++) {
-      const record = this.#sessions.get(session_id);
-      if (!record || record.observation.state === "diverged") return;
-      if (kicked && record.observation.last_failure) return;
-      if (!record.observation.in_flight) {
-        if (record.observation.last_committed_event_count === 0) return;
-        if (record.events.length <= record.observation.last_committed_event_count) return;
-        record.observation.next_backoff_ms = 0;
-        this.#kickCheckpoint(record);
-        kicked = true;
+    this.#flushing.add(session_id);
+    try {
+      let kicked = false;
+      for (let round = 0; round < 2; round++) {
+        const record = this.#sessions.get(session_id);
+        if (!record || record.observation.state === "diverged") return;
+        if (kicked && record.observation.last_failure) return;
+        if (!record.observation.in_flight) {
+          if (record.observation.last_committed_event_count === 0) return;
+          if (record.events.length <= record.observation.last_committed_event_count) return;
+          record.observation.next_backoff_ms = 0;
+          this.#kickCheckpoint(record);
+          kicked = true;
+        }
+        await this.awaitObservationIdle(session_id);
       }
-      await this.awaitObservationIdle(session_id);
+    } finally {
+      this.#flushing.delete(session_id);
     }
   }
 
@@ -522,7 +550,7 @@ export class SessionRegistry {
     record.observation.last_attempt_at_wall_ms = this.#clock.now();
     const promise = this.#runCheckpointLoop(record.session_id);
     this.#inFlight.set(record.session_id, promise);
-    void promise.finally(() => {
+    void promise.catch(() => undefined).finally(() => {
       const current = this.#inFlight.get(record.session_id);
       if (current === promise) this.#inFlight.delete(record.session_id);
     });
@@ -544,7 +572,7 @@ export class SessionRegistry {
       const token = record.observation.last_observed_token;
       let result: CheckpointResult;
       try {
-        result = await this.#checkpoint!.postCheckpoint({
+        result = await this.#postCheckpoint({
           observed_session_id,
           event_count,
           chain_tip,
@@ -567,16 +595,37 @@ export class SessionRegistry {
         // appendMutation triggers will re-evaluate via #shouldTrigger.
         liveRecord.observation.in_flight = false;
         liveRecord.observation.queued = false;
+        await this.persist();
         return;
       }
-      if (liveRecord.observation.queued && (liveRecord.events.length - liveRecord.observation.last_committed_event_count) > 0) {
+      if (!this.#flushing.has(session_id) && liveRecord.observation.queued && (liveRecord.events.length - liveRecord.observation.last_committed_event_count) > 0) {
         liveRecord.observation.queued = false;
         liveRecord.observation.last_attempt_at_wall_ms = this.#clock.now();
+        await this.persist();
         continue;
       }
       liveRecord.observation.in_flight = false;
       liveRecord.observation.queued = false;
+      await this.persist();
       return;
+    }
+  }
+
+  async #postCheckpoint(request: Parameters<CheckpointAdapter["postCheckpoint"]>[0]): Promise<CheckpointResult> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<CheckpointResult>((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ ok: false, kind: "transient", status: 0, reason: "checkpoint_timeout" });
+        controller.abort();
+      }, this.#checkpoint_timeout_ms);
+    });
+    try {
+      // Racing the whole adapter also bounds reading a stalled response body.
+      // A late response cannot mutate the session after the deadline wins.
+      return await Promise.race([this.#checkpoint!.postCheckpoint(request, controller.signal), deadline]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 

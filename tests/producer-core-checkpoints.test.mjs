@@ -778,3 +778,81 @@ test("22. markObservationRejected pins a mismatch as diverged and resets an unav
 
   assert.throws(() => unavailable.registry.markObservationRejected("missing", "observation_mismatch"), UnknownSessionError);
 });
+
+test("checkpoint completion is durable without another edit and persists writes in order", async () => {
+  const storage = inMemoryStorage();
+  const checkpoint = recordingCheckpoint();
+  let release;
+  checkpoint.queue((request) => new Promise((resolve) => {
+    release = () => resolve({ ok: true, response: { ...request, token: "durable-token",
+      checkpoint_id: "durable", server_t: new Date().toISOString(), created: true } });
+  }));
+  const { registry } = makeRegistry({ storage, checkpoint });
+  const session = newSession(registry);
+  appendMany(registry, session.session_id, 1);
+  await registry.persist();
+  assert.equal((await storage.read())[0].observation.last_observed_token, null);
+  release();
+  await registry.awaitObservationIdle(session.session_id);
+  const restored = makeRegistry({ storage, checkpoint }).registry;
+  await restored.init();
+  assert.equal(restored.get(session.session_id).observation.state, "known");
+  assert.equal(restored.getObservationEnvelope(session.session_id).token, "durable-token");
+});
+
+test("stalled checkpoints time out, abort, allow sign, and ignore late success", async () => {
+  let release, signal;
+  const checkpoint = { postCheckpoint(request, abortSignal) {
+    signal = abortSignal;
+    return new Promise((resolve) => { release = () => resolve({ ok: true,
+      response: { ...request, token: "too-late", checkpoint_id: "late", server_t: new Date().toISOString() } }); });
+  } };
+  const { registry } = makeRegistry({ checkpoint, cadence: { checkpoint_timeout_ms: 10 } });
+  const session = newSession(registry);
+  appendMany(registry, session.session_id, 1);
+  await registry.flushObservation(session.session_id);
+  assert.equal(signal.aborted, true);
+  assert.deepEqual(registry.getObservationEnvelope(session.session_id), { state: "unobserved" });
+  registry.sign(session.session_id);
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(registry.get(session.session_id).observation.last_observed_token, null);
+});
+
+test("overlapping persistence never lets an older snapshot overwrite a newer one", async () => {
+  const writes = [];
+  const finish = [];
+  const storage = { read: async () => [], write: (snapshot) => new Promise((resolve) => {
+    writes.push(snapshot); finish.push(resolve);
+  }) };
+  const { registry } = makeRegistry({ storage });
+  const session = newSession(registry);
+  const first = registry.persist();
+  appendMany(registry, session.session_id, 1);
+  const second = registry.persist();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(writes.length, 1);
+  finish[0](); await first;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1][0].events.length, 1);
+  finish[1](); await second;
+});
+
+test("pre-sign flush stops after two attempts even when every response queues more edits", async () => {
+  const checkpoint = recordingCheckpoint();
+  const { registry } = makeRegistry({ checkpoint });
+  const session = newSession(registry);
+  appendMany(registry, session.session_id, 1);
+  await registry.awaitObservationIdle(session.session_id);
+  const respondWithMoreEdits = async (request) => {
+    appendMany(registry, session.session_id, 1);
+    return { ok: true, response: { ...request, token: "token", checkpoint_id: `cp-${request.event_count}`, server_t: new Date().toISOString() } };
+  };
+  checkpoint.queue(respondWithMoreEdits, respondWithMoreEdits, respondWithMoreEdits);
+  appendMany(registry, session.session_id, 1);
+  await registry.flushObservation(session.session_id);
+  assert.equal(checkpoint.calls.length, 3, "one initial checkpoint plus two flush rounds");
+  assert.equal(registry.getObservationState(session.session_id), "partial");
+  assert.equal(registry.get(session.session_id).observation.in_flight, false);
+});

@@ -16,6 +16,8 @@ export const MAX_CAPTURE_CONTEXT_URL_LENGTH = 2_048;
 export const MAX_ATTESTATION_COUNT = 16;
 export const MAX_ATTESTATION_FIELD_COUNT = 16;
 export const MAX_ATTESTATION_STRING_LENGTH = 512;
+export const MAX_PRODUCER_STRING_LENGTH = 128;
+export const MAX_ATTESTATION_KEY_LENGTH = 64;
 
 export type FormatVersion = (typeof FORMAT_VERSIONS)[number];
 export type B3Hash = `${typeof HASH_PREFIX}${string}`;
@@ -354,7 +356,8 @@ export function computeRecordHash(
 }
 
 export function verifyEventHashChain(record: WritingRecord): VerificationResult {
-  const errors = [...validateManifest(record.manifest), ...validateEventLog(record.events)];
+  const errors = [...validateManifest(record?.manifest), ...validateEventLog(record?.events)];
+  if (!isPlainObject(record?.manifest) || !Array.isArray(record?.events)) return { valid: false, errors };
   if (record.events.length === 0) {
     errors.push("event log must contain at least one event to compute a record hash");
   }
@@ -399,7 +402,8 @@ export function computeObservedLength(events: EventLog): number | null {
 }
 
 export function verifyRecord(record: WritingRecord): VerificationResult {
-  const errors = [...validateManifest(record.manifest), ...validateEventLog(record.events)];
+  const errors = [...validateManifest(record?.manifest), ...validateEventLog(record?.events)];
+  if (!isPlainObject(record?.manifest) || !Array.isArray(record?.events)) return { valid: false, errors };
 
   if (record.events.length === 0) {
     errors.push("event log must contain at least one event to compute a record hash");
@@ -526,6 +530,11 @@ export function validateManifest(manifest: unknown): string[] {
   if (!isPlainObject(candidate.producer)) {
     errors.push("producer must be an object");
   } else {
+    for (const key of Object.keys(candidate.producer)) {
+      if (!["id", "version", "capabilities"].includes(key)) errors.push("producer contains an unknown field");
+    }
+    validateBoundedString(candidate.producer.id, "producer.id", MAX_PRODUCER_STRING_LENGTH, errors);
+    validateBoundedString(candidate.producer.version, "producer.version", MAX_PRODUCER_STRING_LENGTH, errors);
     if (typeof candidate.producer.id !== "string" || candidate.producer.id.length === 0) {
       errors.push("producer.id must be a non-empty string");
     }
@@ -535,6 +544,7 @@ export function validateManifest(manifest: unknown): string[] {
     if (!Array.isArray(candidate.producer.capabilities)) {
       errors.push("producer.capabilities must be an array");
     } else {
+      if (candidate.producer.capabilities.length > CAPABILITIES.length) errors.push("too many producer capabilities");
       for (const capability of candidate.producer.capabilities) {
         if (typeof capability !== "string" || !CAPABILITY_SET.has(capability)) {
           errors.push(`producer capability must be one of ${CAPABILITIES.join(", ")}`);
@@ -615,6 +625,10 @@ export function validateAttestations(attestations: unknown): string[] {
       errors.push(`${name} must contain at most ${MAX_ATTESTATION_FIELD_COUNT} fields`);
     }
     for (const [key, value] of entries) {
+      if (key.length > MAX_ATTESTATION_KEY_LENGTH) {
+        errors.push(`${name} field names must be at most ${MAX_ATTESTATION_KEY_LENGTH} characters`);
+        continue;
+      }
       validateBoundedString(value, `${name}.${key}`, MAX_ATTESTATION_STRING_LENGTH, errors);
     }
   });

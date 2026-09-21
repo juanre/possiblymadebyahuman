@@ -336,8 +336,8 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
     const output = JSON.parse(await readFile(outputPath, "utf8"));
     assert.equal(output.region_text, "beta");
     assert.equal(output.whole_buffer_text, "alpha beta gamma!");
-    assert.equal(output.region_prompts[0], "Bind the selected region to this record? ");
-    assert.equal(output.whole_buffer_prompts[0], "Bind the whole buffer to this record? ");
+    assert.equal(output.region_prompts[0], "Anyone can test guesses against this public commitment. Bind the selected region? ");
+    assert.equal(output.whole_buffer_prompts[0], "Anyone can test guesses against this public commitment. Bind the whole buffer? ");
     assert.equal(output.prefix_final_text, "prefix body");
     assert.deepEqual(output.prefix_context, { surface: "emacs", emacs: { buffer_name: "prefix-buffer", major_mode: "text-mode" } });
     assert.equal(output.default_yes_answer, true);
@@ -1326,6 +1326,82 @@ test("Emacs observation state machine backs off on transient failures, pins conf
     assert.equal(output.unavailable.committed, 0);
     assert.equal(output.unavailable.commitments, 0);
     assert.deepEqual(output.envelope_after_reset, { state: "unobserved" });
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs classifies real HTTP error callbacks before connection errors", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const { createServer } = await import("node:http");
+  let status = 409;
+  const server = createServer((_request, response) => {
+    response.writeHead(status, { "content-type": "application/json", "connection": "close" });
+    response.end(JSON.stringify({ error: status === 404 ? "observation_unavailable" : "checkpoint_rejected" }));
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-http-errors-"));
+  try {
+    for (const [code, expected, reason] of [[409, "diverged", "conflict"], [400, "diverged", "client_bug"], [404, "unknown", "unavailable"], [429, "unknown", "rate_limited"]]) {
+      status = code;
+      const outputPath = join(temp, `${code}.json`);
+      const scriptPath = join(temp, `${code}.el`);
+      await writeFile(scriptPath, `(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(with-temp-buffer
+  (pmbah-mode 1)
+  (insert "HTTP test")
+  (pmbah--observation-wait 10)
+  (let ((result (pmbah--observation-status)))
+    (with-temp-file ${JSON.stringify(outputPath)}
+      (insert (pmbah--json-encode result)))))
+`);
+      const result = await runEmacs(scriptPath, { PMBAH_API_BASE_URL: `http://127.0.0.1:${server.address().port}` });
+      assert.equal(result.status, 0, result.stderr);
+      const output = JSON.parse(await readFile(outputPath, "utf8"));
+      assert.equal(output.state, expected, `HTTP ${code}`);
+      assert.match(output.last_failure, new RegExp(`^${reason} .*HTTP ${code}`));
+      assert.equal(output.in_flight, false);
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise((done) => server.close(done));
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs persists diverged state and reason immediately and preserves it on reopen", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-diverged-resume-"));
+  const scriptPath = join(temp, "scenario.el");
+  const documentPath = join(temp, "document.txt");
+  const outputPath = join(temp, "result.json");
+  await writeFile(documentPath, "");
+  await writeFile(scriptPath, `(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil pmbah-state-directory ${JSON.stringify(join(temp, "state/"))})
+(let ((saved nil) (restored nil))
+  (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+    (pmbah-mode 1)
+    (insert "Local test")
+    (setq pmbah-observe-process t
+          pmbah--observation-token "persisted-token"
+          pmbah--observation-committed-count 1)
+    (pmbah--observation-apply (list 'conflict 409 "checkpoint_stale"))
+    (setq saved (plist-get (pmbah--read-state (pmbah--state-file)) :observation))
+    (set-buffer-modified-p nil)
+    (kill-buffer (current-buffer)))
+  (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+    (pmbah-mode 1)
+    (setq restored (list :status (pmbah--observation-status) :envelope (pmbah--observation-envelope))))
+  (with-temp-file ${JSON.stringify(outputPath)}
+    (insert (pmbah--json-encode (list :saved saved :restored restored)))))
+`);
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.saved.state, "diverged");
+    assert.match(output.saved.last_failure, /checkpoint_stale/);
+    assert.equal(output.restored.status.state, "diverged");
+    assert.equal(output.restored.envelope.state, "unobserved");
+    assert.equal(JSON.stringify(output).includes("Local test"), false);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

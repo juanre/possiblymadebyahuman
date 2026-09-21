@@ -1,4 +1,6 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
@@ -10,6 +12,16 @@ import { BOUND_TEXT } from "./bound-fixture-text.mjs";
 const rootDir = fileURLToPath(new URL("../..", import.meta.url));
 const webDistDir = join(rootDir, "apps/web/dist");
 const extensionDistDir = join(rootDir, "apps/browser-extension/dist");
+const siteDistDir = mkdtempSync(join(tmpdir(), "pmbah-browser-site-"));
+try {
+  execFileSync("hugo", ["--source", join(rootDir, "apps/site"), "--destination", siteDistDir], { stdio: "pipe" });
+} catch (error) {
+  rmSync(siteDistDir, { recursive: true, force: true });
+  throw error;
+}
+process.on("exit", () => rmSync(siteDistDir, { recursive: true, force: true }));
+process.on("SIGTERM", () => process.exit(0));
+process.on("SIGINT", () => process.exit(0));
 const goldenPath = join(rootDir, "packages/conformance/vectors/golden-records.json");
 
 const port = Number(process.env.PMBAH_FIXTURE_PORT ?? 4173);
@@ -275,6 +287,13 @@ if (process.env.PMBAH_REAL_RECORD) {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+
+    if (url.pathname.startsWith("/docs/")) {
+      const relative = normalize(url.pathname).replace(/^\/+/, "");
+      const path = join(siteDistDir, relative, extname(relative) ? "" : "index.html");
+      await serveFile(res, path);
+      return;
+    }
 
     if (url.pathname.startsWith("/api/records/")) {
       const requestedSlug = url.pathname.slice("/api/records/".length);

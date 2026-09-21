@@ -52,8 +52,8 @@ export class BackgroundDispatcher {
 
   /** Drops expired unsigned captures and uploaded sessions past their grace period. */
   async sweepExpired(): Promise<void> {
-    const removed = this.registry.sweep();
-    if (removed.length > 0) await this.registry.persist();
+    this.registry.sweep({ retain_uploaded_anchors: true });
+    await this.registry.persist();
   }
 
   async handle(message: ContentToBackground): Promise<BackgroundResponse> {
@@ -65,7 +65,7 @@ export class BackgroundDispatcher {
         case "append_mutation":
           return this.#handleAppend(message);
         case "list_sessions":
-          return { kind: "list_sessions_result", sessions: this.registry.list() };
+          return { kind: "list_sessions_result", sessions: this.registry.list().filter((session) => !session.continuation_anchor) };
         case "sign_session":
           return await this.#handleSign(message);
         case "retry_failed_upload":

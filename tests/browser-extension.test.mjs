@@ -1016,3 +1016,29 @@ test("dispatcher: registering a field with an active continuation resumes it ins
   assert.equal(again.result.session_id, continued.session_id);
   assert.equal(dispatcher.registry.list().filter((session) => session.state === "active").length, 1);
 });
+
+test("dispatcher: uploaded continuation survives grace sweep and worker restart", async () => {
+  const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher();
+  const registration = { kind: "register_field", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const first = await dispatcher.handle(registration);
+  const sid = first.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  const parent = signed.result.response.record_hash;
+  clock.advance(61_000);
+  await dispatcher.sweepExpired();
+  assert.deepEqual(dispatcher.registry.get(sid).events, []);
+  assert.equal(dispatcher.registry.get(sid).observation.last_observed_token, null);
+  assert.equal((await dispatcher.handle({ kind: "list_sessions" })).sessions.length, 0);
+  const restarted = new BackgroundDispatcher({ storage, clock, uuid, upload, checkpoint, producer: PRODUCER });
+  const resumed = await restarted.handle({ ...registration, tab_id: 2, field_is_empty: false });
+  assert.equal(resumed.result.kind, "registered");
+  assert.notEqual(resumed.result.session_id, sid);
+  assert.equal(restarted.registry.get(resumed.result.session_id).parent_record, parent);
+  const otherTab = await restarted.handle({ ...registration, tab_id: 3, field_is_empty: false });
+  assert.equal(otherTab.result.session_id, resumed.result.session_id, "same document across tabs continues sharing its session");
+  clock.advance(3 * 24 * 60 * 60 * 1000 + 1);
+  await restarted.sweepExpired();
+  assert.equal(restarted.registry.get(sid), undefined);
+});

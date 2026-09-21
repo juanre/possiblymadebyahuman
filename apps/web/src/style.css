@@ -530,3 +530,5 @@ section.card[aria-label="Check a document"] {
   .ml-right { justify-content: flex-end; }
   .ml-error { white-space: normal; max-width: none; }
 }
+
+.write-notice { margin: 0.5rem 1rem; font-size: 0.8rem; color: #756b60; }

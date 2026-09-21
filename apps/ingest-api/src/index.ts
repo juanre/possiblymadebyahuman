@@ -2,11 +2,14 @@ import { createHash, randomBytes } from "node:crypto";
 
 import {
   DEFAULT_IDLE_THRESHOLD_MS as ANALYZER_DEFAULT_IDLE_THRESHOLD_MS,
+  TIMING_ANALYZER_VERSION,
+  TIMING_DISTRIBUTION_ANALYZER_ID,
   runAnalyzers,
   runDefaultAnalyzers,
   type Analyzer,
 } from "../../../packages/analyzers/src/index.ts";
 import {
+  MAX_INTEGER_FIELD_VALUE,
   b3HashToBytes,
   computeEventHashChain,
   computeObservedLength,
@@ -184,6 +187,9 @@ export function createIngestApi(options: IngestApiOptions) {
       initialShortSignatureLength,
     );
     const stats = computeRecordStats(stampedRecord, idleThresholdMs);
+    const overflow = Object.entries(stats).filter(([, value]) =>
+      typeof value === "number" && (!Number.isInteger(value) || value < 0 || value > MAX_INTEGER_FIELD_VALUE));
+    if (overflow.length) return failure(400, "invalid_record", overflow.map(([key]) => `${key} exceeds the supported storage range`));
     const analyzerInput = { events: stampedRecord.events, manifest: stampedRecord.manifest };
     const publicSignals = options.analyzers
       ? runAnalyzers(analyzerInput, options.analyzers)
@@ -357,7 +363,7 @@ export function computeRecordStats(record: WritingRecord, idleThresholdMs = DEFA
     inter_event_delay_p95_ms: percentile(sortedDelays, 0.95),
     inter_event_delay_p99_ms: percentile(sortedDelays, 0.99),
     inter_event_delay_max_ms: sortedDelays.at(-1) ?? null,
-    active_time_ms: Math.max(0, record.manifest.duration_ms - idleDelays.reduce((total, delay) => total + delay, 0)),
+    active_time_ms: delays.filter((delay) => delay < idleThresholdMs).reduce((total, delay) => total + delay, 0),
     idle_time_ms: idleDelays.reduce((total, delay) => total + delay, 0),
     long_pause_count: idleDelays.length,
     delay_histogram: buildDelayHistogram(delays),
@@ -388,11 +394,25 @@ export function isReservedShortSignature(candidate: string): boolean {
 }
 
 export function toGetRecordResponse(stored: StoredRecord): GetRecordResponse {
+  // Legacy caches counted unmeasured endpoint waits as active. Correct the
+  // derived view, preserving the original idle threshold and immutable record.
+  const measuredSpan = stored.events.length > 1
+    ? stored.events.at(-1)!.t - stored.events[0]!.t : 0;
   return {
     manifest: stored.manifest,
     events: stored.events,
-    stats: stored.stats,
-    signals: stored.signals.map(stripAnalysisResultStorageFields),
+    stats: { ...stored.stats, active_time_ms: Math.max(0, measuredSpan - stored.stats.idle_time_ms) },
+    signals: stored.signals.map((result) => {
+      const signal = stripAnalysisResultStorageFields(result);
+      if (signal.analyzer_id !== TIMING_DISTRIBUTION_ANALYZER_ID || signal.analyzer_version !== "0.1.0") return signal;
+      const idle = signal.measures.find((item) => item.key === "idle_time_ms")?.value;
+      return {
+        ...signal,
+        analyzer_version: TIMING_ANALYZER_VERSION,
+        measures: signal.measures.map((item) => item.key === "active_time_ms" && typeof idle === "number"
+          ? { ...item, value: Math.max(0, measuredSpan - idle) } : item),
+      };
+    }),
     observation: stored.observation,
   };
 }
@@ -420,8 +440,8 @@ function parseCheckpointInput(input: unknown): CheckpointParseResult {
   const errors: string[] = [];
   const unexpected = Object.keys(input).filter((key) => key !== "event_count" && key !== "chain_tip" && key !== "token");
   errors.push(...unexpected.map((key) => `unexpected checkpoint field ${key}`));
-  if (!Number.isInteger(input.event_count) || (input.event_count as number) < 1) {
-    errors.push("event_count must be an integer >= 1");
+  if (!Number.isInteger(input.event_count) || (input.event_count as number) < 1 || (input.event_count as number) > MAX_INTEGER_FIELD_VALUE) {
+    errors.push(`event_count must be an integer between 1 and ${MAX_INTEGER_FIELD_VALUE}`);
   }
   if (!isB3Hash(input.chain_tip)) errors.push("chain_tip must be a b3: hash");
   if (input.token !== undefined && (typeof input.token !== "string" || input.token.length < 32)) {

@@ -831,3 +831,66 @@ test("error details are capped so a bad request cannot amplify into a huge respo
   assert.ok(result.body.details.length <= 26, `details length ${result.body.details.length}`);
   assert.match(result.body.details.at(-1), /more/);
 });
+
+test("malformed record containers return 400 instead of throwing", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  for (const events of [undefined, null, {}, "bad"]) {
+    assert.equal((await api.postRecord({ ...record, events })).status, 400);
+  }
+  for (const manifest of [undefined, null, [], "bad"]) {
+    assert.equal((await api.postRecord({ ...record, manifest })).status, 400);
+  }
+});
+
+test("metadata is bounded and producer keys cannot carry arbitrary payloads", async () => {
+  const { api } = makeApi();
+  for (const change of [
+    (record) => { record.manifest.producer.id = "x".repeat(129); },
+    (record) => { record.manifest.producer.version = "x".repeat(129); },
+    (record) => { record.manifest.producer.document = "private writing"; },
+    (record) => { record.manifest.attestations = [{ ["x".repeat(65)]: "v" }]; },
+  ]) {
+    const record = await fixtureRecord();
+    change(record);
+    assert.equal((await api.postRecord(record)).status, 400);
+  }
+});
+
+test("active time excludes unmeasured waits before the first and after the last edit", async () => {
+  const { computeRecordStats } = await import("../apps/ingest-api/src/index.ts");
+  const { timingDistributionAnalyzer } = await import("../packages/analyzers/src/index.ts");
+  const record = await fixtureRecord();
+  record.events = record.events.slice(0, 3).map((event, seq) => ({ ...event, t: [60_000, 61_000, 101_000][seq] }));
+  record.manifest.duration_ms = 200_000;
+  const stats = computeRecordStats(record);
+  assert.equal(stats.active_time_ms, 1000);
+  assert.equal(stats.idle_time_ms, 40_000);
+  const signal = timingDistributionAnalyzer().analyze(record);
+  assert.equal(signal.measures.find((measure) => measure.key === "active_time_ms").value, 1000);
+  record.events = record.events.slice(0, 1);
+  assert.equal(computeRecordStats(record).active_time_ms, 0);
+});
+
+test("legacy active-time views exclude endpoints without changing cached data or custom idle thresholds", async () => {
+  const { toGetRecordResponse } = await import("../apps/ingest-api/src/index.ts");
+  const { api, store } = makeApi();
+  const record = await fixtureRecord();
+  const uploaded = await api.postRecord(record);
+  const stored = await store.findByRecordHash(uploaded.body.record_hash);
+  stored.events = stored.events.slice(0, 3).map((event, index) => ({ ...event, t: [60_000, 61_000, 71_000][index] }));
+  stored.manifest.duration_ms = 200_000;
+  // This historical producer used a 5-second threshold, not today's default.
+  stored.stats.idle_time_ms = 10_000;
+  stored.stats.active_time_ms = 190_000;
+  stored.signals = [{ record_hash: stored.manifest.record_hash, analyzer_id: "timing-distribution", analyzer_version: "0.1.0", applicable: true,
+    measures: [{ key: "active_time_ms", value: 190_000, unit: "ms" }, { key: "idle_time_ms", value: 10_000, unit: "ms" }], explanation: "Historical timing" }];
+  const original = structuredClone(stored);
+  const response = toGetRecordResponse(stored);
+  assert.equal(response.stats.active_time_ms, 1000);
+  assert.equal(response.signals[0].analyzer_version, "0.1.1");
+  assert.equal(response.signals[0].measures[0].value, 1000);
+  assert.deepEqual(stored, original, "read projection must never rewrite the record or stored cache");
+  assert.deepEqual(response.manifest, stored.manifest);
+  assert.deepEqual(response.observation, stored.observation);
+});

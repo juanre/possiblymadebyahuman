@@ -145,7 +145,7 @@ function openSignConfirm(session: SessionRecord): void {
     <label><input type="checkbox" class="sign-keep-title" ${title ? "checked" : "disabled"} /> Page title: <span class="sign-context-value">${escapeHtml(title || "none")}</span></label>
     <label class="sign-label-row">Label <input type="text" class="sign-label" value="${escapeHtml(label)}" maxlength="120" /></label>
     <label><input type="checkbox" class="sign-bind" checked /> Bind selected text, or all field content if nothing is selected</label>
-    <p class="sign-note">The check compares wording — letters and digits — not exact text. No text leaves this device.</p>
+    <p class="sign-note">The check compares wording — letters and digits — not exact text. No document text is sent to PMBAH. A public binding lets anyone test guesses at the wording; it is not encryption.</p>
     <div class="session-actions">
       <button class="sign-confirm-go">Sign &amp; upload</button>
       <button class="secondary sign-confirm-cancel">Cancel</button>

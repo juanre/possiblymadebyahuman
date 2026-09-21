@@ -67,5 +67,5 @@ export type CheckpointResult =
   | { ok: false; kind: CheckpointFailureKind; status: number; reason: string };
 
 export interface CheckpointAdapter {
-  postCheckpoint(request: CheckpointRequest): Promise<CheckpointResult>;
+  postCheckpoint(request: CheckpointRequest, signal?: AbortSignal): Promise<CheckpointResult>;
 }

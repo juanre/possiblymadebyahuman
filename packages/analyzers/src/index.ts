@@ -4,6 +4,7 @@ export const ANALYZERS_PACKAGE = "@possiblymadebyahuman/analyzers";
 export const TIMING_DISTRIBUTION_ANALYZER_ID = "timing-distribution";
 export const EDIT_TOPOLOGY_ANALYZER_ID = "edit-topology";
 export const ANALYZER_VERSION = "0.1.0";
+export const TIMING_ANALYZER_VERSION = "0.1.1";
 export const DEFAULT_IDLE_THRESHOLD_MS = 30_000;
 export const DEFAULT_LARGE_ATOMIC_INSERT_CODEPOINTS = 50;
 export const DEFAULT_SMALL_EDIT_CODEPOINTS = 5;
@@ -78,7 +79,7 @@ export function timingDistributionAnalyzer(options: { idleThresholdMs?: number }
   const idleThresholdMs = options.idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
   return {
     id: TIMING_DISTRIBUTION_ANALYZER_ID,
-    version: ANALYZER_VERSION,
+    version: TIMING_ANALYZER_VERSION,
     analyze({ events, manifest }) {
       if (!manifest.producer.capabilities.includes("timing")) {
         return notApplicable(
@@ -97,7 +98,7 @@ export function timingDistributionAnalyzer(options: { idleThresholdMs?: number }
       const sorted = [...delays].sort((left, right) => left - right);
       const idleDelays = delays.filter((delay) => delay >= idleThresholdMs);
       const idleTimeMs = sum(idleDelays);
-      const activeTimeMs = Math.max(0, manifest.duration_ms - idleTimeMs);
+      const activeTimeMs = sum(delays.filter((delay) => delay < idleThresholdMs));
       const max = sorted.at(-1) ?? 0;
       const measures: SignalMeasure[] = [
         measure("event_count", events.length),
@@ -114,7 +115,7 @@ export function timingDistributionAnalyzer(options: { idleThresholdMs?: number }
 
       return {
         analyzer_id: TIMING_DISTRIBUTION_ANALYZER_ID,
-        analyzer_version: ANALYZER_VERSION,
+        analyzer_version: TIMING_ANALYZER_VERSION,
         applicable: true,
         measures,
         explanation: `Measured ${delays.length} inter-event intervals. Long pauses are intervals at or above ${idleThresholdMs}ms; the longest interval was ${max}ms, with ${idleDelays.length} long pause(s).`,
@@ -202,7 +203,7 @@ function deepFreeze<T>(value: T): T {
 function notApplicable(analyzerId: string, explanation: string): Signal {
   return {
     analyzer_id: analyzerId,
-    analyzer_version: ANALYZER_VERSION,
+    analyzer_version: analyzerId === TIMING_DISTRIBUTION_ANALYZER_ID ? TIMING_ANALYZER_VERSION : ANALYZER_VERSION,
     applicable: false,
     measures: [],
     explanation,

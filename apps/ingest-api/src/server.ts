@@ -60,6 +60,7 @@ export type RuntimeServerOptions = {
   siteDistDir?: string;
   recordBodyLimitBytes?: number;
   requiredMigrationVersions?: readonly string[];
+  buildRevision?: string;
 };
 
 export function createRuntimeServer(options: RuntimeServerOptions): Server {
@@ -156,7 +157,7 @@ async function route(req: IncomingMessage, res: ServerResponse, options: Runtime
   }
 
   if (req.method === "GET" && (requestUrl.pathname === "/health" || requestUrl.pathname === "/live")) {
-    json(res, 200, { ok: true });
+    json(res, 200, { ok: true, revision: options.buildRevision ?? process.env.BUILD_REVISION ?? "development" });
     return;
   }
 

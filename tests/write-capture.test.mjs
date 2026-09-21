@@ -1,77 +1,46 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { deriveMutationFromMeasuredInput as derive, lineBreakInsertedCodepoints, sourceFromInputType } from "../apps/web/src/write-capture.ts";
 
-import { deriveMutationFromMeasuredInput, lineBreakInsertedCodepoints, sourceFromInputType } from "../apps/web/src/write-capture.ts";
-
-test("/write measured input mapping preserves codepoint counts without text", () => {
-  assert.deepEqual(deriveMutationFromMeasuredInput({
-    inputType: "insertText",
-    selectionStartCodepoints: 1,
-    selectedCodepoints: 0,
-    dataCodepoints: 1,
-    hasBackwardCodepoint: true,
-    hasForwardCodepoint: false,
-  }), { op: "insert", pos: 1, del_len: 0, ins_len: 1, source: "typing" });
-
-  assert.deepEqual(deriveMutationFromMeasuredInput({
-    inputType: "insertFromPaste",
-    selectionStartCodepoints: 2,
-    selectedCodepoints: 1,
-    dataCodepoints: 3,
-    hasBackwardCodepoint: true,
-    hasForwardCodepoint: true,
-  }), { op: "replace", pos: 2, del_len: 1, ins_len: 3, source: "paste" });
-
-  assert.deepEqual(deriveMutationFromMeasuredInput({
-    inputType: "deleteContentBackward",
-    selectionStartCodepoints: 4,
-    selectedCodepoints: 0,
-    dataCodepoints: 0,
-    hasBackwardCodepoint: true,
-    hasForwardCodepoint: false,
-  }), { op: "delete", pos: 3, del_len: 1, ins_len: 0, source: "typing" });
+const intent = (inputType, lengthBefore, start, selected = 0, dataCodepoints = null) => ({
+  inputType, lengthBefore, selectionStartCodepoints: start, selectedCodepoints: selected, dataCodepoints,
 });
 
-test("/write treats Enter inputTypes as one codepoint when event.data is empty", () => {
-  assert.equal(lineBreakInsertedCodepoints("insertParagraph"), 1);
-  assert.equal(lineBreakInsertedCodepoints("insertLineBreak"), 1);
-  assert.equal(lineBreakInsertedCodepoints("insertLineBreak", 2), 2);
-  assert.equal(lineBreakInsertedCodepoints("insertText"), null);
+test("/write uses applied codepoint changes for word and grapheme deletions", () => {
+  assert.deepEqual(derive(intent("deleteWordBackward", 11, 11), 6, 6),
+    { op: "delete", pos: 6, del_len: 5, ins_len: 0, source: "typing" });
+  assert.deepEqual(derive(intent("deleteContentBackward", 8, 8), 1, 1),
+    { op: "delete", pos: 1, del_len: 7, ins_len: 0, source: "typing" });
+  assert.deepEqual(derive(intent("deleteContentForward", 8, 1), 1, 1),
+    { op: "delete", pos: 1, del_len: 7, ins_len: 0, source: "typing" });
+});
 
-  for (const inputType of ["insertParagraph", "insertLineBreak"]) {
-    assert.deepEqual(deriveMutationFromMeasuredInput({
-      inputType,
-      selectionStartCodepoints: 5,
-      selectedCodepoints: 0,
-      dataCodepoints: 0,
-      hasBackwardCodepoint: true,
-      hasForwardCodepoint: true,
-    }), { op: "insert", pos: 5, del_len: 0, ins_len: 1, source: "typing" });
+test("/write measures insertion, selection replacement and autocorrect", () => {
+  assert.deepEqual(derive(intent("insertText", 2, 1, 0, 1), 3, 2),
+    { op: "insert", pos: 1, del_len: 0, ins_len: 1, source: "typing" });
+  assert.deepEqual(derive(intent("insertFromPaste", 4, 1, 2, 3), 5, 4),
+    { op: "replace", pos: 1, del_len: 2, ins_len: 3, source: "paste" });
+  assert.deepEqual(derive(intent("insertReplacementText", 9, 9, 0, 4), 10, 7),
+    { op: "replace", pos: 3, del_len: 3, ins_len: 4, source: "autocomplete" });
+});
 
-    assert.deepEqual(deriveMutationFromMeasuredInput({
-      inputType,
-      selectionStartCodepoints: 0,
-      selectedCodepoints: 0,
-      dataCodepoints: 0,
-      hasBackwardCodepoint: false,
-      hasForwardCodepoint: true,
-    }), { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+test("/write undo/redo retain uncertainty, including an equal-length replacement", () => {
+  assert.deepEqual(derive(intent("historyUndo", 3, 3), 0, 0),
+    { op: "delete", pos: null, del_len: 3, ins_len: null, source: "unknown" });
+  assert.deepEqual(derive(intent("historyRedo", 3, 3), 3, 3),
+    { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
+});
 
-    assert.deepEqual(deriveMutationFromMeasuredInput({
-      inputType,
-      selectionStartCodepoints: 2,
-      selectedCodepoints: 3,
-      dataCodepoints: 0,
-      hasBackwardCodepoint: true,
-      hasForwardCodepoint: true,
-    }), { op: "replace", pos: 2, del_len: 3, ins_len: 1, source: "typing" });
+test("/write captures applied line breaks with empty event data", () => {
+  for (const type of ["insertParagraph", "insertLineBreak"]) {
+    assert.equal(lineBreakInsertedCodepoints(type), 1);
+    assert.deepEqual(derive(intent(type, 5, 2, 3), 3, 3),
+      { op: "replace", pos: 2, del_len: 3, ins_len: 1, source: "typing" });
   }
 });
 
 test("/write source attribution is conservative", () => {
-  assert.equal(sourceFromInputType("insertFromPaste"), "paste");
-  assert.equal(sourceFromInputType("deleteByCut"), "cut");
-  assert.equal(sourceFromInputType("insertFromDrop"), "drop");
-  assert.equal(sourceFromInputType("insertCompositionText"), "ime");
-  assert.equal(sourceFromInputType("formatBold"), "unknown");
+  for (const [type, source] of [["insertFromPaste","paste"], ["deleteByCut","cut"],
+    ["deleteByDrag","drop"], ["insertCompositionText","ime"], ["formatBold","unknown"],
+    ["insertMadeUpType","unknown"]]) assert.equal(sourceFromInputType(type), source);
 });

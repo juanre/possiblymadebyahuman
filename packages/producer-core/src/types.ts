@@ -121,6 +121,7 @@ export type SessionRecord = {
   last_event_chain_tip: B3Hash | null;
   state: SessionState;
   uploaded_response?: IngestRecordResponse;
+  continuation_anchor?: boolean;
   last_failure_reason?: string;
   // The content-blind binding sealed at the last sign attempt, kept so a failed
   // upload can be retried with the same record. Never the text.
