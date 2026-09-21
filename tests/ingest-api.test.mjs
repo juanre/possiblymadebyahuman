@@ -795,21 +795,22 @@ test("created_client_t must be a parseable timestamp and parent_record must exis
 
 test("malformed request shapes are 4xx, never 500", async () => {
   const { api } = makeApi();
-  let nested = [];
-  for (let depth = 0; depth < 100_000; depth += 1) nested = [nested];
+  // Node 24 JSON.stringify recurses; construct the adversarial JSON directly so
+  // the fixture reaches the API instead of overflowing in the test runner.
+  const nestedJson = "[".repeat(100_000) + "[]" + "]".repeat(100_000);
   const record = await fixtureRecord();
-  record.events.push(nested);
+  const deepRecordJson = `{"manifest":${JSON.stringify(record.manifest)},"events":[${record.events.map((event) => JSON.stringify(event)).join(",")},${nestedJson}]}`;
   const deep = await api.handleRequest(new Request("https://possiblymadebyahuman.test/api/records", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify(record),
+    body: deepRecordJson,
   }));
   assert.equal(deep.status, 400);
 
   const deepCheckpoint = await api.handleRequest(new Request("https://possiblymadebyahuman.test/api/observed-sessions/123e4567-e89b-42d3-a456-426614174111/checkpoints", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ event_count: 1, chain_tip: nested }),
+    body: `{"event_count":1,"chain_tip":${nestedJson}}`,
   }));
   assert.equal(deepCheckpoint.status, 400);
 
