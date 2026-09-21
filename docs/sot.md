@@ -87,7 +87,7 @@ Owns:
 - record-hash verification
 - content-blind process-length validation using Unicode codepoint offsets, with explicit JSON `null` for unknown process measurements
 - the format `0.2` text binding: `canon-letters/0.1` canonicalization, the salted commitment, and sealing the binding into `record_hash` (normative detail in `docs/text-binding.md` and `docs/spec/canonicalization.md`)
-- bounded metadata: `capture_context` accepts only its documented keys with capped string lengths, `attestations` only small typed objects, and integer fields only the 32-bit storage range
+- bounded metadata: `capture_context` accepts only its documented keys with capped string lengths, `attestations` only small typed objects with field names capped at 64 characters, producer id/version capped at 128 characters with no extra producer keys, and integer fields only the 32-bit storage range
 
 Does not own:
 
@@ -146,8 +146,8 @@ Owns:
 - content-blind manifest construction via `packages/format`
 - session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
 - capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
-- TTL sweep
-- server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before sign+upload that completes observation of a session with at least one commitment (final checkpoint over the uncommitted tail, plus one more round for events that arrive while it is in flight; at most two rounds) and leaves a never-committed session alone, and a `getObservationEnvelope()` accessor that yields the `(observed_session_id, token)` binding for `POST /api/records` when a commitment exists and the session has not diverged, `{ state: "unobserved" }` when it has no commitment or is `diverged`, and `null` when no checkpoint adapter is wired
+- TTL sweep; extension consumers retain a small uploaded-record continuation reference (without events or tokens) through the session TTL
+- server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, a 30-second attempt deadline (including response-body reads), immediate serialized persistence of checkpoint outcomes, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before sign+upload that completes observation of a session with at least one commitment (final checkpoint over the uncommitted tail, plus one more round for events that arrive while it is in flight; at most two rounds) and leaves a never-committed session alone, and a `getObservationEnvelope()` accessor that yields the `(observed_session_id, token)` binding for `POST /api/records` when a commitment exists and the session has not diverged, `{ state: "unobserved" }` when it has no commitment or is `diverged`, and `null` when no checkpoint adapter is wired
 - local observation state vocabulary (`disabled` / `unknown` / `known` / `partial` / `diverged`) distinct from the public wire vocabulary on records (`observed` / `partial` / `unobserved` / `not_requested`)
 - adapter interfaces (`StorageAdapter`, `UploadAdapter`, `CheckpointAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`)
 
@@ -156,7 +156,7 @@ Does not own:
 - DOM observation, `chrome.*`, `window.*`, `document.*`
 - Plaintext storage, hashing, replay, upload, or helper payloads
 - Text-based verification; `packages/format.verifyRecord` verifies public structure and hash chain only
-- Token persistence beyond the in-memory `SessionRecord`; consumers persist `observation` only via `StorageAdapter.write(snapshot)` and tokens never leave `SessionRecord.observation.last_observed_token`
+- Storage technology: checkpoint outcomes are persisted through `StorageAdapter.write(snapshot)`; browser consumers provide the storage implementation. Tokens stay in local observation state and are sent only to the ingest service for observation requests
 - Listing/store copy or browser packaging
 
 ### 3.4 `packages/storage`
@@ -166,7 +166,7 @@ Backend storage abstraction.
 Owns:
 
 - record-store interface
-- Postgres implementation later
+- Postgres implementation
 - immutable record save semantics
 - lookup by full `record_hash`
 - lookup by `short_signature`
@@ -216,13 +216,14 @@ Owns:
 - analyzer signal cards
 - verification panel
 - browser-side chain verification using `packages/format`
+- first-party `/write` capture and signing via `packages/producer-core`
 - standing disclaimer
 
 Does not own:
 
 - marketing/docs pages
 - ingestion
-- capture
+- capture in external editors
 
 ### 3.7 `apps/site`
 
@@ -242,7 +243,7 @@ A public blog (`/blog/*`) was scoped originally and dropped in `default-aaaa.25`
 
 ### 3.8 `apps/browser-extension`
 
-Primary future author UX for normal users.
+Primary browser author UX.
 
 Owns:
 
@@ -271,7 +272,7 @@ Owns:
 - server-observed checkpoint orchestration with the `packages/producer-core` cadence and state machine (first event immediate; 50-event delta or 60 s with new events; no idle heartbeats; single in-flight plus one queued slot; 30 s attempt watchdog; 1 s→60 s backoff; `diverged` on 409/400; reset on 404 `observation_unavailable`; up to two flush rounds of an already-observed session before sign), with chain tips advanced from the last known tip by the local `scripts/chain-tip.mjs` helper from public events only
 - observation binding on upload: `(observed_session_id, token)` when a checkpoint succeeded and the session is not diverged, explicit `unobserved` when observation was requested but never succeeded or diverged (the upload message says so), absent when `pmbah-observe-process` is nil
 - one session per buffer, kept across major-mode changes and `revert-buffer` (permanent-local state)
-- per-file session persistence under `pmbah-state-directory` (SHA-256 of the file's true name, owner-only, no text) with resumption anchored at the stored session start, deletion after upload or discard, and `.stale` retirement when the 32-bit event-time bound, a format-version change, or an unreadable file prevents resumption
+- per-file session persistence under `pmbah-state-directory` (SHA-256 of the file's true name, owner-only, no text) with resumption anchored at the stored session start, deletion after upload or discard, preservation of diverged observation state/reason across resumption, and `.stale` retirement when the 32-bit event-time bound, a format-version change, or an unreadable file prevents resumption
 
 ### 3.10 Producer scope invariant
 
@@ -439,7 +440,8 @@ long_pause_count
 Delay distribution guidance:
 
 - Compute inter-event delays from consecutive event `t` values.
-- Define an idle threshold in code/config, e.g. 30 seconds, for active-vs-idle summaries.
+- Define an idle threshold in code/config, e.g. 30 seconds, for active-vs-idle summaries. Active time is the sum of inter-event gaps below that threshold; idle time sums gaps at or above it. Neither includes unmeasured time before the first event or after the last event.
+- Timing analyzer `0.1.1` excludes unmeasured endpoint waits. For legacy cached records, the API corrects active time on read using the measured event span minus the stored idle time, preserving the original idle threshold; legacy timing signals are presented as `0.1.1`. Immutable events, hashes, commitments and stored caches are not rewritten.
 - Keep raw events available for exact process-timeline rendering; stats are a render/cache optimization, not the source of truth.
 
 ---

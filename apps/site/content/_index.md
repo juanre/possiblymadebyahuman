@@ -30,7 +30,7 @@ But some know-it-all tired of wading through AI-generated slop decided that it w
 
 It's annoying but it's a fact of life. And another fact is that you cannot really prove that you wrote it, because you cannot come up with an actual verifiable proof that a sufficiently motivated AI will not be able to spoof.
 
-Oh well. It cannot be done but we are doing it anyway. You can at least assert that it was you who did it, and sign the writing process in a way that would be laborious to spoof (and take as long as it took you to write).
+Oh well. It cannot be done but we are doing it anyway. You can at least assert that it was you who did it, and share a record of the writing process. When server timestamps span twenty minutes, faking that same span takes twenty minutes between submissions too.
 
 </div>
 

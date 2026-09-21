@@ -32,7 +32,7 @@ For a record with no bound document, the final chain value **is** the record has
 
 Recomputing the hash confirms:
 
-- The events were not altered after the signer uploaded them.
+- The events and any binding reproduce the displayed hash.
 - The manifest is internally consistent (event count, declared duration vs. last event time, etc.).
 - The stored `record_hash` matches what the events, and any document binding, actually produce when re-hashed in canonical form.
 
@@ -42,7 +42,7 @@ It does **not** confirm:
 - That a human typed the events instead of a script driving the producer.
 - That the `capture_context` is true; that field is metadata the signer chose to include, not a sworn attribution.
 
-A matching hash is a consistency check, not a verdict. Comparing the recomputed hash to the manifest's own hash field tells you the record is internally consistent and unaltered; it says nothing about who wrote the text.
+A matching hash is a consistency check, not a verdict. Comparing the recomputed hash to the manifest's own hash field tells you the record is internally consistent; it says nothing about who wrote the text or whether the server replaced both the events and the displayed hash. To check against an earlier record, retain its full hash independently and compare it using a verifier you trust. Other metadata, such as capture context, is not committed by the record hash.
 
 ## Hand-verifying without the record page
 
@@ -51,6 +51,6 @@ You can recompute the same hash yourself:
 1. `GET /api/records/<short_signature>` to fetch the manifest and events.
 2. Canonicalise each event with sorted keys and no whitespace (UTF-8 bytes).
 3. Apply the chain definition above with BLAKE3, then fold in the document commitment if the record is bound.
-4. Compare to `manifest.record_hash`.
+4. Compare to `manifest.record_hash` for internal consistency, or to an independently retained full hash to check against an earlier record.
 
 The format package exports `canonicalizeEvent`, `computeEventHashChain`, `computeRecordHash`, and `verifyRecord` so you can do this from any TypeScript or JavaScript runtime; `verifyRecord` selects the bound or unbound derivation from `format_version`. The Emacs and browser producers must produce records that satisfy the same checks; that is what makes the conformance suite worth running.

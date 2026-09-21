@@ -7,6 +7,8 @@ weight: 1
 
 The `/write` page is the no-install producer. It gives you an empty drafting canvas, records content-blind edit events from that canvas, and signs/uploads a PMBAH record when you choose **sign** and confirm with **sign & upload**. You can keep editing after signing; signing again produces a new record covering the whole writing process so far.
 
+Your writing is not saved. Copy it before closing or refreshing the page. Uploading saves the process record, not the canvas text. A failed upload keeps the canvas frozen so retry sends the same signed record.
+
 What it captures:
 
 - mutation timing and edit shape from the `/write` textarea;

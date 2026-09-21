@@ -351,7 +351,7 @@ The repository test suite includes Emacs batch tests that:
 - verify the generated record with `packages/format` structure/hash-chain logic;
 - confirm public events do not contain plaintext fields;
 - confirm the helper output and uploaded record contain no buffer text, inserted
-  text, text hashes, or replay fixtures, and that text passed transiently to
+  text, unapproved text hashes, or replay fixtures, and that text passed transiently to
   compute the content-blind binding does not leak into the output;
 - confirm non-empty buffers start, later absolute positions are retained, and no
   plaintext canaries are uploaded;

@@ -5,9 +5,9 @@ group: "Write a record"
 weight: 3
 ---
 
-A writing record shows the *shape* of an editing process. On its own it is not tied to any particular finished document; the URL could be pasted next to anything. **Binding** closes that gap: when you sign, you can commit the record to the specific text you wrote, so a reader can later check whether a document they were given is that text.
+A writing record shows the *shape* of an editing process. On its own it is not tied to any particular finished document; the URL could be pasted next to anything. **Binding** closes that gap: when you sign, you can commit the record to the wording you select, so a reader can later check whether a document they were given is that text.
 
-This is provenance, not a verdict. A match says the words line up; it never claims a human wrote them.
+Binding does not establish that the recorded edits produced the selected text. This is provenance, not a verdict. A match says the words line up; it never claims a human wrote them.
 
 ## Binding when you sign
 
@@ -18,7 +18,8 @@ In `/write`, the browser extension, and Emacs, signing offers to **bind the docu
   - `/write`: selected text in the writing canvas if there is a selection; otherwise all current canvas content.
   - Browser extension: selected text in the active field/editor if there is a selection; otherwise all current content of that field/editor. This is the path to sign only the body of an email or reply in a larger page such as Gmail.
   - Emacs: active region when `use-region-p` is true; otherwise the whole buffer.
-The producer computes the binding **locally** from that selected-or-fallback text and **discards the text**. Only a content-blind commitment is uploaded: a salted hash of the text's canonical letters and digits, plus its length. The text itself never leaves your machine, and the commitment cannot be turned back into the text.
+
+The producer computes the binding **locally** from that selected-or-fallback text and **discards the text**. Only a content-blind commitment is uploaded: a salted hash of the text's canonical letters and digits, plus its length. No document text is sent to PMBAH. Anyone can test guesses against the public commitment, so short or predictable wording may be guessed. Binding is not encryption; turn it off if you do not want that check to be possible.
 
 A selection with no letters or digits (for example emoji or punctuation only) cannot be bound; signing falls back to process-only.
 

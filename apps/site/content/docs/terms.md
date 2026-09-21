@@ -12,7 +12,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 ## What the service is
 
 - A content-blind writing-record producer plus an ingest endpoint that stores those records and serves them at hash-addressed URLs.
-- The producer never reads the text of what you write; the public record contains only the shape of the editing (positions, lengths, timing, source attribution), a BLAKE3 hash chain over those events, and a small `capture_context` block you reviewed before signing. See the [privacy page](/docs/privacy/) for the full data inventory.
+- The producer reads text locally to measure edits and, if you choose binding, compute a document commitment. The service receives edit structure, a hash chain, optional capture context, and the optional commitment; it receives no document text. See the [privacy page](/docs/privacy/) for the full data inventory.
 - The service makes no claim about whether a human wrote anything. It is **not a detector**, and it does not issue a verdict, score, badge, or certificate.
 
 ## Service is provided as-is
@@ -30,14 +30,14 @@ If you need formal terms (for an employer, an institution, or a use case where w
 
 ## What you keep
 
-- All rights to your writing. The producer doesn't see it, the service doesn't store it, and nothing about ownership of the text changes by signing a record. You keep the words; we keep a numeric description of how the editing happened.
+- All rights to your writing. The producer inspects it locally, the service doesn't store it, and nothing about ownership of the text changes by signing a record. You keep the words; we keep a numeric description of how the editing happened.
 - All rights to records you sign. The record format is open, locally verifiable in a browser, and tied to a BLAKE3 hash chain. You can keep your own copy; you can verify any copy against the public record; you can pin records elsewhere.
 - Producer code is yours to fork. The MIT licence on the repository lets you run your own producer, your own ingest service, or both. The conformance vectors in `packages/conformance` define what a conformant producer has to do.
 
 ## Identity and authorship assertions
 
-- The service does not validate identity. When you sign a record you are asserting, in your own name and on your own authority, that you produced the writing. The service stores your assertion alongside the record and gives the assertion a permanent, hash-addressed URL; it does not certify the assertion.
-- The product was built to make spoofing the writing process materially more work: committing chain tips at real wall-clock cadence makes after-the-fact fabrication take roughly as long as the original writing would have. That is a useful property; it is not a proof of authorship.
+- The service does not validate identity. When you share a record as evidence of your writing, that is your claim. The service stores the process record at a hash-addressed URL; it does not collect a named authorship assertion or validate that claim.
+- The product was built to make spoofing the writing process materially more work: reproducing a server-observed span requires the same elapsed time between checkpoint submissions. A script can prepare events beforehand and wait; this is not a bound on writing effort, and it does not apply to unobserved records. That is a useful property; it is not a proof of authorship.
 
 ## Moderation and removal
 
