@@ -34,6 +34,12 @@ export type MigrationDatabase = MigrationQueryable & {
   connect?: () => Promise<MigrationClient>;
 };
 
+// Arbitrary but fixed key so concurrent app instances serialize their startup migrations.
+export const MIGRATION_ADVISORY_LOCK_KEY = 7_162_824_871;
+// Waiting longer than this for another instance's migration run means it is stuck;
+// failing the start is better than a deploy that hangs.
+export const MIGRATION_LOCK_TIMEOUT = "30s";
+
 export class MigrationChecksumMismatchError extends Error {
   constructor(version: string, expected: string, actual: string) {
     super(`migration ${version} checksum mismatch: stored ${actual}, current ${expected}`);
@@ -62,11 +68,31 @@ export async function loadSqlMigrations(migrationsDir: URL | string = DEFAULT_MI
     }));
 }
 
+/**
+ * Applies pending migrations in one transaction held under a transaction-scoped
+ * advisory lock. The connection may go through a pooler in transaction mode,
+ * which can spread statements outside a transaction across backends; a
+ * session-level lock could then be taken on one backend and never released.
+ * Everything, lock included, therefore lives inside the single transaction.
+ */
 export async function applyMigrations(db: MigrationDatabase, migrations: Migration[]): Promise<MigrationApplyResult> {
   const ordered = validateAndOrderMigrations(migrations);
-  await ensureSchemaMigrationsTable(db);
+  const client = db.connect ? await db.connect() : db;
+  try {
+    return await withMigrationTransaction(client, async () => {
+      await client.query(`set local lock_timeout = '${MIGRATION_LOCK_TIMEOUT}'`);
+      await client.query("select pg_advisory_xact_lock($1)", [MIGRATION_ADVISORY_LOCK_KEY]);
+      return applyOrderedMigrations(client, ordered);
+    });
+  } finally {
+    if ("release" in client) client.release?.();
+  }
+}
 
-  const existing = await db.query<AppliedMigration>(
+async function applyOrderedMigrations(client: MigrationQueryable, ordered: Migration[]): Promise<MigrationApplyResult> {
+  await ensureSchemaMigrationsTable(client);
+
+  const existing = await client.query<AppliedMigration>(
     "select version, name, checksum from schema_migrations order by version",
   );
   const byVersion = new Map(existing.rows.map((row) => [row.version, row]));
@@ -87,13 +113,11 @@ export async function applyMigrations(db: MigrationDatabase, migrations: Migrati
       continue;
     }
 
-    await withMigrationTransaction(db, async (client) => {
-      await client.query(migration.sql);
-      await client.query(
-        "insert into schema_migrations (version, name, checksum) values ($1, $2, $3)",
-        [migration.version, migration.name, checksum],
-      );
-    });
+    await client.query(migration.sql);
+    await client.query(
+      "insert into schema_migrations (version, name, checksum) values ($1, $2, $3)",
+      [migration.version, migration.name, checksum],
+    );
     result.applied.push({ version: migration.version, name: migration.name, checksum });
   }
 
@@ -127,17 +151,14 @@ function validateAndOrderMigrations(migrations: Migration[]): Migration[] {
   return ordered;
 }
 
-async function withMigrationTransaction<T>(db: MigrationDatabase, fn: (client: MigrationQueryable) => Promise<T>): Promise<T> {
-  const client = db.connect ? await db.connect() : db;
+async function withMigrationTransaction<T>(client: MigrationQueryable, fn: () => Promise<T>): Promise<T> {
   try {
     await client.query("begin");
-    const value = await fn(client);
+    const value = await fn();
     await client.query("commit");
     return value;
   } catch (error) {
     await client.query("rollback").catch(() => undefined);
     throw error;
-  } finally {
-    if ("release" in client) client.release?.();
   }
 }

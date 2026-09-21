@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from "react";
+import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
-import type { RecordApiResponse } from "./types.ts";
+import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDelayMs, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
+import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 export function DisclaimerBanner() {
   return (
@@ -13,14 +13,12 @@ export function DisclaimerBanner() {
   );
 }
 
-// Begin/end of the writing. When the server observed checkpoints, that window
-// is the trusted answer. Otherwise we anchor on the trusted server upload time
-// (ingested_server_t) as the end and subtract the recorded duration for the
-// begin — consistent across producers and never claiming more than it knows.
-function recordTimingWindow(record: RecordApiResponse): { began: string; ended: string } | null {
+// Prefer checkpoint receipt times. Without them, show the upload time and an
+// explicitly inferred start based on the producer's claimed duration.
+function recordTimingWindow(record: RecordApiResponse): { began: string; ended: string; estimated: boolean } | null {
   const observation = record.observation;
   if (observation.first_observed_at && observation.last_observed_at) {
-    return { began: observation.first_observed_at, ended: observation.last_observed_at };
+    return { began: observation.first_observed_at, ended: observation.last_observed_at, estimated: false };
   }
   const ingested = record.manifest.ingested_server_t;
   if (ingested) {
@@ -28,6 +26,7 @@ function recordTimingWindow(record: RecordApiResponse): { began: string; ended: 
     return {
       began: new Date(ended - record.manifest.duration_ms).toISOString(),
       ended: new Date(ended).toISOString(),
+      estimated: true,
     };
   }
   return null;
@@ -38,8 +37,8 @@ export function CaptureContextSummary({ record }: { record: RecordApiResponse })
   const timing = recordTimingWindow(record);
   const timingRows = timing ? (
     <>
-      <dt>Began</dt><dd><UtcInstant iso={timing.began} /></dd>
-      <dt>Ended</dt><dd><UtcInstant iso={timing.ended} /></dd>
+      <dt>{timing.estimated ? "Start inferred from upload and claimed duration" : "First checkpoint received"}</dt><dd><UtcInstant iso={timing.began} /></dd>
+      <dt>{timing.estimated ? "Uploaded" : "Last checkpoint received"}</dt><dd><UtcInstant iso={timing.ended} /></dd>
     </>
   ) : null;
   if (!context) {
@@ -81,7 +80,7 @@ export function QuickStatsPanel({ record }: { record: RecordApiResponse }) {
         <Stat label="Paste / unknown" value={`${stats.paste_event_count} / ${stats.unknown_source_count}`} />
         <Stat label="Largest atomic insert" value={`${stats.largest_atomic_insert_codepoints} codepoints`} />
         <Stat label="Active / idle" value={`${formatDuration(stats.active_time_ms)} / ${formatDuration(stats.idle_time_ms)}`} />
-        <Stat label="Delay p50 / p95" value={`${stats.inter_event_delay_p50_ms ?? "n/a"}ms / ${stats.inter_event_delay_p95_ms ?? "n/a"}ms`} />
+        <Stat label="Delay p50 / p95" value={`${formatDelayMs(stats.inter_event_delay_p50_ms)} / ${formatDelayMs(stats.inter_event_delay_p95_ms)}`} />
       </div>
     </section>
   );
@@ -91,12 +90,44 @@ function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
 }
 
-const TIMELINE_VB_W = 1200;
+// Chart geometry is in CSS pixels: the viewBox width follows the rendered
+// width of the SVG, so one user unit is one pixel and labels keep their size
+// at any screen width. The fallback width is used until the SVG is measured.
+const TIMELINE_FALLBACK_W = 1200;
 const TIMELINE_VB_H = 220;
 const TIMELINE_PAD_L = 50;
 const TIMELINE_PAD_R = 20;
 const TIMELINE_PAD_T = 28;
 const TIMELINE_PAD_B = 48;
+const TIMELINE_MIN_TICK_SPACING_PX = 56;
+const TIMELINE_TICK_STEPS_SECONDS = [10, 30, 60, 300, 600, 1800, 3600];
+
+// Width of an element's content box, tracked as it resizes.
+function useContentWidth<T extends Element>(fallback: number): [React.RefObject<T | null>, number] {
+  const ref = useRef<T | null>(null);
+  const [width, setWidth] = useState(fallback);
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const measured = entries[0]?.contentRect.width ?? 0;
+      if (measured > 0) setWidth(Math.round(measured));
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+// The coarsest step that keeps tick labels at least the minimum spacing apart.
+function timelineTickStepSeconds(totalSeconds: number, plotW: number): number {
+  const maxTicks = Math.max(1, Math.floor(plotW / TIMELINE_MIN_TICK_SPACING_PX));
+  for (const step of TIMELINE_TICK_STEPS_SECONDS) {
+    if (totalSeconds / step <= maxTicks) return step;
+  }
+  const largest = TIMELINE_TICK_STEPS_SECONDS[TIMELINE_TICK_STEPS_SECONDS.length - 1]!;
+  return largest * Math.ceil(totalSeconds / (largest * maxTicks));
+}
 
 function sourceFill(source: string): string {
   switch (source) {
@@ -120,30 +151,39 @@ function formatTimelineTick(seconds: number): string {
 
 export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
-  const knownLengths = points.map((point) => point.documentLength).filter((length): length is number => length !== null);
-  const maxLength = Math.max(1, ...knownLengths, record.stats.observed_final_length ?? 0);
+  // The length curve is drawn for the prefix of events whose document length can
+  // be inferred; from the first event with an unknown position onwards only
+  // markers and pauses are shown.
+  const firstUnknown = points.findIndex((point) => point.documentLength === null);
+  const knownPoints = firstUnknown === -1 ? points : points.slice(0, firstUnknown);
+  const lengthKnown = knownPoints.length > 0;
+  const lengthKnownThroughout = points.length > 0 && firstUnknown === -1;
+  const maxLength = timelineLengthScale(points, record.stats.observed_final_length);
   const observedDurationMs = record.manifest.duration_ms || (points.length > 0 ? points[points.length - 1]!.t : 0);
   const duration = Math.max(1, observedDurationMs);
-  const plotW = TIMELINE_VB_W - TIMELINE_PAD_L - TIMELINE_PAD_R;
+  const [chartRef, chartW] = useContentWidth<SVGSVGElement>(TIMELINE_FALLBACK_W);
+  const plotW = Math.max(1, chartW - TIMELINE_PAD_L - TIMELINE_PAD_R);
   const plotH = TIMELINE_VB_H - TIMELINE_PAD_T - TIMELINE_PAD_B;
   const baseline = TIMELINE_PAD_T + plotH;
   const tx = (t: number) => TIMELINE_PAD_L + (Math.min(duration, Math.max(0, t)) / duration) * plotW;
   const ly = (len: number) => baseline - (Math.min(maxLength, Math.max(0, len)) / maxLength) * plotH;
+  // With no inferable length there is no curve; markers sit on a neutral mid line.
+  const markerY = (point: { documentLength: number | null }) => point.documentLength !== null ? ly(point.documentLength) : baseline - plotH / 2;
 
   // Document length over time. The fill closes down to the baseline at both
   // ends (correct for an area); the stroked line traces ONLY the curve, so it
   // does not follow the closing edge back to zero at the end.
   const areaCommands: string[] = [`M ${TIMELINE_PAD_L} ${baseline}`];
-  for (const point of points) {
+  for (const point of knownPoints) {
     areaCommands.push(`L ${tx(point.t)} ${ly(point.documentLength ?? 0)}`);
   }
   // Close the fill straight down at the LAST data point, not out at the (often
   // later) duration mark — otherwise the fill slopes diagonally to zero at the
   // end and reads as the document length collapsing.
-  const lastX = points.length > 0 ? tx(points[points.length - 1]!.t) : TIMELINE_PAD_L;
+  const lastX = knownPoints.length > 0 ? tx(knownPoints[knownPoints.length - 1]!.t) : TIMELINE_PAD_L;
   areaCommands.push(`L ${lastX} ${baseline} Z`);
   const areaPath = areaCommands.join(" ");
-  const linePath = points.map((point, index) => `${index === 0 ? "M" : "L"} ${tx(point.t)} ${ly(point.documentLength ?? 0)}`).join(" ");
+  const linePath = knownPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${tx(point.t)} ${ly(point.documentLength ?? 0)}`).join(" ");
 
   const pauseSpans = points.filter((point) => point.isLongPause && point.delayFromPreviousMs > 0);
   // Only NOTABLE events get a marker — pastes, drops, cuts/deletes, and large
@@ -163,28 +203,36 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const hasLongPause = pauseSpans.length > 0;
 
   const totalSeconds = duration / 1000;
-  const tickEverySeconds = totalSeconds < 60 ? 10 : totalSeconds < 300 ? 30 : totalSeconds < 1200 ? 60 : 300;
+  const tickEverySeconds = timelineTickStepSeconds(totalSeconds, plotW);
   const ticks: number[] = [];
   for (let seconds = 0; seconds <= totalSeconds; seconds += tickEverySeconds) ticks.push(seconds);
-  if (ticks.at(-1) !== Math.floor(totalSeconds)) ticks.push(totalSeconds);
+  // Mark the end of the record too, unless its label would sit on the last tick's.
+  const lastTickSeconds = ticks[ticks.length - 1] ?? 0;
+  if (((totalSeconds - lastTickSeconds) / totalSeconds) * plotW >= TIMELINE_MIN_TICK_SPACING_PX) ticks.push(totalSeconds);
 
   return (
     <section className="card timeline-card">
       <h2>Edit timeline</h2>
-      <p className="muted">Document length over time. Pastes, cuts, and large inserts are marked on the curve; shaded bands are long pauses. Steady typing is the rising line itself.</p>
-      <svg className="timeline-chart" viewBox={`0 0 ${TIMELINE_VB_W} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
+      {lengthKnownThroughout ? (
+        <p className="muted">Document length over time. Pastes, cuts, and large inserts are marked on the curve; shaded bands are long pauses. Steady typing is the rising line itself.</p>
+      ) : lengthKnown ? (
+        <p className="muted">Document length over time, up to edit {knownPoints.length} of {points.length}. From there the length is unknown: an edit with no recorded position (an undo, for example) means the events alone cannot say how long the document was. Pastes, cuts, and large inserts stay marked in time; shaded bands are long pauses.</p>
+      ) : (
+        <p className="muted">Document length is unknown for this record: the capture started inside existing text, or an early edit had no recorded position, so the events alone cannot say how long the document was. Pastes, cuts, and large inserts are marked in time; shaded bands are long pauses.</p>
+      )}
+      <svg ref={chartRef} className="timeline-chart" viewBox={`0 0 ${chartW} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
         {pauseSpans.map((point) => {
           const startT = Math.max(0, point.t - point.delayFromPreviousMs);
           const x = tx(startT);
           const width = Math.max(2, tx(point.t) - x);
           return <rect key={`pause-${point.seq}`} x={x} y={TIMELINE_PAD_T} width={width} height={plotH} fill="#ead9b8" opacity={0.45} />;
         })}
-        <line x1={TIMELINE_PAD_L} y1={baseline} x2={TIMELINE_VB_W - TIMELINE_PAD_R} y2={baseline} stroke="#d8c8a6" strokeWidth={0.6} />
-        <path d={areaPath} fill="rgba(139, 94, 52, 0.18)" stroke="none" />
-        <path d={linePath} fill="none" stroke="#8b5e34" strokeWidth={1.2} strokeLinejoin="round" strokeLinecap="round" />
+        <line x1={TIMELINE_PAD_L} y1={baseline} x2={chartW - TIMELINE_PAD_R} y2={baseline} stroke="#d8c8a6" strokeWidth={0.6} />
+        {lengthKnown ? <path className="length-area" d={areaPath} fill="rgba(139, 94, 52, 0.18)" stroke="none" /> : null}
+        {lengthKnown ? <path className="length-curve" d={linePath} fill="none" stroke="#8b5e34" strokeWidth={1.2} strokeLinejoin="round" strokeLinecap="round" /> : null}
         {notable.map((point) => {
           const x = tx(point.t);
-          const y = ly(point.documentLength ?? 0);
+          const y = markerY(point);
           const r = point.isLargeInsert ? 4.5 : 3.2;
           return (
             <circle key={point.seq} cx={x} cy={y} r={r} fill={sourceFill(point.source)} stroke="#fffaf2" strokeWidth={1.2}>
@@ -192,8 +240,8 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
             </circle>
           );
         })}
-        <text x={TIMELINE_PAD_L - 6} y={TIMELINE_PAD_T + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">{maxLength} cp</text>
-        <text x={TIMELINE_PAD_L - 6} y={baseline + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">0</text>
+        {lengthKnown ? <text x={TIMELINE_PAD_L - 6} y={TIMELINE_PAD_T + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">{maxLength} cp</text> : null}
+        {lengthKnown ? <text x={TIMELINE_PAD_L - 6} y={baseline + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">0</text> : null}
         {ticks.map((seconds) => {
           const x = tx(seconds * 1000);
           return (
@@ -203,10 +251,10 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
             </g>
           );
         })}
-        <text x={TIMELINE_VB_W - TIMELINE_PAD_R} y={baseline + 34} fontSize={10} fill="#a89a82" fontFamily="ui-monospace, monospace" textAnchor="end">time →</text>
+        <text x={chartW - TIMELINE_PAD_R} y={baseline + 34} fontSize={10} fill="#a89a82" fontFamily="ui-monospace, monospace" textAnchor="end">time →</text>
       </svg>
       <div className="legend">
-        <span className="dot curve" /> document length{" "}
+        {lengthKnown && <><span className="dot curve" /> document length{" "}</>}
         {notableSources.has("paste") && <><span className="dot source-paste" /> paste </>}
         {notableSources.has("drop") && <><span className="dot source-drop" /> drop </>}
         {(notableSources.has("cut") || notableSources.has("delete")) && <><span className="dot source-cut" /> cut/delete </>}
@@ -229,7 +277,7 @@ const MEASURE_DEFINITIONS: Record<string, string> = {
   inter_event_delay_p95_ms: "95th-percentile time between consecutive edits.",
   inter_event_delay_max_ms: "Longest gap between consecutive edits.",
   long_pause_count: "Number of gaps of 30 seconds or more.",
-  active_time_ms: "Total time spent actively editing: the sum of gaps shorter than 30 seconds.",
+  active_time_ms: "Sum of gaps shorter than 30 seconds between recorded edits. Time before the first edit and after the last is excluded.",
   idle_time_ms: "Total time paused: the sum of gaps of 30 seconds or more.",
   small_edit_count: "Edits that inserted or deleted only a few codepoints.",
   atomic_insert_max_len: "Largest amount of text inserted in a single edit (e.g. a paste).",
@@ -281,12 +329,11 @@ export function VerificationPanel({ record }: { record: RecordApiResponse }) {
   // it up as a verdict, because comparing it to the server's own hash field
   // is only a check of internal consistency.
   const verification = useMemo(() => verifyRecordChain(record), [record]);
-  const observation = record.observation;
-  const showObservation = observation.state === "observed" || observation.state === "partial";
   return (
     <section className="card">
       <h2>Signature &amp; details</h2>
-      {showObservation ? <ObservationStatusLine record={record} /> : null}
+      <ChainStatus verification={verification} />
+      <ObservationStatusLine record={record} />
       <ManifestDetails record={record} computedRecordHash={verification.computedRecordHash} />
     </section>
   );
@@ -346,7 +393,7 @@ function observationStatusCopy(observation: RecordObservation, eventCount: numbe
     case "unobserved":
       return {
         headline: "Not observed.",
-        body: "No server commitment was received for this session. The hash chain in this record is still verifiable in your browser; the server cannot confirm when it saw the editing process.",
+        body: "No server commitment is bound to this record. The hash chain in this record is still verifiable in your browser; the server cannot confirm when it saw the editing process.",
       };
     case "not_requested":
     default:
@@ -366,12 +413,41 @@ function UtcInstant({ iso }: { iso: string | null }) {
   );
 }
 
+// The reader's own recomputation of the hash chain, stated plainly. This is a
+// check of internal consistency (the events shown are the events signed), not
+// a verdict about authorship.
+function ChainStatus({ verification }: { verification: VerificationState }) {
+  if (verification.ok) {
+    return (
+      <p className="chain-status ok" role="status">
+        <strong>Hash chain recomputed in your browser.</strong> The events and any document binding reproduce the displayed record hash. This checks internal consistency; compare an independently saved hash to check an earlier record.
+      </p>
+    );
+  }
+  const hashMismatch = verification.messages.some((message) => message.includes("record_hash mismatch"));
+  return (
+    <div className="chain-status error" role="status">
+      {hashMismatch ? (
+        <p><strong>Hash chain does not match.</strong> Recomputing the chain from the events shown here does not reproduce the record hash, so this response is internally inconsistent.</p>
+      ) : (
+        <p><strong>Record could not be verified.</strong> This record does not pass the format's checks, so the chain was not recomputed. The details below say what failed.</p>
+      )}
+      <ul className="chain-status-errors">
+        {verification.messages.map((message) => <li key={message}>{message}</li>)}
+      </ul>
+    </div>
+  );
+}
+
 export function ManifestDetails({ record, computedRecordHash }: { record: RecordApiResponse; computedRecordHash?: string }) {
   const manifest = record.manifest;
   return (
     <dl className="details mono">
       <dt>Full record hash</dt><dd>{manifest.record_hash}</dd>
       {computedRecordHash && <><dt>Computed hash</dt><dd>{computedRecordHash}</dd></>}
+      {manifest.parent_record && (
+        <><dt>Continues from</dt><dd><a className="parent-record-link" href={`/${manifest.parent_record}`}>{manifest.parent_record}</a></dd></>
+      )}
       <dt>Producer</dt><dd>{manifest.producer.id} v{manifest.producer.version}</dd>
       <dt>Capabilities</dt><dd>{manifest.producer.capabilities.join(", ") || "none declared"}</dd>
       <dt>Server metadata</dt><dd>{manifest.ingested_server_t ? "ingestion time present" : "client-claimed time only"}</dd>
@@ -490,7 +566,7 @@ function BindingResult({ result }: { result: BindingCheckResult }) {
         <p className="binding-result-note">{TEXT_BINDING_DISCLAIMER}</p>
         {summary.short && (
           <p className="binding-result-warning">
-            This binds only a short run of text ({result.canonicalLength} letters), so a match on it is weak on its own; many documents share a short run.
+            This binds only a short run of text ({result.canonicalLength} canonical characters), so a match on it is weak on its own; many documents share a short run.
           </p>
         )}
       </div>
@@ -521,6 +597,7 @@ export function CommensurabilityCard({ record }: { record: RecordApiResponse }) 
 const FP_MIN_MS = 16;
 const FP_MAX_MS = 100_000;
 const FP_BINS = 40;
+const FP_FALLBACK_W = 660;
 const FP_TICKS: { ms: number; label: string }[] = [
   { ms: 100, label: "100ms" },
   { ms: 1000, label: "1s" },
@@ -533,6 +610,7 @@ const FP_TICKS: { ms: number; label: string }[] = [
 // keep the typing cadence crisp while long pauses fall into the right tail, so
 // a single big pause never flattens the curve.
 export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
+  const [chartRef, W] = useContentWidth<SVGSVGElement>(FP_FALLBACK_W);
   const points = buildTimelinePoints(record.events);
   const delays = points.filter((point) => point.seq > 0).map((point) => point.delayFromPreviousMs).filter((delay) => delay > 0);
   if (delays.length === 0) return null;
@@ -546,7 +624,7 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   }
   const maxCount = Math.max(...counts, 1);
   const stats = record.stats;
-  const W = 660, H = 150, padL = 8, padR = 8, padT = 10, padB = 26;
+  const H = 150, padL = 8, padR = 8, padT = 10, padB = 26;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const baseY = padT + innerH;
@@ -563,7 +641,7 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
     <section className="card fingerprint-card" aria-label="Writing rhythm">
       <h2>Writing rhythm</h2>
       <p className="muted">Time between consecutive edits, on a log scale.</p>
-      <svg className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of time between edits">
+      <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of time between edits">
         {FP_TICKS.map((tick) => (
           <line key={`line-${tick.ms}`} x1={xForMs(tick.ms)} y1={padT} x2={xForMs(tick.ms)} y2={baseY} className="fp-tick-line" />
         ))}
@@ -598,13 +676,14 @@ export function RecordSignet({ record }: { record: RecordApiResponse }) {
         </span>
         <div className="signet-titles">
           <h1>Signed writing record</h1>
+          <p className="signet-scope">This shows the shape of a writing process. It is not a human/AI score or verdict.</p>
           <p className="signet-statement">
             Signs the <strong>shape of the writing process</strong>
-            {bound ? <> and the <strong>text it produced</strong></> : null}.
+            {bound ? <> and a commitment to the <strong>wording the signer selected</strong></> : null}.
           </p>
         </div>
       </div>
-      <p className="signet-orient">A timestamped, tamper-evident record of how this text was written. <a href="/docs/what-pmbah-does/">What is this?</a></p>
+      <p className="signet-orient">An inspectable record of an editing process. A document binding, when present, does not establish that these edits produced that text. <a href="/docs/what-pmbah-does/">What is this?</a></p>
     </header>
   );
 }
@@ -622,7 +701,7 @@ export function RecordFooter() {
         <a href="/docs/verification/">Verify a record</a>
         <a href="https://github.com/juanre/possiblymadebyahuman" rel="noopener">Source</a>
       </nav>
-      <p className="record-footer-note muted">Content-blind: this page never stores or shows your text.</p>
+      <p className="record-footer-note muted">Public records contain no document text. Text pasted for a check stays in this browser.</p>
     </footer>
   );
 }

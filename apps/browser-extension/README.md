@@ -8,7 +8,7 @@ The extension captures the **shape** of editing in any textarea or plain text in
 
 - Passive per-field session identity, mutation capture (`beforeinput` / `input` with codepoint maths), and a wall-clock event timeline that preserves idle gaps.
 - Multiple independent per-field sessions running in parallel — two textareas on site A and one on site B all record independently; signing one freezes and uploads only that field's session.
-- Capture-context redaction at sign time (URL stripped of query/hash, title editable/omittable).
+- Capture-context review at sign time: the popup shows the page URL (already stripped of query/hash), page title and label that will be published; the signer can drop the URL or title and rename the label.
 - Server-observed checkpoints via the producer-core `CheckpointAdapter` (see `packages/producer-core` for cadence/backoff semantics).
 - Chrome/Chromium MV3 package output, deterministic zip artifact for sideload and store submission.
 
@@ -32,7 +32,8 @@ content/capture.ts     ← DOM observer; reads field state transiently to comput
        ▼  chrome.runtime.sendMessage
 background/service-worker.ts
        │  hosts the SessionRegistry; routes messages through
-       │  lib/dispatcher.ts; runs a daily TTL sweep on chrome.alarms.
+       │  lib/dispatcher.ts; sweeps expired sessions at start-up, on
+       │  field registration, and hourly via chrome.alarms.
        ▼
 lib/adapters.ts        ← chrome.storage.local, fetch upload, fetch checkpoint,
                          Date clock, crypto.randomUUID, navigator.clipboard.
@@ -48,7 +49,7 @@ The trust boundary is the service worker: it is the only place that talks to the
 
 The two contexts that send messages to the service worker have different trust profiles, and the response shapes returned to them differ accordingly:
 
-- **Content script** (runs inside every page, including untrusted ones). It forwards only `register_field` and `append_mutation` messages and is allowed to observe only three response kinds: `register_field_result` (carries `session_id` and identity `certainty` only — never observation state), `append_mutation_result` (a pure ack with no payload), and the generic `error` (kind + reason). The full `SessionRecord` — including the bearer `observation.last_observed_token` used to authenticate server-observed checkpoints — never crosses the message boundary into a content-script context. A recursive regression test (`tests/browser-extension-canary.test.mjs`) walks the responses for the content-script message kinds and asserts no `last_observed_token` field and no token-equal string ever appears.
+- **Content script** (runs inside every page, including untrusted ones). It forwards only `register_field` and `append_mutation` messages and is allowed to observe only three response kinds: `register_field_result` (carries `session_id` and identity `certainty` only — never observation state), `append_mutation_result` (an acknowledgement with an optional continuation session ID), and the generic `error` (kind + reason). The full `SessionRecord` — including the bearer `observation.last_observed_token` used to authenticate server-observed checkpoints — never crosses the message boundary into a content-script context. A recursive regression test (`tests/browser-extension-canary.test.mjs`) walks the responses for the content-script message kinds and asserts no `last_observed_token` field and no token-equal string ever appears.
 - **Popup** (extension-privileged page, signed by the extension manifest, not reachable from page JavaScript). It forwards `list_sessions`, `sign_session`, `retry_failed_upload`, and `discard_session`. The popup may retain full `SessionRecord` state in v0 because it is extension-privileged. If a future v0.1 surface exposes that state to less-privileged code, the same regression test should be extended to cover those kinds.
 
 ## Eligibility (the per-field invariant)
@@ -58,18 +59,19 @@ A new producer scope rule applies: **the extension does not snapshot existing no
 - **Empty field, no resumable session** → fresh session, badge reads `recording`.
 - **Empty field, resumable session matches** → the existing session is resumed, badge reads `recording (resumed)`.
 - **Non-empty field, resumable session matches** → resumed, mutations continue.
-- **Non-empty field, no resumable session** → INELIGIBLE. Badge reads `not recording (existing content)`. To start a session in this field the user must either clear the field or open a fresh one.
+- **Non-empty field, its session already uploaded** → a continuation session starts, with `parent_record` naming the uploaded record; the signed session stays frozen with its link.
+- **Non-empty field, no resumable session** → INELIGIBLE. Badge reads `not recording (existing content)`. To start a session in this field the user must clear the field and focus it again, or open a fresh one; an ineligible field is re-evaluated on every focus.
 
 This is deliberate: silently snapshotting pre-existing draft text would be a content-blindness violation, and silently merging an unrelated session into the field would be misleading.
 
 ## Sign / upload flow
 
 1. Focus a textarea or plain text input. The badge appears: `recording`, `recording (resumed)`, or `not recording (existing content)`.
-2. Type. Each `beforeinput`/`input` cycle synthesises a codepoint-anchored mutation that is forwarded to the service-worker registry. The producer-core cadence engine commits a server-observed checkpoint on the first mutation, then every 50 events or every 60 seconds with at least one new event (no idle heartbeats).
+2. Type. Each `beforeinput`/`input` cycle synthesises a codepoint-anchored mutation that is forwarded to the service-worker registry. Insertions and selection replacements are measured in `beforeinput` from the pre-change selection and emitted only after `input` confirms the edit occurred; collapsed deletes (Backspace, Delete, word and line deletes), undo/redo, formatting and spellcheck replacements are sized by comparing the field's codepoint length before and after the browser applies them; an IME composition is recorded once, at `compositionend`, as one `ime` event. Only numbers and input classifications cross between events. The producer-core cadence engine commits a server-observed checkpoint on the first mutation, then every 50 events or every 60 seconds with at least one new event (no idle heartbeats).
 3. Open the popup. The session for the focused field appears under its origin group.
-4. Click **Sign & upload**. The service worker calls `registry.flushObservation` to cover the tail of uncheckpointed events, signs the session, and POSTs `{manifest, events, observation: {observed_session_id, token}}` to the configured ingest endpoint.
-5. On success the popup shows the returned `short_signature` (the record URL), copies it to the clipboard, and removes the session.
-6. On failure the session moves to `failed_upload` with the reason visible in the popup. **Retry semantics in v0**: producer-core does not memoise the signed draft between attempts, so a true in-place retry would require re-signing a session that is no longer `active`. The popup labels this explicitly: **Discard** the failed session and continue typing to start a fresh one, then sign again. This avoids pretending a one-click retry works when the kernel does not support it. A follow-up task may add draft memoisation if real usage shows the workflow matters.
+4. Click **Sign & upload**. The sign panel shows the page URL, page title and label that will be published; drop or rename them, choose whether to bind the text, and confirm. The service worker applies those choices, calls `registry.flushObservation` to attempt completion of observation of a session the server has already committed (covering the tail of uncheckpointed events, with at most two 30-second checkpoint attempts), signs the session, and POSTs `{manifest, events, observation}` to the configured ingest endpoint, where `observation` is `{observed_session_id, token}` for an observed session and `{state: "unobserved"}` for one the server never committed or whose checkpoints diverged; in the diverged case the toast says the record was saved without server-observed commitments.
+5. On success the popup shows the returned `short_signature` (the record URL) and copies it to the clipboard, saying so. The session stays listed with its link until the sweep drops it a minute later. Editing the field again (for example pasting the link into the reply) starts a continuation session that names the uploaded record as its parent; the signed record is untouched, and a continuation that is never signed simply expires.
+6. On failure the session moves to `failed_upload` with the reason visible in the popup. **Retry upload** re-signs the same session with the same binding and uploads again; **Discard** drops it.
 
 ## Build, package, install
 
@@ -112,15 +114,27 @@ EXT_BASE_URL=http://localhost:8787 make extension-package
 
 ### Manual testing
 
-The agent that wrote this code cannot load a real browser. The following manual checks are the responsibility of the human or reviewer who installs the unpacked extension. Each check corresponds to an acceptance criterion in the task.
+The textarea flow below (focus, type with a Backspace, sign from the popup with the binding on, upload, open the public record page, keep editing into a continuation session) also runs automatically in a real Chromium with the built extension loaded, against a locally running service:
+
+```bash
+make local-container                      # app + Postgres on the port in .env.local-container
+make test-extension-e2e PMBAH_LOCAL_BASE_URL=http://localhost:8000
+# or: PMBAH_LOCAL_BASE_URL=http://localhost:8000 npm run test:extension-e2e
+```
+
+`tests/browser/extension-e2e.spec.mjs` builds the extension with `EXT_BASE_URL` pointing at that service, loads it with `--load-extension`, and asserts the uploaded record verifies, has the expected event count and a `text_binding`, and contains none of the typed text. It skips with a message when `PMBAH_LOCAL_BASE_URL` is unset, so the default browser suite stays offline. Never point it at the production origin.
+
+The remaining checks are manual and are the responsibility of the human or reviewer who installs the unpacked extension. Each check corresponds to an acceptance criterion in the task.
 
 - **Textarea capture and binding (Chrome).** Open `chrome://newtab`, navigate to any page with a `<textarea>`, focus it, type a few characters, select a subset of the field text, observe the `recording` badge, open the popup, click **Sign & upload**, confirm the sign panel says it will bind selected text or all field content, and confirm upload returns a `short_signature` copied to the clipboard. Repeat without a selection to confirm it binds all field content.
-- **Contenteditable degraded capture and binding (Chrome/Gmail-like surface).** Open a contenteditable surface (e.g. any rich-text reply box that is fundamentally a contenteditable div), focus it, type. The badge should read `recording`. Select only the reply/body text you intend to sign, leaving surrounding quoted/header/footer material unselected if present. Open the popup — the event count grows as you type. Sign and confirm the upload succeeds. Note: positions are labelled `unknown` for contenteditable in v0; the badge surfaces this explicitly via the source-attribution column.
+- **Contenteditable degraded capture and binding (Chrome/Gmail-like surface).** Open a contenteditable surface (e.g. any rich-text reply box that is fundamentally a contenteditable div), focus it, type. The badge should read `recording`. Select only the reply/body text you intend to sign, leaving surrounding quoted/header/footer material unselected if present. Open the popup — the event count grows as you type. Sign and confirm the upload succeeds. Note: positions are `null` (unknown) for contenteditable; the record page reports the observed length as unknown.
+- **Backspace, IME and undo (Chrome textarea).** Type a few words, press Backspace several times, delete a word with Alt/Ctrl+Backspace, undo with Cmd/Ctrl+Z, and if available commit a few characters through an IME. Sign. The record must upload (no "sign failed"), and its events must show `delete` events with positions, one `ime` event per composition, and `unknown`-source events with null positions for undo.
 - **Multi-field, multi-site session isolation.** Open two textareas on site A in one tab and one textarea on site B in another tab; interleave edits; confirm three independent sessions appear in the popup grouped by origin; sign one; confirm the other two remain `active` with their event counts unchanged.
-- **Pre-existing content INELIGIBLE.** Open a page where a textarea already has some text (e.g. a draft restored by the site itself). Focus it. The badge should read `not recording (existing content)`. Clear the field; the badge should switch to `recording`.
+- **Pre-existing content INELIGIBLE.** Open a page where a textarea already has some text (e.g. a draft restored by the site itself). Focus it. The badge should read `not recording (existing content)`. Clear the field, click elsewhere and focus it again; the badge should switch to `recording`.
+- **Editing after signing.** Sign a field, then paste the link into it. The badge must read `recording (continues a signed record)`, not an error; the popup must still list the signed session with its link, plus a new one-event session marked as continuing it. Signing the continuation must produce a record whose page says "Continues from" the first.
 - **Idle gap preserved.** Type into a textarea, switch to another tab for several minutes, come back, type one more character. Sign and inspect the record: the last event's `t` should reflect the wall-clock gap, not a compressed value.
 - **TTL sweep.** Leave a session untouched. After 3 days plus an hour the `chrome.alarms` job should sweep it. Easier to verify in tests than by waiting: see `tests/producer-core.test.mjs`.
-- **Failed upload.** Block the configured ingest endpoint (e.g. via DevTools network throttling or by pointing `EXT_BASE_URL` at a closed port). Sign; the popup should show the failure reason and offer **Discard**. Discarding clears the session.
+- **Failed upload.** Block the configured ingest endpoint (e.g. via DevTools network throttling or by pointing `EXT_BASE_URL` at a closed port). Sign; the popup should show the failure reason and offer **Retry upload** and **Discard**. Unblock the endpoint and retry; the same record uploads. Discarding clears the session.
 
 ## Content-blindness guarantees
 
@@ -137,3 +151,5 @@ The package's static + runtime safeguards:
 - `docs/chrome-web-store-prep.md` — human publisher checklist plus draft listing, privacy, and permission text.
 
 Do not publish a placeholder install URL. The real Chrome Web Store URL is recorded only after the store listing task lands.
+
+Checkpoint outcomes are persisted immediately, with storage writes serialized so older snapshots cannot overwrite a newer token. Uploaded logs are cleared after the short grace period; a minimal continuation reference remains until the three-day TTL. Matching fields for the same document may share a session across tabs.

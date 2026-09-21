@@ -8,7 +8,7 @@ import test from "node:test";
 import pg from "pg";
 
 import { createIngestApi } from "../apps/ingest-api/src/index.ts";
-import { computeEventHashChain } from "../packages/format/src/index.ts";
+import { computeEventHashChain, computeRecordHash } from "../packages/format/src/index.ts";
 import { PostgresRecordStore } from "../packages/storage/src/index.ts";
 import { applyMigrations, loadSqlMigrations } from "../packages/storage/src/migrations.ts";
 
@@ -31,6 +31,42 @@ test("Postgres observed-session finalization validates the exact public checkpoi
   const harness = await startPostgresHarness(t);
   if (!harness) return;
   const { api, pool } = harness;
+
+  await t.test("invalid containers and integer overflows are client errors before persistence", async () => {
+    const record = await fixtureRecord();
+    assert.equal((await api.postRecord({ ...record, events: null })).status, 400);
+    assert.equal((await api.postObservedCheckpoint(randomUUID(), { event_count: 2147483648, chain_tip: BAD_TIP })).status, 400);
+    record.manifest.session_id = randomUUID();
+    record.events = [0, 1].map((seq) => ({ seq, t: seq, op: "insert", pos: 0, del_len: 0, ins_len: 2147483647, source: "unknown" }));
+    record.manifest.event_count = 2;
+    record.manifest.duration_ms = 1;
+    record.manifest.record_hash = computeRecordHash(record.events, record.manifest.session_id, record.manifest.format_version);
+    const response = await api.postRecord(record);
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error, "invalid_record");
+    assert.equal((await api.getRecord(record.manifest.record_hash)).status, 404);
+  });
+
+  await t.test("legacy timing is corrected on read without rewriting stored records or caches", async () => {
+    const record = await freshRecord();
+    record.events = record.events.map((event) => ({ ...event, t: event.t + 60_000 }));
+    record.manifest.duration_ms = 200_000;
+    record.manifest.record_hash = computeRecordHash(record.events, record.manifest.session_id, record.manifest.format_version);
+    const uploaded = await api.postRecord(record);
+    assert.equal(uploaded.status, 201);
+    const hash = record.manifest.record_hash;
+    await pool.query("update record_stats set active_time_ms = 200000 where record_hash = $1", [hash]);
+    await pool.query("update analysis_results set analyzer_version = '0.1.0', measures = $2 where record_hash = $1 and analyzer_id = 'timing-distribution'", [hash, JSON.stringify([{ key: "active_time_ms", value: 200000, unit: "ms" }, { key: "idle_time_ms", value: 0, unit: "ms" }])]);
+    const fetched = await api.getRecord(uploaded.body.short_signature);
+    const expected = record.events.at(-1).t - record.events[0].t;
+    assert.equal(fetched.body.stats.active_time_ms, expected);
+    const timing = fetched.body.signals.find((signal) => signal.analyzer_id === "timing-distribution");
+    assert.equal(timing.analyzer_version, "0.1.1");
+    assert.equal(timing.measures.find((measure) => measure.key === "active_time_ms").value, expected);
+    assert.equal(fetched.body.manifest.record_hash, hash);
+    assert.deepEqual(fetched.body.events, record.events);
+    assert.equal((await pool.query("select active_time_ms from record_stats where record_hash = $1", [hash])).rows[0].active_time_ms, 200000);
+  });
 
   await t.test("text_binding persists and reads back through real Postgres", async () => {
     const record = await textBindingFixtureRecord();
@@ -204,6 +240,7 @@ async function startPostgresHarness(t) {
       "postgres:16-alpine",
     ], { timeout: 120_000 });
   } catch (error) {
+    if (process.env.CI) throw error;
     t.skip(`docker postgres unavailable: ${error.message}`);
     return null;
   }

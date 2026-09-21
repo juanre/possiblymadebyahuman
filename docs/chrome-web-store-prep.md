@@ -123,7 +123,7 @@ insert/delete/replace positions and lengths in Unicode codepoints, timing, and
 source attribution (typing, paste, drop, cut, IME, autocomplete) when the browser
 reports it. Existing non-empty fields are not recorded — the badge labels them
 "not recording (existing content)" so the extension never silently snapshots a
-draft you started elsewhere. Nothing leaves your device while you write.
+draft you started elsewhere. A matching saved session can resume in a non-empty field. While you write, the extension sends event counts and hash-chain tips for server-timed checkpoints; it never sends your document text.
 
 When you click Sign & upload in the popup, the extension builds a public
 content-blind writing record from the events: codepoint-anchored process
@@ -131,8 +131,7 @@ metadata plus a BLAKE3 hash chain over the event sequence. The public service
 stores that record and returns a short URL you can share. The returned URL is
 copied to your clipboard.
 
-Public records do not contain your document plaintext, do not include
-per-event inserted text, and do not carry any text-derived hash. The capture context (page URL stripped of query and
+Public records contain neither your document plaintext nor per-event inserted text. By default, signing includes a salted commitment to selected wording (or the whole field with no selection). You can turn this binding off. The public commitment allows candidate text to be checked, so short or predictable wording may be guessed. The capture context (page URL stripped of query and
 fragment, page title, field kind) is shown for review before upload and can be
 edited or removed.
 
@@ -155,10 +154,10 @@ and final extension behavior.
 ### Data observed locally
 
 - Textarea or plain text input contents are inspected transiently inside the
-  `beforeinput` event handler scope only, to compute numeric process metadata
+  input handler scope, to compute numeric process metadata
   (codepoint offsets, insertion length, deletion length, source attribution).
   The text reference is discarded when the handler returns. No text crosses
-  event boundaries; no text is retained in extension state.
+  event boundaries; no text is retained in extension state. At signing, the selected text (or whole field with no selection) is read transiently for the optional binding.
 - Per-event mutation structure: codepoint position, inserted codepoint count,
   deleted codepoint count, operation type, wall-clock timestamp, source
   attribution (typing / paste / drop / cut / IME / autocomplete / unknown).
@@ -173,7 +172,7 @@ and final extension behavior.
 
 - Unsigned session event logs containing process metadata only — the public
   `BufferMutation` shape (seq, t, op, pos, del_len, ins_len, source). No text,
-  no text-derived hash, no fingerprint of text.
+  no per-event text hashes. A signed draft may retain its optional text-binding commitment for upload retry.
 - Per-session observation state: server-observed checkpoint commitments
   (`observed_session_id`, `event_count`, `chain_tip`, `observed_at`) and the
   current bearer `token` for the server-observed session. The bearer token
@@ -182,18 +181,18 @@ and final extension behavior.
 - Local retention/TTL: **3 days from the last edit** (producer-core
   `DEFAULT_TTL_MS`). The service worker runs an hourly `chrome.alarms` job
   that sweeps expired sessions. Users can also discard a specific draft from
-  the popup at any time; discard is immediate.
+  the popup at any time; discard is immediate. Uploaded event logs are cleared after a short grace period; a continuation reference remains until the three-day TTL so later edits can link to the uploaded record.
 
-### Data transmitted on explicit sign/upload
+### Data transmitted during capture and on explicit sign/upload
 
 - Content-blind PMBAH record manifest and event log:
   - `manifest`: format version, BLAKE3 record hash, session id, producer
-    identity (`browser-extension` v0.1.0 with capabilities `timing` and
-    `source_attribution`), capture context, event count, duration, and
-    a server-applied ingestion timestamp.
+    identity (`browser-extension` v0.1.1 with capabilities `timing` and
+    `source_attribution`), capture context, event count, duration,
+    optional `text_binding` (scheme, canonical length, salted commitment), and a server-applied ingestion timestamp.
   - `events`: the ordered list of `BufferMutation` records described above.
   - `observation`: `{observed_session_id, token}` when at least one server-
-    observed checkpoint has succeeded for this session, otherwise omitted.
+    observed checkpoint has succeeded and observation has not diverged; `{state: "unobserved"}` when no usable commitment exists.
 - Server-observed checkpoint POSTs sent during the session:
   `{event_count, chain_tip, token?}` to
   `POST /api/observed-sessions/<observed_session_id>/checkpoints`. Cadence is
@@ -205,8 +204,7 @@ and final extension behavior.
 
 - Document text.
 - Per-event inserted text.
-- Text-derived hashes or fingerprints such as final-text hashes or insertion
-  hashes.
+- Per-insertion text hashes. The optional, on-by-default text binding is the one text-derived commitment sent at signing.
 - Absolute local file paths.
 - Operating system, browser fingerprint, or hardware identifiers.
 - A human/AI verdict, confidence score, or authorship certification.
@@ -238,7 +236,7 @@ justifications into the Chrome Web Store privacy form verbatim.
 | `storage` | `permissions: ["storage", ...]` | The service worker stores unsigned per-field session event logs in `chrome.storage.local` (`pmbah:sessions:v1`) until the user signs and uploads them, discards them, or the 3-day TTL sweeps them. Storage holds only content-blind numeric event records and observation state (`observed_session_id`, bearer `token`, commitments — never text). |
 | `clipboardWrite` | `permissions: [..., "clipboardWrite", ...]` | After a successful sign+upload, the popup copies the returned short record URL to the user's clipboard so they can paste it where they want to share it. No other clipboard write occurs. |
 | `alarms` | `permissions: [..., "alarms"]` | The service worker registers a single repeating alarm (`pmbah-ttl-sweep`, every 60 minutes) that runs the local 3-day TTL sweep over unsigned sessions. No other alarm is registered. |
-| `host_permissions: ["<all_urls>"]` | top-level | Required for the content script to attach to textarea and plain text input fields on any page the user visits. This is the capture-all writer producer scope. The content script reads only what is needed transiently inside the `beforeinput` handler to compute codepoint-anchored numeric metadata and never retains text across event boundaries. Non-empty pre-existing fields are marked "not recording (existing content)" and produce no events. |
+| `host_permissions: ["<all_urls>"]` | top-level | Required for the content script to attach to textarea and plain text input fields on any page the user visits. This is the capture-all writer producer scope. The content script reads only what is needed transiently during input handling to compute codepoint-anchored numeric metadata, and at signing to compute the optional text binding and never retains text across event boundaries. Non-empty pre-existing fields are marked "not recording (existing content)" and produce no events. |
 | `content_scripts.matches: ["<all_urls>"]`, `all_frames: true` | top-level | Same rationale as `host_permissions`. `all_frames: true` is required because composition surfaces (forum reply boxes, embedded editors) are frequently iframed; the content script must run inside the writer's actual frame. |
 | Network access to the ingest service | implied by upload URL | Outbound HTTPS only to the configured `EXT_BASE_URL` (default `https://possiblymadebyahuman.com`), and only for two endpoints: `POST /api/records` at sign-time and `POST /api/observed-sessions/<id>/checkpoints` during a session. No other network access occurs. The extension does not request `webRequest`. |
 
@@ -246,8 +244,7 @@ Permissions intentionally **not** requested: `activeTab`, `scripting`, `tabs`,
 `cookies`, `webRequest`, `downloads`, `notifications`, `nativeMessaging`,
 `management`, `identity`, `bookmarks`, `history`. If a Chrome Web Store review
 asks why broader access is not needed, the answer is that the capture-all
-producer reads only what the content script needs inside a single
-`beforeinput` handler scope and posts the resulting numeric event records over
+producer reads only what the content script needs during input handling (and optional binding at signing) and posts the resulting numeric event records over
 `fetch` to one fixed origin.
 
 ## Draft store review notes
@@ -264,7 +261,7 @@ Use these notes to keep the submission aligned with PMBAH's product promise:
 - The submitted zip must not contain source maps, secrets, real `.env` files, or
   development-only artifacts unless deliberately approved for review.
 
-## Release-readiness summary at CWS-prep tip
+## Historical packaging evidence at CWS-prep tip
 
 Code-side work is complete. The remaining steps are all human-owned account /
 listing / screenshot / submission actions.
@@ -290,7 +287,7 @@ listing / screenshot / submission actions.
   `host_permissions: ["<all_urls>"]`, content scripts at `document_idle`
   with `all_frames: true`.
 
-**Artifact metrics** (default `EXT_BASE_URL`, `extension-package`):
+**Historical artifact metrics** (v0.1.0, default `EXT_BASE_URL`, `extension-package`; the manifest is now v0.1.1, so rebuild and record fresh metrics before submission):
 
 | Field | Value |
 | --- | --- |

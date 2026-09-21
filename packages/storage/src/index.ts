@@ -1,4 +1,4 @@
-import { computeEventHashChain, type B3Hash, type EventLog, type JsonValue, type RecordManifest, type Signal, type WritingRecord } from "../../format/src/index.ts";
+import { computeEventHashChain, type Attestation, type B3Hash, type CaptureContext, type EventLog, type RecordManifest, type Signal, type WritingRecord } from "../../format/src/index.ts";
 
 export type RecordStats = {
   record_hash: B3Hash;
@@ -123,6 +123,8 @@ export interface RecordStore {
   findByShortSignature(shortSignature: string): Promise<StoredRecord | null>;
   findByShortSignatureOrHash(id: string): Promise<StoredRecord | null>;
   shortSignatureExists(shortSignature: string): Promise<boolean>;
+  /** Whether a record is stored under this short signature or full hash, without loading it. */
+  recordExists(id: string): Promise<boolean>;
   appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult>;
   getObservedSessionForBinding(input: ObservationBindingInput): Promise<ObservedSession>;
 }
@@ -222,6 +224,11 @@ export class InMemoryRecordStore implements RecordStore {
 
   async shortSignatureExists(shortSignature: string): Promise<boolean> {
     return this.#byShortSignature.has(shortSignature);
+  }
+
+  async recordExists(id: string): Promise<boolean> {
+    if (id.startsWith("b3:")) return this.#byHash.has(id as B3Hash);
+    return this.#byShortSignature.has(id);
   }
 
   async appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult> {
@@ -600,6 +607,15 @@ export class PostgresRecordStore implements RecordStore {
     return result.rows[0]?.exists ?? false;
   }
 
+  async recordExists(id: string): Promise<boolean> {
+    const column = id.startsWith("b3:") ? "record_hash" : "short_signature";
+    const result = await this.#db.query<{ exists: boolean }>(
+      `select exists(select 1 from records where ${column} = $1) as exists`,
+      [id],
+    );
+    return result.rows[0]?.exists ?? false;
+  }
+
   async appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult> {
     return this.#withTransaction(async (client) => {
       const observedAt = input.observed_at ?? new Date().toISOString();
@@ -715,14 +731,14 @@ type RecordRow = Record<string, unknown> & {
   producer_id: string;
   producer_version: string;
   producer_capabilities: string[];
-  capture_context: Record<string, JsonValue> | null;
+  capture_context: CaptureContext | null;
   text_binding: RecordManifest["text_binding"] | null;
   event_count: number;
   duration_ms: number;
   created_client_t: string | null;
   ingested_server_t: string;
   parent_record_hash: B3Hash | null;
-  attestations: Array<{ type: string; [key: string]: JsonValue | undefined }>;
+  attestations: Attestation[];
   events: EventLog;
   created_at: string;
   record_observation_state?: string | null;

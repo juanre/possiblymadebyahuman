@@ -291,6 +291,31 @@ test("FieldEntry type carries no text-bearing string field", async () => {
   assert.doesNotMatch(declaration, /text\s*\??:\s*string/i, "FieldEntry must not declare a text-bearing string");
 });
 
+test("FieldTransient numeric state carries no text-bearing field", async () => {
+  const source = await readFile("apps/browser-extension/src/content/capture.ts", "utf8");
+  const match = source.match(/type\s+FieldTransient\s*=\s*\{([\s\S]+?)\n\};/m);
+  assert.ok(match, "FieldTransient type declaration not found");
+  assert.doesNotMatch(match[1], /\bstring\b/, "FieldTransient must hold numbers and mutation shapes only");
+});
+
+test("service-worker bundle declares the package version as the producer version", async () => {
+  const DIST = await distDir();
+  const body = await readFile(`${DIST}/service-worker.js`, "utf8");
+  const packageJson = JSON.parse(await readFile("apps/browser-extension/package.json", "utf8"));
+  assert.ok(body.includes(`"${packageJson.version}"`), "producer version must come from package.json");
+});
+
+test("content script bundle is a classic script Chrome can inject", async () => {
+  // manifest content_scripts run as classic scripts; a top-level import or
+  // export statement is a syntax error there and the script never runs.
+  const DIST = await distDir();
+  const body = await readFile(`${DIST}/content.js`, "utf8");
+  assert.doesNotMatch(body, /(^|[;}\s])export\s*[{*]|(^|[;}\s])export\s+(const|let|var|function|class|default)\b/);
+  assert.doesNotMatch(body, /(^|[;}\s])import\s*[{"']|(^|[;}\s])import\s+[\w$]+\s+from\b/);
+  const { Script } = await import("node:vm");
+  assert.doesNotThrow(() => new Script(body), "content.js must parse as a classic script");
+});
+
 test("source files outside the content script never read DOM text", async () => {
   // codepoint.ts inspects transient strings passed by the content script — it
   // does not itself touch the DOM. Its parameters happen to be named *Value,

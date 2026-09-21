@@ -37,10 +37,16 @@ export function buildTimelinePoints(events: BufferMutation[]): TimelinePoint[] {
   return events.map((event) => {
     const delayFromPreviousMs = event.seq === 0 ? 0 : event.t - previousT;
     previousT = event.t;
-    documentLength =
-      documentLength === null || event.del_len === null || event.ins_len === null
-        ? null
-        : Math.max(0, documentLength - event.del_len + event.ins_len);
+    // Mirrors computeObservedLength in packages/format: once an event reaches
+    // beyond the length inferable from the captured events (a capture that
+    // started inside a non-empty buffer), the length is unknown from then on.
+    if (documentLength === null || event.pos === null || event.del_len === null || event.ins_len === null) {
+      documentLength = null;
+    } else if (event.pos > documentLength || event.pos + event.del_len > documentLength) {
+      documentLength = null;
+    } else {
+      documentLength = documentLength - event.del_len + event.ins_len;
+    }
     return {
       seq: event.seq,
       t: event.t,
@@ -54,6 +60,15 @@ export function buildTimelinePoints(events: BufferMutation[]): TimelinePoint[] {
       delayFromPreviousMs,
     };
   });
+}
+
+export function timelineLengthScale(points: TimelinePoint[], observedFinalLength: number | null): number {
+  const largestKnown = points.reduce((largest, point) => Math.max(largest, point.documentLength ?? 0), 0);
+  return Math.max(1, largestKnown, observedFinalLength ?? 0);
+}
+
+export function formatDelayMs(ms: number | null): string {
+  return ms === null ? "n/a" : `${ms}ms`;
 }
 
 export function formatDuration(ms: number): string {
@@ -98,7 +113,7 @@ export function formatServerObservedSpan(ms: number): string {
 export const SHORT_BINDING_CANONICAL_LENGTH = 64;
 
 export const TEXT_BINDING_DISCLAIMER =
-  "Compares letters and digits in order; ignores spacing, punctuation, case, and number formatting.";
+  "Compares letters and digits in order; ignores spacing, punctuation, case, and number formatting. It is not a check of exact text.";
 
 export type BindingCheckResult = {
   ok: boolean;

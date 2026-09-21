@@ -6,10 +6,16 @@ import {
   buildTextFieldMutation,
   codepointCount,
   codepointOffsetOf,
+  collapsedDeletionMutation,
+  compositionMutation,
+  contentEditableInsertedCodepoints,
   insertedCodepointsForInput,
+  measuredReplacementMutation,
+  netLengthChangeMutation,
   operationFor,
   sourceFromInputType,
 } from "../apps/browser-extension/src/lib/codepoint.ts";
+import { readFile } from "node:fs/promises";
 import {
   domSignature,
   extractDescriptor,
@@ -19,6 +25,8 @@ import {
 } from "../apps/browser-extension/src/lib/descriptor.ts";
 import { findResumableSession, isFieldEligible } from "../apps/browser-extension/src/lib/policy.ts";
 import { BackgroundDispatcher } from "../apps/browser-extension/src/lib/dispatcher.ts";
+import { createFetchUploadAdapter } from "../apps/browser-extension/src/lib/adapters.ts";
+import { IngestUploadError } from "../packages/producer-core/src/index.ts";
 
 function shapeTarget({
   tagName,
@@ -342,9 +350,15 @@ function inMemoryStorage() {
 function recordingUpload(response) {
   const calls = [];
   let next = response;
+  let oneShot = null;
   return {
     async postRecord(payload) {
       calls.push(payload);
+      if (oneShot) {
+        const error = oneShot;
+        oneShot = null;
+        throw error;
+      }
       if (next instanceof Error) throw next;
       return next ?? {
         record_hash: payload.manifest.record_hash,
@@ -355,16 +369,21 @@ function recordingUpload(response) {
     },
     calls,
     queueError(err) { next = err; },
+    // Throws on the next call only; later calls fall back to the default response.
+    failNext(err) { oneShot = err; },
   };
 }
 
 function recordingCheckpoint() {
   const calls = [];
+  const programmed = [];
   let counter = 0;
   return {
     async postCheckpoint(request) {
       calls.push(request);
       counter += 1;
+      const next = programmed.shift();
+      if (next) return next;
       return {
         ok: true,
         response: {
@@ -378,18 +397,19 @@ function recordingCheckpoint() {
         },
       };
     },
+    // Responses returned, in order, in place of the default success; `undefined` keeps the default.
+    queue(...responses) { programmed.push(...responses); },
     calls,
   };
 }
 
 const PRODUCER = { id: "browser-extension", version: "0.1.0", capabilities: ["timing", "source_attribution"] };
 
-function makeDispatcher() {
+function makeDispatcher({ checkpoint = recordingCheckpoint() } = {}) {
   const clock = mutableClock(1000);
   const uuid = deterministicUuid();
   const storage = inMemoryStorage();
   const upload = recordingUpload();
-  const checkpoint = recordingCheckpoint();
   const dispatcher = new BackgroundDispatcher({
     clock, uuid, storage, upload, checkpoint, producer: PRODUCER,
   });
@@ -432,6 +452,143 @@ test("dispatcher: register → append → sign → upload → marks uploaded", a
   assert.equal(checkpoint.calls.length >= 1, true);
   const live = dispatcher.registry.get(sid);
   assert.equal(live.state, "uploaded");
+});
+
+test("dispatcher: a session the server never committed uploads as unobserved without a sign-time checkpoint", async () => {
+  const checkpoint = recordingCheckpoint();
+  checkpoint.queue({ ok: false, kind: "transient", status: 503, reason: "upstream unavailable" });
+  const { dispatcher, upload } = makeDispatcher({ checkpoint });
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  for (let i = 0; i < 3; i++) {
+    await dispatcher.handle({
+      kind: "append_mutation", session_id: sid,
+      mutation: { op: "insert", pos: i, del_len: 0, ins_len: 1, source: "typing" },
+    });
+  }
+  await dispatcher.registry.awaitObservationIdle(sid);
+  assert.equal(checkpoint.calls.length, 1);
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "uploaded");
+  assert.equal(signed.result.observation_note, undefined);
+  assert.equal(checkpoint.calls.length, 1, "signing must not create a first commitment");
+  assert.deepEqual(upload.calls[0].observation, { state: "unobserved" });
+});
+
+test("dispatcher: a diverged session uploads as unobserved and the result says so", async () => {
+  const checkpoint = recordingCheckpoint();
+  checkpoint.queue(undefined, { ok: false, kind: "conflict", status: 409, reason: "chain mismatch" });
+  const { dispatcher, upload } = makeDispatcher({ checkpoint });
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  for (let i = 0; i < 51; i++) {
+    await dispatcher.handle({
+      kind: "append_mutation", session_id: sid,
+      mutation: { op: "insert", pos: i, del_len: 0, ins_len: 1, source: "typing" },
+    });
+  }
+  await dispatcher.registry.awaitObservationIdle(sid);
+  assert.equal(dispatcher.registry.get(sid).observation.state, "diverged");
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "uploaded", signed.result.reason);
+  assert.equal(typeof signed.result.observation_note, "string");
+  assert.ok(signed.result.observation_note.length > 0);
+  assert.deepEqual(upload.calls[0].observation, { state: "unobserved" });
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+});
+
+test("createFetchUploadAdapter surfaces the ingest error code on a rejected upload", async () => {
+  const rejected = createFetchUploadAdapter({
+    records_endpoint: "https://ingest.test/api/records",
+    fetch: async () => ({
+      ok: false,
+      status: 409,
+      text: async () => JSON.stringify({ error: "observation_mismatch", details: ["checkpoint cp-1 does not match final record prefix"] }),
+      json: async () => ({}),
+    }),
+  });
+  await assert.rejects(rejected.postRecord({ manifest: {}, events: [] }), (error) => {
+    assert.ok(error instanceof IngestUploadError);
+    assert.equal(error.status, 409);
+    assert.equal(error.code, "observation_mismatch");
+    assert.match(error.message, /ingest_failed status=409/);
+    return true;
+  });
+  const opaque = createFetchUploadAdapter({
+    records_endpoint: "https://ingest.test/api/records",
+    fetch: async () => ({ ok: false, status: 502, text: async () => "bad gateway", json: async () => ({}) }),
+  });
+  await assert.rejects(opaque.postRecord({ manifest: {}, events: [] }), (error) => {
+    assert.ok(error instanceof IngestUploadError);
+    assert.equal(error.status, 502);
+    assert.equal(error.code, null);
+    return true;
+  });
+});
+
+async function registerAndType(dispatcher, count) {
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  for (let i = 0; i < count; i++) {
+    await dispatcher.handle({
+      kind: "append_mutation", session_id: sid,
+      mutation: { op: "insert", pos: i, del_len: 0, ins_len: 1, source: "typing" },
+    });
+  }
+  await dispatcher.registry.awaitObservationIdle(sid);
+  return sid;
+}
+
+test("dispatcher: an upload rejected with observation_mismatch retries as unobserved and says so", async () => {
+  const { dispatcher, upload, checkpoint } = makeDispatcher();
+  const sid = await registerAndType(dispatcher, 3);
+  upload.failNext(new IngestUploadError(409, "observation_mismatch", "ingest_failed status=409 reason=observation_mismatch"));
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "failed");
+  assert.ok(upload.calls[0].observation.token, "the first attempt bound the commitment");
+  assert.equal(dispatcher.registry.get(sid).observation.state, "diverged");
+  const checkpointCalls = checkpoint.calls.length;
+  const retried = await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid });
+  assert.equal(retried.kind, "retry_result");
+  assert.equal(retried.result.kind, "uploaded", retried.result.reason);
+  assert.equal(typeof retried.result.observation_note, "string");
+  assert.equal(upload.calls.length, 2);
+  assert.deepEqual(upload.calls[1].observation, { state: "unobserved" });
+  assert.equal(checkpoint.calls.length, checkpointCalls, "a diverged session is not checkpointed again");
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+});
+
+test("dispatcher: an upload rejected with observation_unavailable retries as unobserved", async () => {
+  const { dispatcher, upload, checkpoint } = makeDispatcher();
+  const sid = await registerAndType(dispatcher, 3);
+  upload.failNext(new IngestUploadError(404, "observation_unavailable", "ingest_failed status=404 reason=observation_unavailable"));
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "failed");
+  const obs = dispatcher.registry.get(sid).observation;
+  assert.equal(obs.state, "unknown");
+  assert.equal(obs.last_observed_token, null);
+  const checkpointCalls = checkpoint.calls.length;
+  const retried = await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid });
+  assert.equal(retried.result.kind, "uploaded", retried.result.reason);
+  assert.equal(retried.result.observation_note, undefined);
+  assert.deepEqual(upload.calls[1].observation, { state: "unobserved" });
+  assert.equal(checkpoint.calls.length, checkpointCalls, "no commitment is minted at retry for a reset session");
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
 });
 
 test("dispatcher: signed manifest passes packages/format.verifyRecord", async () => {
@@ -585,7 +742,7 @@ test("dispatcher: discard removes the targeted session only", async () => {
   assert.ok(dispatcher.registry.get(r2.result.session_id));
 });
 
-test("dispatcher: failed_upload retry surfaces the discard-and-resign requirement honestly", async () => {
+test("dispatcher: a retry that fails again stays in failed_upload with the new reason", async () => {
   const { dispatcher, upload } = makeDispatcher();
   upload.queueError(new Error("ingest_failed status=500 reason=down"));
   const reg = await dispatcher.handle({
@@ -603,7 +760,285 @@ test("dispatcher: failed_upload retry surfaces the discard-and-resign requiremen
   const signResp = await dispatcher.handle({ kind: "sign_session", session_id: sid });
   assert.equal(signResp.result.kind, "failed");
   assert.equal(dispatcher.registry.get(sid).state, "failed_upload");
+  upload.queueError(new Error("ingest_failed status=503 reason=still down"));
   const retry = await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid });
   assert.equal(retry.result.kind, "failed");
-  assert.equal(retry.result.reason, "retry_requires_discard_and_resign");
+  assert.match(retry.result.reason, /still down/);
+  assert.equal(dispatcher.registry.get(sid).state, "failed_upload");
+  assert.equal(dispatcher.registry.get(sid).last_failure_reason, retry.result.reason);
+});
+
+
+test("codepoint: collapsed deletions are measured from the field length before and after the edit", () => {
+  assert.deepEqual(
+    collapsedDeletionMutation({ lengthBefore: 5, lengthAfter: 4, caretAfterCodepoints: 4, source: "typing" }),
+    { op: "delete", pos: 4, del_len: 1, ins_len: 0, source: "typing" },
+  );
+  assert.deepEqual(
+    collapsedDeletionMutation({ lengthBefore: 12, lengthAfter: 7, caretAfterCodepoints: 3, source: "typing" }),
+    { op: "delete", pos: 3, del_len: 5, ins_len: 0, source: "typing" },
+  );
+  // Backspace at the start of the field changes nothing and records nothing.
+  assert.equal(collapsedDeletionMutation({ lengthBefore: 5, lengthAfter: 5, caretAfterCodepoints: 0, source: "typing" }), null);
+});
+
+test("codepoint: a spellcheck replacement is sized from the inserted text and the length difference", () => {
+  // "teh" (3) replaced by "the" (3): lengths equal, caret lands after the word.
+  assert.deepEqual(
+    measuredReplacementMutation({ lengthBefore: 10, lengthAfter: 10, insLen: 3, caretAfterCodepoints: 7, source: "autocomplete" }),
+    { op: "replace", pos: 4, del_len: 3, ins_len: 3, source: "autocomplete" },
+  );
+  assert.deepEqual(
+    measuredReplacementMutation({ lengthBefore: 10, lengthAfter: 12, insLen: 5, caretAfterCodepoints: 9, source: "autocomplete" }),
+    { op: "replace", pos: 4, del_len: 3, ins_len: 5, source: "autocomplete" },
+  );
+});
+
+test("codepoint: undo/redo and formatting record the net length change with unknown position", () => {
+  assert.deepEqual(netLengthChangeMutation({ lengthBefore: 10, lengthAfter: 13 }), { op: "insert", pos: null, del_len: 0, ins_len: 3, source: "unknown" });
+  assert.deepEqual(netLengthChangeMutation({ lengthBefore: 10, lengthAfter: 7 }), { op: "delete", pos: null, del_len: 3, ins_len: 0, source: "unknown" });
+  assert.equal(netLengthChangeMutation({ lengthBefore: 10, lengthAfter: 10 }), null);
+});
+
+test("codepoint: an IME composition is one ime event sized by the committed text", () => {
+  assert.deepEqual(compositionMutation({ pos: 2, del_len: 0, committedText: "日本語" }), { op: "insert", pos: 2, del_len: 0, ins_len: 3, source: "ime" });
+  assert.deepEqual(compositionMutation({ pos: 2, del_len: 1, committedText: "語" }), { op: "replace", pos: 2, del_len: 1, ins_len: 1, source: "ime" });
+  assert.deepEqual(compositionMutation({ pos: null, del_len: null, committedText: "語" }), { op: "insert", pos: null, del_len: null, ins_len: 1, source: "ime" });
+  assert.equal(compositionMutation({ pos: 2, del_len: 0, committedText: "" }), null);
+});
+
+test("codepoint: dragging text out of a field is a drag-and-drop source, never typing", () => {
+  assert.equal(sourceFromInputType("deleteByDrag"), "drop");
+});
+
+test("codepoint: contenteditable insert sizes fall back to the transferred text and otherwise stay unknown", () => {
+  assert.equal(contentEditableInsertedCodepoints("insertFromPaste", null, "hello 🎉"), 7);
+  assert.equal(contentEditableInsertedCodepoints("insertText", "x", null), 1);
+  assert.equal(contentEditableInsertedCodepoints("insertParagraph", null, null), 1);
+  assert.equal(contentEditableInsertedCodepoints("insertFromPaste", null, null), null);
+});
+
+test("content script handles compositions, dedupes listeners, and finishes collapsed deletes on input", async () => {
+  const source = await readFile("apps/browser-extension/src/content/capture.ts", "utf8");
+  assert.match(source, /addEventListener\("compositionstart"/);
+  assert.match(source, /addEventListener\("compositionend"/);
+  assert.match(source, /addEventListener\("input"/);
+  assert.match(source, /listening\.has\(element\)/);
+  assert.match(source, /collapsedDeletionMutation/);
+  assert.match(source, /netLengthChangeMutation/);
+  assert.match(source, /response\.session_id/, "content script switches to the continuation session id");
+});
+
+test("dispatcher: editing after upload starts a continuation session linked to the signed record", async () => {
+  const { dispatcher, upload } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+
+  const uploadedHash = dispatcher.registry.get(sid).uploaded_response.record_hash;
+  const append = await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" } });
+  assert.equal(append.kind, "append_mutation_result");
+  assert.ok(append.session_id && append.session_id !== sid, "the content script is told which session now records the field");
+  const signed = dispatcher.registry.get(sid);
+  assert.equal(signed.state, "uploaded", "the signed session stays frozen with its link");
+  assert.equal(signed.events.length, 1);
+  const continuation = dispatcher.registry.get(append.session_id);
+  assert.equal(continuation.state, "active");
+  assert.equal(continuation.events.length, 1, "the continuation holds only the new edit");
+  assert.equal(continuation.parent_record, uploadedHash);
+  assert.deepEqual(continuation.capture_context, signed.capture_context);
+
+  await dispatcher.registry.awaitObservationIdle(append.session_id);
+  const second = await dispatcher.handle({ kind: "sign_session", session_id: append.session_id });
+  assert.equal(second.result.kind, "uploaded");
+  const manifest = upload.calls.at(-1).manifest;
+  assert.equal(manifest.parent_record, uploadedHash);
+  assert.equal(verifyRecord({ manifest, events: upload.calls.at(-1).events }).valid, true);
+});
+
+test("dispatcher: a non-empty field whose session was uploaded registers a continuation of it", async () => {
+  const { dispatcher } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({ kind: "sign_session", session_id: sid });
+
+  const again = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 7, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false,
+  });
+  assert.equal(again.result.kind, "registered");
+  assert.notEqual(again.result.session_id, sid);
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+  const continuation = dispatcher.registry.get(again.result.session_id);
+  assert.equal(continuation.state, "active");
+  assert.equal(continuation.parent_record, dispatcher.registry.get(sid).uploaded_response.record_hash);
+  assert.equal(continuation.origin.tab_id, 7, "the continuation records the tab the field now lives in");
+  assert.equal(continuation.identity_certainty, "resumed");
+});
+
+test("dispatcher: expired sessions are swept when the worker initialises and when a field registers", async () => {
+  const clock = mutableClock(10 * 24 * 60 * 60 * 1000);
+  const storage = inMemoryStorage();
+  const stale = {
+    session_id: "00000000-0000-4000-8000-00000000aaaa",
+    format_version: "0.2",
+    base_wall_ms: 0,
+    last_edit_wall_ms: 0,
+    origin: { origin: "https://old.test", path: "/", tab_id: 1, frame_id: 0 },
+    descriptor: SAMPLE_DESCRIPTOR,
+    identity_certainty: "fresh",
+    producer: PRODUCER,
+    capture_context: { surface: "browser" },
+    events: [],
+    last_event_chain_tip: null,
+    state: "active",
+    observation: { state: "disabled", commitments: [], observed_session_id: null, last_observed_token: null, last_committed_event_count: 0, last_attempt_at_wall_ms: null, last_failure: null, in_flight: false, queued: false, next_backoff_ms: 0 },
+  };
+  await storage.write([stale]);
+  const dispatcher = new BackgroundDispatcher({ clock, uuid: deterministicUuid(), storage, upload: recordingUpload(), checkpoint: recordingCheckpoint(), producer: PRODUCER });
+  await dispatcher.ensureInitialised();
+  assert.equal(dispatcher.registry.list().length, 0);
+  assert.equal((await storage.read()).length, 0, "the sweep is persisted");
+});
+
+test("dispatcher: retrying a failed upload re-signs the same session and keeps its binding", async () => {
+  const { dispatcher, upload } = makeDispatcher();
+  upload.queueError(new Error("ingest_failed status=500 reason=down"));
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "x",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 5, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  const binding = createTextBinding("hello", sid);
+  const signResp = await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: binding });
+  assert.equal(signResp.result.kind, "failed");
+  assert.equal(dispatcher.registry.get(sid).state, "failed_upload");
+
+  upload.queueError(undefined);
+  const retry = await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid });
+  assert.equal(retry.result.kind, "uploaded");
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+  assert.deepEqual(upload.calls.at(-1).manifest.text_binding, binding);
+  assert.equal(verifyRecord({ manifest: upload.calls.at(-1).manifest, events: upload.calls.at(-1).events }).valid, true);
+});
+
+test("dispatcher: capture-context redactions chosen at sign time are applied to the uploaded manifest", async () => {
+  const { dispatcher, upload } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post?draft=1", page_title: "My secret draft title",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 5, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({
+    kind: "sign_session",
+    session_id: sid,
+    capture_context_redactions: { drop_title: true, replace_label: "forum reply" },
+  });
+  const context = upload.calls[0].manifest.capture_context;
+  assert.equal(context.label, "forum reply");
+  assert.equal(context.browser.title, undefined);
+  assert.equal(context.browser.url, "https://a.test/post");
+  assert.equal(JSON.stringify(upload.calls[0]).includes("secret draft"), false);
+});
+
+
+test("dispatcher: rapid edits to a frozen session share one continuation", async () => {
+  const { dispatcher } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({ kind: "sign_session", session_id: sid });
+
+  // The content script fires appends without awaiting, so two keystrokes can
+  // both carry the frozen session id.
+  const [first, second] = await Promise.all([
+    dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" } }),
+    dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 4, del_len: 0, ins_len: 1, source: "typing" } }),
+  ]);
+  assert.equal(first.session_id, second.session_id);
+  const continuation = dispatcher.registry.get(first.session_id);
+  assert.equal(continuation.events.length, 2);
+  assert.equal(dispatcher.registry.list().filter((session) => session.state === "active").length, 1);
+});
+
+test("dispatcher: registering a field with an active continuation resumes it instead of starting another", async () => {
+  const { dispatcher } = makeDispatcher();
+  const reg = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const sid = reg.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  const continued = await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" } });
+
+  // Page re-mounts the field while the uploaded session is still within its grace period.
+  const again = await dispatcher.handle({
+    kind: "register_field",
+    tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false,
+  });
+  assert.equal(again.result.session_id, continued.session_id);
+  assert.equal(dispatcher.registry.list().filter((session) => session.state === "active").length, 1);
+});
+
+test("dispatcher: uploaded continuation survives grace sweep and worker restart", async () => {
+  const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher();
+  const registration = { kind: "register_field", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const first = await dispatcher.handle(registration);
+  const sid = first.result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  const parent = signed.result.response.record_hash;
+  clock.advance(61_000);
+  await dispatcher.sweepExpired();
+  assert.deepEqual(dispatcher.registry.get(sid).events, []);
+  assert.equal(dispatcher.registry.get(sid).observation.last_observed_token, null);
+  assert.equal((await dispatcher.handle({ kind: "list_sessions" })).sessions.length, 0);
+  const restarted = new BackgroundDispatcher({ storage, clock, uuid, upload, checkpoint, producer: PRODUCER });
+  const resumed = await restarted.handle({ ...registration, tab_id: 2, field_is_empty: false });
+  assert.equal(resumed.result.kind, "registered");
+  assert.notEqual(resumed.result.session_id, sid);
+  assert.equal(restarted.registry.get(resumed.result.session_id).parent_record, parent);
+  const otherTab = await restarted.handle({ ...registration, tab_id: 3, field_is_empty: false });
+  assert.equal(otherTab.result.session_id, resumed.result.session_id, "same document across tabs continues sharing its session");
+  clock.advance(3 * 24 * 60 * 60 * 1000 + 1);
+  await restarted.sweepExpired();
+  assert.equal(restarted.registry.get(sid), undefined);
 });

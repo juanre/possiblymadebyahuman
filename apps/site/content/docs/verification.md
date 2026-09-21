@@ -5,15 +5,15 @@ group: "Read and verify a record"
 weight: 2
 ---
 
-Every public record page includes a **Signature & details** section. A record's signature is its BLAKE3 hash, and the short record URL is derived from that hash. When the page loads, it recomputes the hash from the stored events in your own browser and shows the result next to the stored hash, so the "Computed hash" row is your own re-derivation rather than something the server asserts. Nothing you do here is uploaded.
+Every public record page includes a **Signature & details** section. A record's signature is its BLAKE3 hash, and the short record URL is derived from that hash. When the page loads, it recomputes the hash from the stored events in your own browser, states plainly whether the result matches the stored hash, and shows the recomputed value next to the stored one, so the "Computed hash" row is your own re-derivation rather than something the server asserts. If the events shown do not reproduce the record hash, the section says so and lists why. Nothing you do here is uploaded.
 
 ## What the section shows
 
-- **Full record hash**: the record's signature, as stored in the manifest. The short URL is a prefix of this hash.
+- **Full record hash**: the record's signature, as stored in the manifest. The short URL is derived from it: the leading characters of the hash bytes in base58, lengthened on collision, and occasionally prefixed with `X` when the natural prefix would shadow a reserved route such as `/docs`.
 - **Computed hash**: the same hash, recomputed in your browser from the event log (and, for a bound record, the content-blind document commitment). If it equals the stored hash, the events reproduce the signature.
 - **Server metadata**: whether the server recorded an ingestion time, or only a client-claimed time.
 
-When the record was server-observed, this section also carries the one-line observation status and the collapsible list of server-observed commitments.
+The section also carries the one-line observation status for every record (observed, partially observed, not observed, or no observation requested) and, when there are any, the collapsible list of server-observed commitments.
 
 The recomputation runs automatically when the page loads; there is no button to press. Checking whether a particular text is the one that was signed is a separate tool, the [document checker](/docs/checking-a-document/).
 
@@ -32,7 +32,7 @@ For a record with no bound document, the final chain value **is** the record has
 
 Recomputing the hash confirms:
 
-- The events were not altered after the signer uploaded them.
+- The events and any binding reproduce the displayed hash.
 - The manifest is internally consistent (event count, declared duration vs. last event time, etc.).
 - The stored `record_hash` matches what the events, and any document binding, actually produce when re-hashed in canonical form.
 
@@ -42,7 +42,7 @@ It does **not** confirm:
 - That a human typed the events instead of a script driving the producer.
 - That the `capture_context` is true; that field is metadata the signer chose to include, not a sworn attribution.
 
-A matching hash is a consistency check, not a verdict. Comparing the recomputed hash to the manifest's own hash field tells you the record is internally consistent and unaltered; it says nothing about who wrote the text.
+A matching hash is a consistency check, not a verdict. Comparing the recomputed hash to the manifest's own hash field tells you the record is internally consistent; it says nothing about who wrote the text or whether the server replaced both the events and the displayed hash. To check against an earlier record, retain its full hash independently and compare it using a verifier you trust. Other metadata, such as capture context, is not committed by the record hash.
 
 ## Hand-verifying without the record page
 
@@ -51,6 +51,6 @@ You can recompute the same hash yourself:
 1. `GET /api/records/<short_signature>` to fetch the manifest and events.
 2. Canonicalise each event with sorted keys and no whitespace (UTF-8 bytes).
 3. Apply the chain definition above with BLAKE3, then fold in the document commitment if the record is bound.
-4. Compare to `manifest.record_hash`.
+4. Compare to `manifest.record_hash` for internal consistency, or to an independently retained full hash to check against an earlier record.
 
 The format package exports `canonicalizeEvent`, `computeEventHashChain`, `computeRecordHash`, and `verifyRecord` so you can do this from any TypeScript or JavaScript runtime; `verifyRecord` selects the bound or unbound derivation from `format_version`. The Emacs and browser producers must produce records that satisfy the same checks; that is what makes the conformance suite worth running.

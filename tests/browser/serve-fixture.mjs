@@ -1,4 +1,6 @@
-import { createReadStream } from "node:fs";
+import { createReadStream, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
@@ -9,10 +11,23 @@ import { BOUND_TEXT } from "./bound-fixture-text.mjs";
 
 const rootDir = fileURLToPath(new URL("../..", import.meta.url));
 const webDistDir = join(rootDir, "apps/web/dist");
+const extensionDistDir = join(rootDir, "apps/browser-extension/dist");
+const siteDistDir = mkdtempSync(join(tmpdir(), "pmbah-browser-site-"));
+try {
+  execFileSync("hugo", ["--source", join(rootDir, "apps/site"), "--destination", siteDistDir], { stdio: "pipe" });
+} catch (error) {
+  rmSync(siteDistDir, { recursive: true, force: true });
+  throw error;
+}
+process.on("exit", () => rmSync(siteDistDir, { recursive: true, force: true }));
+process.on("SIGTERM", () => process.exit(0));
+process.on("SIGINT", () => process.exit(0));
 const goldenPath = join(rootDir, "packages/conformance/vectors/golden-records.json");
 
 const port = Number(process.env.PMBAH_FIXTURE_PORT ?? 4173);
 const fixtureSlug = process.env.PMBAH_FIXTURE_SLUG ?? "smoke";
+// An address with no record behind it.
+const UNKNOWN_SLUG = "unknown";
 
 const [golden] = JSON.parse(await readFile(goldenPath, "utf8"));
 const record = JSON.parse(JSON.stringify(golden.record));
@@ -131,6 +146,62 @@ const observation = {
 
 const fixtureRecord = { manifest: record.manifest, events: record.events, stats, signals, observation };
 
+// /api/records/tampered: the same record with one event altered after signing,
+// so the browser's recomputed hash no longer matches manifest.record_hash.
+const tamperedEvents = JSON.parse(JSON.stringify(record.events));
+tamperedEvents[0].ins_len += 1;
+const tamperedRecord = {
+  manifest: record.manifest,
+  events: tamperedEvents,
+  stats,
+  signals,
+  observation: {
+    state: "not_requested",
+    observed_session_id: null,
+    commitments: [],
+    checkpoint_count: 0,
+    first_observed_at: null,
+    last_observed_at: null,
+    server_observed_span_ms: null,
+  },
+};
+
+// /api/records/unknownlength: a capture that started inside a non-empty buffer,
+// so absolute positions exceed the length inferable from the events alone and
+// the observed length is unknown. Observation was requested but never committed.
+const unknownSessionId = record.manifest.session_id;
+const unknownEvents = [
+  { seq: 0, t: 0, op: "insert", pos: 40, del_len: 0, ins_len: 1, source: "typing" },
+  { seq: 1, t: 120, op: "insert", pos: 41, del_len: 0, ins_len: 1, source: "typing" },
+  { seq: 2, t: 260, op: "insert", pos: 42, del_len: 0, ins_len: 24, source: "paste" },
+  { seq: 3, t: 400, op: "delete", pos: 60, del_len: 2, ins_len: 0, source: "typing" },
+];
+const unknownManifest = {
+  ...record.manifest,
+  format_version: "0.2",
+  parent_record: record.manifest.record_hash,
+  capture_context: { surface: "emacs", label: "essay.md", emacs: { buffer_name: "essay.md", major_mode: "markdown-mode" } },
+  event_count: unknownEvents.length,
+  duration_ms: 400,
+  record_hash: computeRecordHash(unknownEvents, unknownSessionId, "0.2"),
+};
+delete unknownManifest.text_binding;
+const unknownRecord = {
+  manifest: unknownManifest,
+  events: unknownEvents,
+  stats: { ...stats, record_hash: unknownManifest.record_hash, event_count: 4, duration_ms: 400, observed_final_length: null, paste_event_count: 1, cut_event_count: 0, largest_atomic_insert_codepoints: 24 },
+  signals,
+  observation: {
+    state: "unobserved",
+    observed_session_id: null,
+    commitments: [],
+    checkpoint_count: 0,
+    first_observed_at: null,
+    last_observed_at: null,
+    server_observed_span_ms: null,
+  },
+};
+
 // A second fixture served at /api/records/bound: a format 0.2 record that
 // actually carries a text binding, so the record-page checker has a real
 // commitment to verify against. record_hash is resealed over the binding so
@@ -217,10 +288,28 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
 
+    if (url.pathname.startsWith("/docs/")) {
+      const relative = normalize(url.pathname).replace(/^\/+/, "");
+      const path = join(siteDistDir, relative, extname(relative) ? "" : "index.html");
+      await serveFile(res, path);
+      return;
+    }
+
     if (url.pathname.startsWith("/api/records/")) {
       const requestedSlug = url.pathname.slice("/api/records/".length);
+      if (requestedSlug === UNKNOWN_SLUG) {
+        res.statusCode = 404;
+        res.setHeader("content-type", "application/json; charset=utf-8");
+        res.setHeader("cache-control", "no-store");
+        res.end(JSON.stringify({ error: "record_not_found" }));
+        return;
+      }
       const body = requestedSlug === "bound"
         ? boundRecord
+        : requestedSlug === "tampered"
+        ? tamperedRecord
+        : requestedSlug === "unknownlength"
+        ? unknownRecord
         : requestedSlug === "real" && realRecord
         ? realRecord
         : fixtureRecord;
@@ -228,6 +317,31 @@ const server = createServer(async (req, res) => {
       res.setHeader("content-type", "application/json; charset=utf-8");
       res.setHeader("cache-control", "no-store");
       res.end(JSON.stringify(body));
+      return;
+    }
+
+    // A plain page with a textarea and a contenteditable and nothing else: the
+    // installed extension's own content script does the recording here.
+    if (url.pathname === "/extension-page") {
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      res.setHeader("cache-control", "no-store");
+      res.end(EXTENSION_PAGE_HTML);
+      return;
+    }
+
+    // A plain page hosting the built content script as Chrome would inject it
+    // (a classic script), with chrome.runtime stubbed to record what the script
+    // sends. Lets the browser suite drive real key events through the capture code.
+    if (url.pathname === "/extension-harness") {
+      res.statusCode = 200;
+      res.setHeader("content-type", "text/html; charset=utf-8");
+      res.setHeader("cache-control", "no-store");
+      res.end(EXTENSION_HARNESS_HTML);
+      return;
+    }
+    if (url.pathname === "/extension/content.js") {
+      await serveFile(res, join(extensionDistDir, "content.js"));
       return;
     }
 
@@ -243,18 +357,20 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    await serveFile(res, join(webDistDir, "index.html"));
+    // Like the production server, an address with no record gets the app shell
+    // with a 404 status.
+    await serveFile(res, join(webDistDir, "index.html"), url.pathname === `/${UNKNOWN_SLUG}` ? 404 : 200);
   } catch (error) {
     res.statusCode = 500;
     res.end(String(error));
   }
 });
 
-async function serveFile(res, path) {
+async function serveFile(res, path, status = 200) {
   try {
     const info = await stat(path);
     if (!info.isFile()) throw new Error("not a file");
-    res.statusCode = 200;
+    res.statusCode = status;
     res.setHeader("content-type", contentType(path));
     res.setHeader("cache-control", "no-store");
     createReadStream(path).pipe(res);
@@ -275,6 +391,39 @@ function contentType(path) {
     default: return "application/octet-stream";
   }
 }
+
+const EXTENSION_PAGE_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>extension e2e page</title></head>
+<body>
+<h1>A page with text fields</h1>
+<textarea id="plain" aria-label="plain field"></textarea>
+<div id="rich" contenteditable="true" aria-label="rich field" style="min-height:2em;border:1px solid #999"></div>
+</body></html>`;
+
+const EXTENSION_HARNESS_HTML = `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>extension harness</title></head>
+<body>
+<textarea id="plain" aria-label="plain field"></textarea>
+<div id="rich" contenteditable="true" aria-label="rich field" style="min-height:2em;border:1px solid #999"></div>
+<script>
+  window.__pmbah = { messages: [] };
+  window.chrome = {
+    runtime: {
+      id: "harness",
+      onMessage: { addListener() {} },
+      async sendMessage(message) {
+        window.__pmbah.messages.push(message);
+        if (message.kind === "register_field") {
+          return { kind: "register_field_result", result: { kind: "registered", session_id: "00000000-0000-4000-8000-00000000c0de", certainty: "fresh" } };
+        }
+        if (message.kind === "append_mutation") return { kind: "append_mutation_result" };
+        return { kind: "error", reason: "unexpected " + message.kind };
+      },
+    },
+  };
+</script>
+<script src="/extension/content.js"></script>
+</body></html>`;
 
 server.listen(port, "127.0.0.1", () => {
   console.log(`fixture server listening on http://127.0.0.1:${port} (slug=${fixtureSlug})`);

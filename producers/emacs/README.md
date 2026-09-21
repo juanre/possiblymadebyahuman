@@ -3,9 +3,12 @@
 Native Emacs producer for PossiblyMadeByAHuman (PMBAH) content-blind writing records.
 
 `pmbah-mode` is a buffer-local minor mode. It records Emacs buffer mutations from
-`after-change-functions`, builds a PMBAH format `0.1` record locally, uploads only
-the public content-blind record to an ingest API, and copies the returned short URL
-to the kill ring.
+`after-change-functions`, asks the ingest API to stamp checkpoints of the public
+hash chain while you write, builds a PMBAH format `0.2` record locally, uploads
+only the public content-blind record to the API, and copies the returned short URL
+to the kill ring. Sessions belong to buffers; for file-visiting buffers they are
+saved locally so you can close the file, or Emacs, and pick the same session up
+days later.
 
 ## Privacy and scope
 
@@ -27,6 +30,20 @@ to the kill ring.
   logged, hashed for anything else, uploaded, or reconstructed; only the sealed binding
   object (`scheme`, `canonical_length`, `commitment`) survives. The text never
   leaves your machine. This is a local-compute exception, not a storage exception.
+- Server-observed checkpoints send only the event count and the public
+  hash-chain tip of the events captured so far (`event_count`, `chain_tip`) to
+  `/api/observed-sessions/<session_id>/checkpoints`. The server stamps when it
+  saw that prefix. Checkpoints carry no text and no text-derived hashes, and
+  they are computed by a second local helper, `scripts/chain-tip.mjs`, which
+  refuses any input field other than the session id, format version, public
+  events, and the previously computed tip with its event count. After the
+  first checkpoint only the events since the last tip are hashed, so a
+  checkpoint costs the new events rather than the whole session.
+- Session state saved under `pmbah-state-directory` holds the session id, start
+  time, format version, public events, and the checkpoint token. It never
+  holds document text, the file name, or the file path: the file is named by
+  the SHA-256 of the visited file's true name, and the file is written with
+  owner-only permissions because the token is a bearer secret.
 - Absolute local file paths are noted as omitted at sign time and are not
   uploaded by default.
 - Emacs buffer names and major modes can identify a document or workflow; the
@@ -36,10 +53,13 @@ to the kill ring.
 
 ## Files
 
-- `pmbah-mode.el` — Emacs minor mode and upload flow.
+- `pmbah-mode.el` — Emacs minor mode, checkpointing, session persistence, and
+  upload flow.
 - `scripts/build-record.mjs` — local helper that uses the shared TypeScript
   format package to compute BLAKE3 record hash chains and verification over the
   public process record.
+- `scripts/chain-tip.mjs` — local helper that computes the public hash-chain
+  tip of the events captured so far for a checkpoint.
 
 ## Requirements
 
@@ -154,6 +174,61 @@ or:
 
 Use the path printed by `command -v node` in the shell where the repo tests pass.
 
+### Server-observed checkpoints
+
+`pmbah-observe-process` (default `t`) asks the ingest API to stamp checkpoints
+while you write. Set it to `nil` to upload records without any observation
+request:
+
+```elisp
+(setq pmbah-observe-process nil)
+```
+
+Checkpoints go to `pmbah-api-base-url`. `pmbah-observation-base-url` (default
+`nil`) sends them somewhere else; it exists for testing and should stay `nil`
+in normal use, because a checkpoint token is only valid on the service that
+issued it.
+
+### Session state directory
+
+`pmbah-state-directory` (default `~/.emacs.d/pmbah/`, via
+`locate-user-emacs-file`) holds one state file per visited file. The
+directory is created owner-only. Point it elsewhere if your Emacs directory is
+synced between machines:
+
+```elisp
+(setq pmbah-state-directory "~/.local/state/pmbah/")
+```
+
+## Sessions, buffers, and files
+
+- Each buffer records its own session. Several buffers can record at once;
+  each one checkpoints, resumes, and signs independently, and switching
+  between them does nothing to their sessions.
+- The session survives `M-x <major-mode>` and `revert-buffer`, which otherwise
+  wipe buffer-local state: recording continues into the same session.
+- A file-visiting buffer saves its session to `pmbah-state-directory` after a
+  moment of idle time, when the buffer or Emacs is killed, when the mode is
+  turned off, and whenever the server accepts a checkpoint. Enabling
+  `pmbah-mode` on that file later resumes the session: earlier events are
+  kept and new event times continue from the original start, so a break of
+  hours or days shows up as a pause, not as a new record.
+- A successful upload, or `pmbah-discard-session`, removes the state file and
+  starts a fresh session in the buffer.
+- Renaming the visited file (`write-file`, `set-visited-file-name`) moves the
+  state file with it, so the renamed file resumes the same session.
+- Non-file buffers (`*scratch*`, temporary buffers) keep their session in
+  memory only; killing the buffer discards it.
+- Event times and durations are 32-bit millisecond integers, so one record can
+  span at most about 24.8 days. If resuming a saved session would exceed that,
+  or the saved state was recorded under a different format version or cannot
+  be read, the mode keeps the old state file with a `.stale` suffix, tells you
+  with a message, and starts a fresh session. A live session that reaches the
+  bound, at the next edit or when you sign, is set aside the same way rather
+  than uploaded as a record the service would reject.
+- Opening the same file in two Emacs instances at once is not supported: both
+  would resume the same session and their checkpoints would conflict.
+
 ## Usage
 
 1. Open a writing buffer. It may already contain text; PMBAH records only later
@@ -165,8 +240,12 @@ Use the path printed by `command -v node` in the shell where the repo tests pass
    ```
 
 3. Write normally. The mode line shows `PMBAH:N`, where `N` is the local event
-   count.
-4. Check status when desired:
+   count, followed by an observation mark when checkpoints are enabled: `✓`
+   when the server has stamped every event so far, `·` while some events are
+   not yet stamped (or no checkpoint has succeeded yet), and `✗` when the
+   server's view of the session diverged from the local one.
+4. Check status when desired; it reports the session id, event count,
+   duration, observation state, and API URL:
 
    ```elisp
    M-x pmbah-show-session-status
@@ -185,9 +264,15 @@ Use the path printed by `command -v node` in the shell where the repo tests pass
    M-x pmbah-discard-session
    ```
 
-After a successful upload, the local event log is cleared and a fresh session is
-started for the current buffer. If upload fails, the local event log remains so
-you can retry.
+Before uploading, the mode sends one last checkpoint covering any events the
+server has not stamped yet, so an observed record is observed to its final
+event. If no checkpoint ever succeeded during the session (for example, you
+wrote offline), the record is uploaded with an explicit `unobserved` state
+rather than being stamped for the first time at sign time.
+
+After a successful upload, the local event log and any saved state are cleared
+and a fresh session is started for the current buffer. If upload fails, the
+local event log remains so you can retry.
 
 ## Verify the installation
 
@@ -266,11 +351,21 @@ The repository test suite includes Emacs batch tests that:
 - verify the generated record with `packages/format` structure/hash-chain logic;
 - confirm public events do not contain plaintext fields;
 - confirm the helper output and uploaded record contain no buffer text, inserted
-  text, text hashes, or replay fixtures, and that text passed transiently to
+  text, unapproved text hashes, or replay fixtures, and that text passed transiently to
   compute the content-blind binding does not leak into the output;
 - confirm non-empty buffers start, later absolute positions are retained, and no
   plaintext canaries are uploaded;
-- confirm default capture context avoids absolute file paths.
+- confirm default capture context avoids absolute file paths;
+- run the real ingest API in-process and confirm checkpoints are committed while
+  writing and bound at sign time, that a session whose checkpoints never reached
+  the server uploads as `unobserved`, and that transient failures back off,
+  conflicts pin the session, and unavailable sessions reset;
+- confirm the session survives a major-mode change and `revert-buffer`;
+- confirm a file buffer's session is saved without text, owner-only, resumed on
+  reopen with monotonic event times, removed after upload or discard, and that
+  two file buffers keep independent sessions;
+- confirm a saved session past the 32-bit time bound is set aside as `.stale`
+  and a fresh session starts.
 
 Run them with:
 
@@ -304,3 +399,17 @@ make check
   `/ready` should be healthy.
 - No URL copied: upload did not complete; the local session is retained for
   retry.
+- Mode line stays at `PMBAH:N·`: no checkpoint has succeeded yet, or the last
+  ones failed. `M-x pmbah-show-session-status` shows the last failure. Failed
+  checkpoints retry with a growing delay (1 s to 60 s) on the next edit; the
+  record can still be signed and is then uploaded as `unobserved` or `partial`.
+- Mode line shows `PMBAH:N✗`: the server's commitments diverged from the
+  local session, typically because the same file was recorded from two Emacs
+  instances. No further checkpoints are sent. Signing still works: the record
+  is uploaded with an explicit `unobserved` state instead of binding the
+  diverged commitments, and the upload message says so, quoting the last
+  checkpoint failure.
+- `PMBAH: the saved session for <file> ... starting a fresh session`: the saved
+  state could not be resumed (too old for a record's 32-bit clock, a different
+  format version, or unreadable). It was kept next to the state file with a
+  `.stale` suffix.

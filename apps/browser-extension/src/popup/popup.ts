@@ -1,4 +1,4 @@
-import type { SessionRecord } from "../../../../packages/producer-core/src/index.ts";
+import type { CaptureContextRedactions, SessionRecord } from "../../../../packages/producer-core/src/index.ts";
 import type { TextBinding } from "../../../../packages/format/src/index.ts";
 import type { BackgroundResponse, ComputeBindingRequest, ComputeBindingResponse, ContentToBackground } from "../lib/messages.ts";
 
@@ -83,14 +83,23 @@ function renderSession(session: SessionRecord): HTMLElement {
   meta.className = "session-meta";
   meta.textContent = `${session.origin.path} · ${summary(session)}`;
   wrap.appendChild(meta);
+  if (session.parent_record) {
+    const parent = document.createElement("p");
+    parent.className = "session-meta";
+    parent.textContent = "continues a record you already signed in this field";
+    wrap.appendChild(parent);
+  }
 
   const actions = document.createElement("div");
   actions.className = "session-actions";
   const canSign = session.state === "active" && session.events.length > 0;
   const signBtn = document.createElement("button");
-  signBtn.textContent = session.state === "uploaded" ? "uploaded" : "Sign & upload";
-  signBtn.disabled = !canSign;
-  signBtn.addEventListener("click", () => void onSign(session));
+  signBtn.textContent = session.state === "uploaded" ? "uploaded" : session.state === "failed_upload" ? "Retry upload" : "Sign & upload";
+  signBtn.disabled = !(canSign || session.state === "failed_upload");
+  signBtn.addEventListener("click", () => {
+    if (session.state === "failed_upload") void performRetry(session);
+    else onSign(session);
+  });
   actions.appendChild(signBtn);
   const discardBtn = document.createElement("button");
   discardBtn.className = "secondary";
@@ -108,7 +117,7 @@ function renderSession(session: SessionRecord): HTMLElement {
   if (session.state === "failed_upload" && session.last_failure_reason) {
     const fail = document.createElement("p");
     fail.className = "session-meta";
-    fail.textContent = `upload failed: ${session.last_failure_reason}. Use Discard to clear; future v0 sign creates a new session.`;
+    fail.textContent = `upload failed: ${session.last_failure_reason}. Retry uploads the same signed record; Discard drops it.`;
     wrap.appendChild(fail);
   }
   return wrap;
@@ -118,24 +127,42 @@ function onSign(session: SessionRecord): void {
   openSignConfirm(session);
 }
 
-// Sign confirmation: bind-by-default with an opt-out. The binding is computed
-// in the field's content script (the only context with the text); the popup
-// receives only the commitment object.
+// Sign confirmation: the signer reviews the capture context that will be
+// published (page URL, page title, label) and can drop or rename it, and
+// chooses whether to bind the text. The binding is computed in the field's
+// content script (the only context with the text); the popup receives only
+// the commitment object.
 function openSignConfirm(session: SessionRecord): void {
+  const context = session.capture_context;
+  const url = context.browser?.url ?? "";
+  const title = context.browser?.title ?? "";
+  const label = context.label ?? "";
   const panel = document.createElement("div");
   panel.className = "sign-confirm";
   panel.innerHTML = `
+    <p class="sign-affirm">What the record will say about where this was written</p>
+    <label><input type="checkbox" class="sign-keep-url" ${url ? "checked" : "disabled"} /> Page URL: <span class="sign-context-value">${escapeHtml(url || "none")}</span></label>
+    <label><input type="checkbox" class="sign-keep-title" ${title ? "checked" : "disabled"} /> Page title: <span class="sign-context-value">${escapeHtml(title || "none")}</span></label>
+    <label class="sign-label-row">Label <input type="text" class="sign-label" value="${escapeHtml(label)}" maxlength="120" /></label>
     <label><input type="checkbox" class="sign-bind" checked /> Bind selected text, or all field content if nothing is selected</label>
-    <p class="sign-note">The check compares wording — letters and digits — not exact text.</p>
+    <p class="sign-note">The check compares wording — letters and digits — not exact text. No document text is sent to PMBAH. A public binding lets anyone test guesses at the wording; it is not encryption.</p>
     <div class="session-actions">
       <button class="sign-confirm-go">Sign &amp; upload</button>
       <button class="secondary sign-confirm-cancel">Cancel</button>
     </div>`;
   APP.prepend(panel);
   const bindCb = panel.querySelector(".sign-bind") as HTMLInputElement;
+  const keepUrl = panel.querySelector(".sign-keep-url") as HTMLInputElement;
+  const keepTitle = panel.querySelector(".sign-keep-title") as HTMLInputElement;
+  const labelInput = panel.querySelector(".sign-label") as HTMLInputElement;
   (panel.querySelector(".sign-confirm-cancel") as HTMLElement).addEventListener("click", () => void refresh());
   (panel.querySelector(".sign-confirm-go") as HTMLElement).addEventListener("click", () => {
-    void performSign(session, bindCb.checked);
+    const redactions: CaptureContextRedactions = {};
+    if (url && !keepUrl.checked) redactions.drop_url = true;
+    if (title && !keepTitle.checked) redactions.drop_title = true;
+    const nextLabel = labelInput.value.trim();
+    if (nextLabel !== label) redactions.replace_label = nextLabel;
+    void performSign(session, bindCb.checked, redactions);
   });
 }
 
@@ -154,26 +181,41 @@ async function requestBinding(session: SessionRecord): Promise<TextBinding | und
   }
 }
 
-async function performSign(session: SessionRecord, bind: boolean): Promise<void> {
+async function performSign(session: SessionRecord, bind: boolean, redactions: CaptureContextRedactions): Promise<void> {
   showToast("uploading…");
   const text_binding = bind ? await requestBinding(session) : undefined;
   if (bind && !text_binding) showToast("couldn't read the field to bind — signing the process only", true);
-  const message = text_binding
-    ? { kind: "sign_session" as const, session_id: session.session_id, text_binding }
-    : { kind: "sign_session" as const, session_id: session.session_id };
-  const response = await chrome.runtime.sendMessage(message);
-  if (response.kind === "sign_session_result" && response.result.kind === "uploaded") {
-    showToast(`uploaded · ${response.result.response.short_signature}`);
+  const hasRedactions = Object.keys(redactions).length > 0;
+  const response = await chrome.runtime.sendMessage({
+    kind: "sign_session",
+    session_id: session.session_id,
+    ...(text_binding ? { text_binding } : {}),
+    ...(hasRedactions ? { capture_context_redactions: redactions } : {}),
+  });
+  await reportUploadOutcome(response, "sign failed");
+}
+
+async function performRetry(session: SessionRecord): Promise<void> {
+  showToast("retrying upload…");
+  const response = await chrome.runtime.sendMessage({ kind: "retry_failed_upload", session_id: session.session_id });
+  await reportUploadOutcome(response, "retry failed");
+}
+
+async function reportUploadOutcome(response: BackgroundResponse, failurePrefix: string): Promise<void> {
+  const result = response.kind === "sign_session_result" || response.kind === "retry_result" ? response.result : null;
+  if (result?.kind === "uploaded") {
+    let copied = false;
     try {
-      await navigator.clipboard.writeText(response.result.response.url);
+      await navigator.clipboard.writeText(result.response.url);
+      copied = true;
     } catch {
-      // clipboard may be denied; we still surface the URL via the popup link.
+      // clipboard may be denied; the URL stays visible as the popup link.
     }
+    const saved = copied ? `record saved · link copied (${result.response.short_signature})` : `record saved · ${result.response.short_signature} (copy the link below)`;
+    showToast(result.observation_note ? `${saved} · ${result.observation_note}` : saved);
   } else {
-    const reason = response.kind === "sign_session_result" && response.result.kind === "failed"
-      ? response.result.reason
-      : response.kind === "error" ? response.reason : "unknown";
-    showToast(`sign failed: ${reason}`, true);
+    const reason = result?.kind === "failed" ? result.reason : response.kind === "error" ? response.reason : "unknown";
+    showToast(`${failurePrefix}: ${reason}`, true);
   }
   await refresh();
 }

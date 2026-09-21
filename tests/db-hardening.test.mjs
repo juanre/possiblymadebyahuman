@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { computeEventHashChain } from "../packages/format/src/index.ts";
@@ -224,6 +226,7 @@ test("runtime POST body limit returns 413 before API handling", async () => {
   let handled = false;
   const server = createRuntimeServer({
     api: { handleRequest: async () => { handled = true; return new Response("{}", { status: 200 }); } },
+    store: new InMemoryRecordStore(),
     db: { async query() { return { rows: [] }; } },
     recordBodyLimitBytes: 5,
   });
@@ -347,6 +350,7 @@ test("runtime server still routes valid API requests under the body limit", asyn
   const api = createIngestApi({ store, baseUrl: "https://possiblymadebyahuman.test", now: () => new Date("2026-05-28T10:00:00.000Z") });
   const server = createRuntimeServer({
     api,
+    store,
     db: { async query() { return { rows: [] }; } },
     recordBodyLimitBytes: 10_000,
   });
@@ -366,6 +370,134 @@ test("runtime server still routes valid API requests under the body limit", asyn
   }
 });
 
+test("runtime server serves the record shell with 404 for an unknown slug and 200 for a stored record or /write", async () => {
+  const store = new InMemoryRecordStore();
+  const api = createIngestApi({ store, baseUrl: "https://possiblymadebyahuman.test" });
+  const webDistDir = await mkdtemp(join(tmpdir(), "pmbah-web-dist-"));
+  const shell = "<!doctype html><div id=\"root\"></div>";
+  await writeFile(join(webDistDir, "index.html"), shell);
+  const server = createRuntimeServer({
+    api,
+    store,
+    db: { async query() { return { rows: [] }; } },
+    webDistDir,
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    const base = `http://127.0.0.1:${port}`;
+    const upload = await fetch(`${base}/api/records`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(await fixtureRecord()),
+    });
+    assert.equal(upload.status, 201);
+    const { short_signature, record_hash } = await upload.json();
+
+    const missing = await fetch(`${base}/no-such-record`);
+    assert.equal(missing.status, 404);
+    assert.match(missing.headers.get("content-type"), /text\/html/);
+    assert.equal(await missing.text(), shell);
+
+    for (const path of [`/${short_signature}`, `/${record_hash}`, "/write", "/write/"]) {
+      const response = await fetch(`${base}${path}`);
+      assert.equal(response.status, 200, path);
+      assert.equal(await response.text(), shell, path);
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+async function shellServer(store) {
+  const webDistDir = await mkdtemp(join(tmpdir(), "pmbah-web-dist-"));
+  await writeFile(join(webDistDir, "index.html"), "<!doctype html><div id=\"root\"></div>");
+  const siteDistDir = await mkdtemp(join(tmpdir(), "pmbah-site-dist-"));
+  await writeFile(join(siteDistDir, "index.html"), "<!doctype html><h1>home</h1>");
+  const server = createRuntimeServer({
+    api: { handleRequest: async () => new Response("{}", { status: 200 }) },
+    store,
+    db: { async query() { return { rows: [] }; } },
+    webDistDir,
+    siteDistDir,
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { server, base: `http://127.0.0.1:${server.address().port}` };
+}
+
+test("runtime server serves the 200 shell when the record lookup fails, so the client owns the failure UI", async () => {
+  const store = { async recordExists() { throw new Error("database unavailable"); } };
+  const { server, base } = await shellServer(store);
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args);
+  try {
+    for (const method of ["GET", "HEAD"]) {
+      const response = await fetch(`${base}/abc123`, { method });
+      assert.equal(response.status, 200, method);
+      assert.match(response.headers.get("content-type"), /text\/html/, method);
+    }
+    assert.equal(errors.length, 2, "each failed lookup is logged once");
+  } finally {
+    console.error = originalError;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("runtime server treats repeated leading slashes as the root and never looks up an empty slug", async () => {
+  const lookups = [];
+  const store = { async recordExists(id) { lookups.push(id); return false; } };
+  const { server, base } = await shellServer(store);
+  try {
+    for (const path of ["//", "///"]) {
+      const response = await fetch(`${base}${path}`);
+      assert.equal(response.status, 200, path);
+      assert.match(response.headers.get("content-type"), /text\/html/, path);
+      assert.equal(await response.text(), "<!doctype html><h1>home</h1>", path);
+    }
+    // "//other-host/api/x" must not be read as a request for another host.
+    const hostLike = await fetch(`${base}//other-host/no-such-record`);
+    assert.equal(hostLike.status, 404);
+    assert.deepEqual(lookups, ["other-host/no-such-record"]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("InMemoryRecordStore.recordExists answers for short signatures and full hashes", async () => {
+  const store = new InMemoryRecordStore();
+  const record = await fixtureRecord();
+  await store.saveRecord({ record, short_signature: "abc123def4", stats: computeRecordStats(record), signals: [], created_at: "2026-05-28T10:00:01.000Z" });
+  assert.equal(await store.recordExists("abc123def4"), true);
+  assert.equal(await store.recordExists(record.manifest.record_hash), true);
+  assert.equal(await store.recordExists("nope"), false);
+  assert.equal(await store.recordExists(`b3:${"0".repeat(64)}`), false);
+  assert.equal(await store.recordExists(""), false);
+});
+
+test("PostgresRecordStore.recordExists is one indexed existence query on the matching column", async () => {
+  const queries = [];
+  const db = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return { rows: [{ exists: params[0] === "known" || params[0] === `b3:${"a".repeat(64)}` }] };
+    },
+  };
+  const store = new PostgresRecordStore(db);
+  assert.equal(await store.recordExists("known"), true);
+  assert.equal(await store.recordExists("missing"), false);
+  assert.equal(await store.recordExists(`b3:${"a".repeat(64)}`), true);
+  assert.equal(queries.length, 3);
+  for (const query of queries) {
+    assert.match(query.sql, /select exists\(select 1 from records where /i);
+    assert.doesNotMatch(query.sql, /events|stats|signals|observ/i);
+  }
+  assert.match(queries[0].sql, /short_signature = \$1/);
+  assert.match(queries[1].sql, /short_signature = \$1/);
+  assert.match(queries[2].sql, /record_hash = \$1/);
+  assert.deepEqual(queries.map((query) => query.params), [["known"], ["missing"], [`b3:${"a".repeat(64)}`]]);
+});
+
 function migrationDb() {
   const rows = [];
   const client = {
@@ -373,15 +505,121 @@ function migrationDb() {
       if (/insert into schema_migrations/i.test(sql)) {
         rows.push({ version: params[0], name: params[1], checksum: params[2] });
       }
+      if (/select version, name, checksum from schema_migrations/i.test(sql)) return { rows: [...rows].sort((a, b) => a.version.localeCompare(b.version)) };
       return { rows: [] };
     },
     release() {},
   };
   return {
     async connect() { return client; },
-    async query(sql) {
-      if (/select version, name, checksum from schema_migrations/i.test(sql)) return { rows: [...rows].sort((a, b) => a.version.localeCompare(b.version)) };
-      return { rows: [] };
-    },
+    async query() { return { rows: [] }; },
   };
 }
+
+test("migration manager runs the whole migration set in one transaction under a transaction-scoped advisory lock", async () => {
+  const clientQueries = [];
+  const poolQueries = [];
+  let releaseCount = 0;
+  const db = {
+    async connect() {
+      return {
+        async query(sql) { clientQueries.push(sql.trim()); return { rows: [] }; },
+        release() { releaseCount += 1; },
+      };
+    },
+    async query(sql) { poolQueries.push(sql); return { rows: [] }; },
+  };
+
+  await applyMigrations(db, [{ version: "001", name: "001_first", sql: "create table if not exists first(id integer);" }]);
+
+  // A pooled connection in transaction mode may route statements outside a
+  // transaction to different backends, so the lock must be transaction-scoped
+  // and everything must happen inside that one transaction.
+  assert.equal(clientQueries[0], "begin");
+  const lockIndex = clientQueries.findIndex((sql) => /pg_advisory_xact_lock/.test(sql));
+  const firstSchemaIndex = clientQueries.findIndex((sql) => /schema_migrations/i.test(sql));
+  assert.ok(lockIndex > 0, "the transaction-scoped lock is taken");
+  assert.ok(lockIndex < firstSchemaIndex, "the lock is taken before touching schema_migrations");
+  assert.equal(clientQueries.at(-1), "commit");
+  assert.equal(clientQueries.filter((sql) => sql === "begin").length, 1, "one transaction for the whole run");
+  assert.ok(clientQueries.some((sql) => /lock_timeout/i.test(sql)), "a hung lock fails instead of blocking startup forever");
+  assert.ok(clientQueries.some((sql) => /create table if not exists schema_migrations/i.test(sql)));
+  assert.ok(clientQueries.some((sql) => /insert into schema_migrations/i.test(sql)));
+  assert.ok(!clientQueries.some((sql) => /pg_advisory_unlock|pg_advisory_lock\(/.test(sql)));
+  assert.deepEqual(poolQueries, []);
+  assert.equal(releaseCount, 1);
+});
+
+test("migration manager releases the advisory lock when a migration fails", async () => {
+  const clientQueries = [];
+  const db = {
+    async connect() {
+      return {
+        async query(sql) {
+          clientQueries.push(sql.trim());
+          if (/create table broken/i.test(sql)) throw new Error("boom");
+          return { rows: [] };
+        },
+        release() {},
+      };
+    },
+    async query() { return { rows: [] }; },
+  };
+  await assert.rejects(applyMigrations(db, [{ version: "001", name: "001_broken", sql: "create table broken(id integer);" }]), /boom/);
+  assert.equal(clientQueries.at(-1), "rollback");
+  assert.ok(!clientQueries.includes("commit"));
+});
+
+test("runtime server serves site root files with their media types and redirects /docs to /docs/", async () => {
+  const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = await mkdtemp(join(tmpdir(), "pmbah-server-"));
+  const siteDir = join(root, "site");
+  const webDir = join(root, "web");
+  await mkdir(join(siteDir, "docs"), { recursive: true });
+  await mkdir(webDir, { recursive: true });
+  await writeFile(join(siteDir, "robots.txt"), "User-agent: *\n");
+  await writeFile(join(siteDir, "sitemap.xml"), "<urlset/>");
+  await writeFile(join(siteDir, "site.webmanifest"), "{}");
+  await writeFile(join(siteDir, "docs", "index.html"), "<h1>docs</h1>");
+  await writeFile(join(webDir, "index.html"), "<div id=root></div>");
+
+  const server = createRuntimeServer({
+    api: { handleRequest: async () => new Response("{}", { status: 200 }) },
+    store: new InMemoryRecordStore(),
+    db: { async query() { return { rows: [] }; } },
+    siteDistDir: siteDir,
+    webDistDir: webDir,
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const { port } = server.address();
+    const get = (path) => fetch(`http://127.0.0.1:${port}${path}`, { redirect: "manual" });
+
+    assert.match((await get("/robots.txt")).headers.get("content-type"), /^text\/plain/);
+    assert.match((await get("/sitemap.xml")).headers.get("content-type"), /^application\/xml/);
+    assert.match((await get("/site.webmanifest")).headers.get("content-type"), /^application\/manifest\+json/);
+
+    const docsNoSlash = await get("/docs");
+    assert.equal(docsNoSlash.status, 301);
+    assert.equal(docsNoSlash.headers.get("location"), "/docs/");
+    const docs = await get("/docs/");
+    assert.equal(docs.status, 200);
+    assert.match(docs.headers.get("content-type"), /^text\/html/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+
+test("runtime health exposes only the configured public build revision", async () => {
+  const server = createRuntimeServer({ api: createIngestApi({ store: new InMemoryRecordStore() }), store: { recordExists: async () => false }, db: { query: async () => ({ rows: [] }) }, buildRevision: "a".repeat(40) });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/health`);
+    assert.deepEqual(await response.json(), { ok: true, revision: "a".repeat(40) });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

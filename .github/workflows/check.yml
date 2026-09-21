@@ -1,0 +1,49 @@
+name: Check
+
+on:
+  workflow_call:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y emacs-nox hugo
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Typecheck and test, including Emacs and real Postgres
+        run: |
+          command -v emacs
+          command -v hugo
+          docker info > /dev/null
+          npm run check
+      - name: Build public surfaces
+        run: |
+          npm run build:web
+          make extension-package build-site
+      - name: Test the release container and installed extension
+        env:
+          BUILD_REVISION: ${{ github.sha }}
+        run: node scripts/test-release-container.mjs
+      - name: Upload failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-failure-evidence
+          path: |
+            test-results/
+          if-no-files-found: ignore

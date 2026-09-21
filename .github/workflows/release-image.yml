@@ -9,7 +9,13 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  check:
+    uses: ./.github/workflows/check.yml
+    permissions:
+      contents: read
+
   extension-package:
+    needs: check
     name: Build browser extension package
     runs-on: ubuntu-latest
     permissions:
@@ -40,6 +46,7 @@ jobs:
           retention-days: 90
 
   release-image:
+    needs: [check, extension-package]
     name: Build and publish production image
     runs-on: ubuntu-latest
     permissions:
@@ -80,8 +87,34 @@ jobs:
           context: .
           file: Dockerfile
           platforms: linux/amd64,linux/arm64
+          build-args: BUILD_REVISION=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  release-downloads:
+    name: Publish durable release downloads
+    needs: [release-image, extension-package]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: possiblymadebyahuman-extension-${{ github.ref_name }}
+          path: release-assets
+      - name: Create release notes and attach the extension
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release-assets/*.zip --clobber
+          else
+            flags=()
+            if [[ "$RELEASE_TAG" == *-* ]]; then flags+=(--prerelease); fi
+            gh release create "$RELEASE_TAG" release-assets/*.zip --verify-tag --title "$RELEASE_TAG" --generate-notes "${flags[@]}"
+          fi

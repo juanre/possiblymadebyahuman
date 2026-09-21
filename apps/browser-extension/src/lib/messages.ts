@@ -1,5 +1,6 @@
-import type { CaptureContext, TextBinding } from "../../../../packages/format/src/index.ts";
+import type { TextBinding } from "../../../../packages/format/src/index.ts";
 import type {
+  CaptureContextRedactions,
   FieldDescriptor,
   FieldOrigin,
   IngestRecordResponse,
@@ -28,7 +29,8 @@ export type ContentToBackground =
   | {
       kind: "sign_session";
       session_id: SessionId;
-      capture_context_overrides?: Partial<CaptureContext>;
+      // The signer's review of what provenance context to publish.
+      capture_context_redactions?: CaptureContextRedactions;
       // Content-blind binding object computed in the content script (the only
       // context that holds field text). Never the text itself.
       text_binding?: TextBinding;
@@ -62,12 +64,16 @@ export type RegisterFieldResult =
   | { kind: "ineligible"; reason: "non_empty_field_no_resumable_session" };
 
 export type SignSessionResult =
-  | { kind: "uploaded"; response: IngestRecordResponse }
+  // observation_note explains, for the signer, when the record was uploaded
+  // without server observation although observation had been requested.
+  | { kind: "uploaded"; response: IngestRecordResponse; observation_note?: string }
   | { kind: "failed"; reason: string };
 
 export type BackgroundResponse =
   | { kind: "register_field_result"; result: RegisterFieldResult }
-  | { kind: "append_mutation_result" }
+  // session_id is present when the edit started a continuation session and the
+  // content script must record further edits under that id.
+  | { kind: "append_mutation_result"; session_id?: SessionId }
   | { kind: "list_sessions_result"; sessions: SessionRecord[] }
   | { kind: "sign_session_result"; result: SignSessionResult }
   | { kind: "retry_result"; result: SignSessionResult }

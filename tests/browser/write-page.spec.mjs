@@ -55,7 +55,7 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
   await page.getByRole("button", { name: "sign", exact: true }).click();
   await page.getByRole("button", { name: "sign & upload" }).click();
 
-  await expect(page.getByText("open signature →")).toBeVisible();
+  await expect(page.getByText("open record →")).toBeVisible();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/writetest1" })).toBeVisible();
 
   expect(uploadedPayload, "record upload payload captured").toBeTruthy();
@@ -196,6 +196,7 @@ test("/write keeps a failed upload available for retry", async ({ page }) => {
   await expect(errorSpan).toBeVisible();
   await expect(errorSpan).toHaveText("upload failed, try again");
   await expect(errorSpan).toHaveAttribute("title", /Upload failed: temporary_test_failure/);
+  await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveAttribute("readonly", "");
   await page.getByRole("button", { name: "retry" }).click();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/retrytest1" })).toBeVisible();
   expect(uploadAttempts).toBe(2);
@@ -267,7 +268,7 @@ test("/write keeps your writing after signing and offers to copy it", async ({ p
   await page.keyboard.type("My precious writing.");
   await page.getByRole("button", { name: "sign", exact: true }).click();
   await page.getByRole("button", { name: "sign & upload" }).click();
-  await expect(page.getByText("open signature →")).toBeVisible();
+  await expect(page.getByText("open record →")).toBeVisible();
 
   // Signing must NOT wipe the canvas; the writer keeps their words.
   await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveValue("My precious writing.");
@@ -283,4 +284,183 @@ test("/write focuses the canvas on load so you can type without clicking", async
   await expect(page.locator(".write-modeline")).toContainText("idle");
   await page.keyboard.type("hello");
   await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveValue("hello");
+});
+
+test("/write shows its status message on the page, including why an upload failed", async ({ page }) => {
+  await page.route("**/api/observed-sessions/*/checkpoints", async (route) => {
+    const body = route.request().postDataJSON();
+    const observedSessionId = new URL(route.request().url()).pathname.split("/").at(-2);
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ observed_session_id: observedSessionId, token: "m".repeat(32), checkpoint_id: "message-cp", event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
+    });
+  });
+  await page.route("**/api/records", async (route) => {
+    await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporary_test_failure" }) });
+  });
+
+  await page.goto("/write");
+  const message = page.getByRole("status", { name: "Drafting message" });
+  await expect(message).toBeVisible();
+  await expect(message).toContainText("Text stays in this browser");
+
+  await page.getByRole("textbox", { name: "Writing canvas" }).click();
+  await page.keyboard.type("Say it out loud");
+  await expect(message).toContainText("Capturing content-blind edit events locally.");
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
+  // The full reason is readable on the page, not only in a hover title.
+  await expect(message).toBeVisible();
+  await expect(message).toContainText("Upload failed: temporary_test_failure");
+  await expect(page.locator(".ml-error")).toHaveText("upload failed, try again");
+});
+
+test("/write uploads a diverged session as unobserved and says so on the page", async ({ page }) => {
+  let checkpointCalls = 0;
+  let uploadedPayload;
+  await page.route("**/api/observed-sessions/*/checkpoints", async (route) => {
+    checkpointCalls += 1;
+    const body = route.request().postDataJSON();
+    const observedSessionId = new URL(route.request().url()).pathname.split("/").at(-2);
+    if (checkpointCalls > 1) {
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "checkpoint_conflict" }) });
+      return;
+    }
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ observed_session_id: observedSessionId, token: "d".repeat(32), checkpoint_id: "diverge-cp", event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
+    });
+  });
+  await page.route("**/api/records", async (route) => {
+    uploadedPayload = route.request().postDataJSON();
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: uploadedPayload.manifest.record_hash, short_signature: "diverged1", url: "http://127.0.0.1:4173/diverged1", created: true }) });
+  });
+
+  await page.goto("/write");
+  const message = page.getByRole("status", { name: "Drafting message" });
+  await page.getByRole("textbox", { name: "Writing canvas" }).click();
+  // Enough events for a second checkpoint under any interleaving: either the
+  // events queued behind the first one, or the 50-event cadence after it.
+  await page.keyboard.type("The server will reject every checkpoint after the first one it sees");
+  await expect.poll(() => checkpointCalls).toBeGreaterThanOrEqual(2);
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
+
+  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/diverged1" })).toBeVisible();
+  await expect(message).toContainText("server observation");
+  await expect(message).toContainText("diverged");
+  expect(uploadedPayload.observation).toEqual({ state: "unobserved" });
+});
+
+test("/write retries an upload rejected with observation_mismatch as unobserved and says so", async ({ page }) => {
+  const uploads = [];
+  await page.route("**/api/observed-sessions/*/checkpoints", async (route) => {
+    const body = route.request().postDataJSON();
+    const observedSessionId = new URL(route.request().url()).pathname.split("/").at(-2);
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({ observed_session_id: observedSessionId, token: "x".repeat(32), checkpoint_id: `mismatch-cp-${body.event_count}`, event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
+    });
+  });
+  await page.route("**/api/records", async (route) => {
+    const payload = route.request().postDataJSON();
+    uploads.push(payload);
+    if (uploads.length === 1) {
+      await route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ error: "observation_mismatch", details: ["checkpoint mismatch-cp-1 does not match final record prefix"] }) });
+      return;
+    }
+    await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: payload.manifest.record_hash, short_signature: "mismatch1", url: "http://127.0.0.1:4173/mismatch1", created: true }) });
+  });
+
+  await page.goto("/write");
+  const message = page.getByRole("status", { name: "Drafting message" });
+  await page.getByRole("textbox", { name: "Writing canvas" }).click();
+  await page.keyboard.type("Bound once, then unobserved");
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
+  await expect(message).toContainText("Upload failed: observation_mismatch");
+  expect(uploads[0].observation.token).toBe("x".repeat(32));
+
+  await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveAttribute("readonly", "");
+  await page.getByRole("button", { name: "retry" }).click();
+  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/mismatch1" })).toBeVisible();
+  await expect(message).toContainText("server observation");
+  await expect(message).toContainText("diverged");
+  expect(uploads.length).toBe(2);
+  expect(uploads[1].observation).toEqual({ state: "unobserved" });
+});
+
+test("/write explains on the empty canvas that text stays here and only the shape of editing is recorded", async ({ page }) => {
+  await page.goto("/write");
+  const canvas = page.getByRole("textbox", { name: "Writing canvas" });
+  await expect(canvas).toHaveAttribute("placeholder", /stays in this browser/);
+  await expect(canvas).toHaveAttribute("placeholder", /shape of the editing/);
+  await expect(canvas).toHaveAttribute("placeholder", /recorded/);
+});
+
+async function captureWriteUpload(page, edit) {
+  let payload;
+  await page.route("**/api/observed-sessions/*/checkpoints", (route) => route.fulfill({ status: 503, body: "unavailable" }));
+  await page.route("**/api/records", (route) => {
+    payload = route.request().postDataJSON();
+    return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: payload.manifest.record_hash, short_signature: "capture1", url: "http://127.0.0.1:4173/capture1", created: true }) });
+  });
+  await page.goto("/write");
+  const canvas = page.getByRole("textbox", { name: "Writing canvas" });
+  await expect(canvas).toBeEditable();
+  await canvas.focus();
+  await edit(canvas);
+  const value = await canvas.inputValue();
+  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "sign & upload" }).click();
+  await expect(page.getByText("open record →")).toBeVisible();
+  expect(verifyRecord(payload).valid).toBe(true);
+  return { payload, value };
+}
+
+test("/write measures native word deletion and undo instead of assuming one character", async ({ page }) => {
+  const { payload, value } = await captureWriteUpload(page, async () => {
+    await page.keyboard.type("hello world");
+    await page.keyboard.press(process.platform === "darwin" ? "Alt+Backspace" : "Control+Backspace");
+    await page.keyboard.press("ControlOrMeta+z");
+  });
+  expect(value).toBe("hello world");
+  expect(payload.events.find((event) => event.op === "delete")).toMatchObject({ del_len: 5, pos: 6 });
+  expect(payload.events.at(-1)).toMatchObject({ op: "insert", ins_len: 5, source: "unknown" });
+});
+
+test("/write ignores cancelled beforeinput and records a composition only at commit", async ({ page }) => {
+  const { payload, value } = await captureWriteUpload(page, async (canvas) => {
+    await canvas.evaluate((element) => element.addEventListener("beforeinput", (event) => event.preventDefault(), { once: true }));
+    await page.keyboard.type("x");
+    await expect(canvas).toHaveValue("");
+    await canvas.evaluate((element) => {
+      element.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+      element.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertCompositionText", data: "あ", isComposing: true }));
+      element.value = "あ";
+      element.setSelectionRange(1, 1);
+      element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText", data: "あ", isComposing: true }));
+      element.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "あ" }));
+    });
+    await page.keyboard.type("z");
+  });
+  expect(value).toBe("あz");
+  expect(payload.events).toHaveLength(2);
+  expect(payload.events[0]).toMatchObject({ op: "insert", ins_len: 1, source: "ime" });
+  expect(payload.events[1]).toMatchObject({ op: "insert", pos: 1, ins_len: 1, source: "typing" });
+});
+
+test("/write preserves paste attribution when beforeinput supplies no text", async ({ page }) => {
+  const { payload, value } = await captureWriteUpload(page, async (canvas) => {
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.evaluate(() => navigator.clipboard.writeText("Pasted 🙂 text"));
+    await canvas.focus();
+    await page.keyboard.press("ControlOrMeta+v");
+  });
+  expect(value).toBe("Pasted 🙂 text");
+  expect(payload.events).toHaveLength(1);
+  expect(payload.events[0]).toMatchObject({ op: "insert", pos: 0, ins_len: 13, source: "paste" });
 });

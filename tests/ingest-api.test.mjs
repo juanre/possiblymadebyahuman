@@ -19,12 +19,16 @@ async function textBindingRecord() {
   return clone(golden.record);
 }
 
+// The store expires observed sessions against the wall clock, so the API clock
+// used in these tests must be the current time, not a pinned date.
+const TEST_NOW = new Date();
+
 function makeApi(options = {}) {
   const store = new InMemoryRecordStore();
   const api = createIngestApi({
     store,
     baseUrl: "https://possiblymadebyahuman.test",
-    now: () => new Date("2026-05-28T10:00:00.000Z"),
+    now: () => TEST_NOW,
     ...options,
   });
   return { api, store };
@@ -116,7 +120,7 @@ test("GET /api/records/:id supports short signature and full hash lookup", async
   const byShort = await api.getRecord(ingest.body.short_signature);
   assert.equal(byShort.status, 200);
   assert.equal(byShort.body.manifest.record_hash, record.manifest.record_hash);
-  assert.equal(byShort.body.manifest.ingested_server_t, "2026-05-28T10:00:00.000Z");
+  assert.equal(byShort.body.manifest.ingested_server_t, TEST_NOW.toISOString());
   assert.deepEqual(byShort.body.events, record.events);
   assert.equal(byShort.body.observation.state, "not_requested");
   assert.equal(byShort.body.observation.checkpoint_count, 0);
@@ -681,4 +685,213 @@ test("Postgres read SQL uses explicit columns so created_at is the record timest
   assert.ok(queries[0].sql.includes("r.created_at"));
   assert.match(queries[0].sql, /jsonb_agg\(to_jsonb\(analysis_results\) order by created_at, analyzer_id, analyzer_version, id\)/i);
   assert.doesNotMatch(queries[0].sql, /select\s+r\.\*,\s*s\.\*/i);
+});
+
+test("public ingest rejects capture_context outside the documented shape or over the string cap", async () => {
+  const { api } = makeApi();
+  const withUnknownKey = await fixtureRecord();
+  withUnknownKey.manifest.capture_context = { surface: "browser", notes: "a whole document" };
+  const unknown = await api.postRecord(withUnknownKey);
+  assert.equal(unknown.status, 400);
+  assert.match(unknown.body.details.join("\n"), /capture_context.*notes/);
+
+  const withNestedUnknownKey = await fixtureRecord();
+  withNestedUnknownKey.manifest.capture_context = { surface: "browser", browser: { url: "https://x", body: "text" } };
+  assert.equal((await api.postRecord(withNestedUnknownKey)).status, 400);
+
+  const withLongLabel = await fixtureRecord();
+  withLongLabel.manifest.capture_context = { surface: "browser", label: "x".repeat(513) };
+  const long = await api.postRecord(withLongLabel);
+  assert.equal(long.status, 400);
+  assert.match(long.body.details.join("\n"), /label.*512/);
+
+  const withNonString = await fixtureRecord();
+  withNonString.manifest.capture_context = { surface: "browser", label: 42 };
+  assert.equal((await api.postRecord(withNonString)).status, 400);
+
+  const documented = await fixtureRecord();
+  documented.manifest.capture_context = {
+    surface: "browser",
+    label: "Example",
+    browser: { url: "https://example.com/thread/123", title: "Example", field_kind: "textarea" },
+    emacs: { buffer_name: "essay.md", major_mode: "markdown-mode" },
+  };
+  assert.equal((await api.postRecord(documented)).status, 201);
+});
+
+test("public ingest bounds attestations to small typed objects", async () => {
+  const { api } = makeApi();
+  const nonObject = await fixtureRecord();
+  nonObject.manifest.attestations = ["free text"];
+  assert.equal((await api.postRecord(nonObject)).status, 400);
+
+  const untyped = await fixtureRecord();
+  untyped.manifest.attestations = [{ body: "free text" }];
+  assert.equal((await api.postRecord(untyped)).status, 400);
+
+  const longValue = await fixtureRecord();
+  longValue.manifest.attestations = [{ type: "note", body: "x".repeat(513) }];
+  assert.equal((await api.postRecord(longValue)).status, 400);
+
+  const nested = await fixtureRecord();
+  nested.manifest.attestations = [{ type: "note", body: { deeper: "text" } }];
+  assert.equal((await api.postRecord(nested)).status, 400);
+
+  const tooMany = await fixtureRecord();
+  tooMany.manifest.attestations = Array.from({ length: 17 }, () => ({ type: "note" }));
+  assert.equal((await api.postRecord(tooMany)).status, 400);
+
+  const small = await fixtureRecord();
+  small.manifest.attestations = [{ type: "note", issuer: "someone" }];
+  assert.equal((await api.postRecord(small)).status, 201);
+});
+
+test("session_id must be lowercase so the hashed bytes match what Postgres stores", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  const upper = record.manifest.session_id.toUpperCase();
+  record.manifest.session_id = upper;
+  record.manifest.record_hash = computeEventHashChain(record.events, upper, record.manifest.format_version).at(-1);
+  const result = await api.postRecord(record);
+  assert.equal(result.status, 400);
+  assert.match(result.body.details.join("\n"), /session_id/);
+});
+
+test("integer fields beyond the 32-bit storage range are rejected instead of failing in Postgres", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  record.manifest.duration_ms = 2 ** 31;
+  const result = await api.postRecord(record);
+  assert.equal(result.status, 400);
+  assert.match(result.body.details.join("\n"), /duration_ms/);
+
+  const bigEvent = await fixtureRecord();
+  bigEvent.events[0].ins_len = 2 ** 31;
+  const eventResult = await api.postRecord(bigEvent);
+  assert.equal(eventResult.status, 400);
+  assert.match(eventResult.body.details.join("\n"), /ins_len/);
+});
+
+test("created_client_t must be a parseable timestamp and parent_record must exist", async () => {
+  const { api } = makeApi();
+  const badTime = await fixtureRecord();
+  badTime.manifest.created_client_t = "yesterday-ish";
+  const timeResult = await api.postRecord(badTime);
+  assert.equal(timeResult.status, 400);
+  assert.match(timeResult.body.details.join("\n"), /created_client_t/);
+
+  const orphan = await fixtureRecord();
+  orphan.manifest.parent_record = `b3:${"7".repeat(64)}`;
+  const orphanResult = await api.postRecord(orphan);
+  assert.equal(orphanResult.status, 400);
+  assert.match(orphanResult.body.details.join("\n"), /parent_record/);
+
+  const parent = await api.postRecord(await fixtureRecord());
+  assert.equal(parent.status, 201);
+  const child = await textBindingRecord();
+  child.manifest.parent_record = parent.body.record_hash;
+  assert.equal((await api.postRecord(child)).status, 201);
+});
+
+test("malformed request shapes are 4xx, never 500", async () => {
+  const { api } = makeApi();
+  // Node 24 JSON.stringify recurses; construct the adversarial JSON directly so
+  // the fixture reaches the API instead of overflowing in the test runner.
+  const nestedJson = "[".repeat(100_000) + "[]" + "]".repeat(100_000);
+  const record = await fixtureRecord();
+  const deepRecordJson = `{"manifest":${JSON.stringify(record.manifest)},"events":[${record.events.map((event) => JSON.stringify(event)).join(",")},${nestedJson}]}`;
+  const deep = await api.handleRequest(new Request("https://possiblymadebyahuman.test/api/records", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: deepRecordJson,
+  }));
+  assert.equal(deep.status, 400);
+
+  const deepCheckpoint = await api.handleRequest(new Request("https://possiblymadebyahuman.test/api/observed-sessions/123e4567-e89b-42d3-a456-426614174111/checkpoints", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: `{"event_count":1,"chain_tip":${nestedJson}}`,
+  }));
+  assert.equal(deepCheckpoint.status, 400);
+
+  const badEncoding = await api.handleRequest(new Request("https://possiblymadebyahuman.test/api/records/%E0"));
+  assert.equal(badEncoding.status, 404);
+  const badCheckpointId = await api.handleRequest(new Request("https://possiblymadebyahuman.test/api/observed-sessions/%E0/checkpoints", {
+    method: "POST",
+    body: "{}",
+  }));
+  assert.equal(badCheckpointId.status, 400);
+});
+
+test("error details are capped so a bad request cannot amplify into a huge response", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  record.events = Array.from({ length: 5_000 }, (_, seq) => ({ seq, t: seq, op: "insert", pos: 0, del_len: 0, ins_len: 0, source: "typing" }));
+  const result = await api.postRecord(record);
+  assert.equal(result.status, 400);
+  assert.ok(result.body.details.length <= 26, `details length ${result.body.details.length}`);
+  assert.match(result.body.details.at(-1), /more/);
+});
+
+test("malformed record containers return 400 instead of throwing", async () => {
+  const { api } = makeApi();
+  const record = await fixtureRecord();
+  for (const events of [undefined, null, {}, "bad"]) {
+    assert.equal((await api.postRecord({ ...record, events })).status, 400);
+  }
+  for (const manifest of [undefined, null, [], "bad"]) {
+    assert.equal((await api.postRecord({ ...record, manifest })).status, 400);
+  }
+});
+
+test("metadata is bounded and producer keys cannot carry arbitrary payloads", async () => {
+  const { api } = makeApi();
+  for (const change of [
+    (record) => { record.manifest.producer.id = "x".repeat(129); },
+    (record) => { record.manifest.producer.version = "x".repeat(129); },
+    (record) => { record.manifest.producer.document = "private writing"; },
+    (record) => { record.manifest.attestations = [{ ["x".repeat(65)]: "v" }]; },
+  ]) {
+    const record = await fixtureRecord();
+    change(record);
+    assert.equal((await api.postRecord(record)).status, 400);
+  }
+});
+
+test("active time excludes unmeasured waits before the first and after the last edit", async () => {
+  const { computeRecordStats } = await import("../apps/ingest-api/src/index.ts");
+  const { timingDistributionAnalyzer } = await import("../packages/analyzers/src/index.ts");
+  const record = await fixtureRecord();
+  record.events = record.events.slice(0, 3).map((event, seq) => ({ ...event, t: [60_000, 61_000, 101_000][seq] }));
+  record.manifest.duration_ms = 200_000;
+  const stats = computeRecordStats(record);
+  assert.equal(stats.active_time_ms, 1000);
+  assert.equal(stats.idle_time_ms, 40_000);
+  const signal = timingDistributionAnalyzer().analyze(record);
+  assert.equal(signal.measures.find((measure) => measure.key === "active_time_ms").value, 1000);
+  record.events = record.events.slice(0, 1);
+  assert.equal(computeRecordStats(record).active_time_ms, 0);
+});
+
+test("legacy active-time views exclude endpoints without changing cached data or custom idle thresholds", async () => {
+  const { toGetRecordResponse } = await import("../apps/ingest-api/src/index.ts");
+  const { api, store } = makeApi();
+  const record = await fixtureRecord();
+  const uploaded = await api.postRecord(record);
+  const stored = await store.findByRecordHash(uploaded.body.record_hash);
+  stored.events = stored.events.slice(0, 3).map((event, index) => ({ ...event, t: [60_000, 61_000, 71_000][index] }));
+  stored.manifest.duration_ms = 200_000;
+  // This historical producer used a 5-second threshold, not today's default.
+  stored.stats.idle_time_ms = 10_000;
+  stored.stats.active_time_ms = 190_000;
+  stored.signals = [{ record_hash: stored.manifest.record_hash, analyzer_id: "timing-distribution", analyzer_version: "0.1.0", applicable: true,
+    measures: [{ key: "active_time_ms", value: 190_000, unit: "ms" }, { key: "idle_time_ms", value: 10_000, unit: "ms" }], explanation: "Historical timing" }];
+  const original = structuredClone(stored);
+  const response = toGetRecordResponse(stored);
+  assert.equal(response.stats.active_time_ms, 1000);
+  assert.equal(response.signals[0].analyzer_version, "0.1.1");
+  assert.equal(response.signals[0].measures[0].value, 1000);
+  assert.deepEqual(stored, original, "read projection must never rewrite the record or stored cache");
+  assert.deepEqual(response.manifest, stored.manifest);
+  assert.deepEqual(response.observation, stored.observation);
 });

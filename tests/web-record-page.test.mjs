@@ -213,3 +213,33 @@ test("short bindings warn on every successful match, including whole/exact", () 
   const longSummary = describeBindingMatch(checkCandidateAgainstBinding(createTextBinding(LONG_DOC, BIND_SID), LONG_DOC, BIND_SID));
   assert.equal(longSummary.short, false);
 });
+
+test("timeline scale helper handles very long event logs and unknown lengths", async () => {
+  const { buildTimelinePoints, timelineLengthScale } = await import("../apps/web/src/record-utils.ts");
+  const events = Array.from({ length: 200_000 }, (_, seq) => ({
+    seq, t: seq * 10, op: "insert", pos: seq, del_len: 0, ins_len: 1, source: "typing",
+  }));
+  assert.equal(timelineLengthScale(buildTimelinePoints(events), events.length), 200_000);
+  assert.equal(timelineLengthScale(buildTimelinePoints(events), null), 200_000);
+  assert.equal(timelineLengthScale([], null), 1);
+});
+
+test("timeline document length becomes unknown when events reach beyond the inferred length", () => {
+  const points = buildTimelinePoints([
+    { seq: 0, t: 0, op: "insert", pos: 5, del_len: 0, ins_len: 3, source: "typing" },
+    { seq: 1, t: 10, op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" },
+  ]);
+  assert.equal(points[0].documentLength, null);
+  assert.equal(points[1].documentLength, null);
+});
+
+test("text binding disclaimer says plainly it is not a check of exact text", async () => {
+  const { TEXT_BINDING_DISCLAIMER } = await import("../apps/web/src/record-utils.ts");
+  assert.match(TEXT_BINDING_DISCLAIMER, /not a check of exact text/);
+});
+
+test("delay values render as n/a without a unit when unknown", async () => {
+  const { formatDelayMs } = await import("../apps/web/src/record-utils.ts");
+  assert.equal(formatDelayMs(null), "n/a");
+  assert.equal(formatDelayMs(60), "60ms");
+});

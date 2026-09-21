@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  IngestUploadError,
   SessionFrozenError,
   SessionRegistry,
   stripQueryAndHash,
@@ -15,7 +16,7 @@ import {
   type SignedRecordDraft,
 } from "../../../packages/producer-core/src/index.ts";
 import { canonicalizeTextForBinding, createTextBinding } from "../../../packages/format/src/index.ts";
-import { deriveMutationFromMeasuredInput } from "./write-capture.ts";
+import { attachWriteCapture } from "./write-capture.ts";
 
 const STORAGE_KEY = "pmbah.write.sessions.v1";
 const PRODUCER: ProducerIdentity = { id: "web-draft", version: "0.1.0", capabilities: ["timing"] };
@@ -37,7 +38,7 @@ class LocalSessionStorage {
 }
 
 class FetchCheckpointAdapter implements CheckpointAdapter {
-  async postCheckpoint(request: CheckpointRequest): Promise<CheckpointResult> {
+  async postCheckpoint(request: CheckpointRequest, signal?: AbortSignal): Promise<CheckpointResult> {
     const body: Record<string, unknown> = {
       event_count: request.event_count,
       chain_tip: request.chain_tip,
@@ -47,6 +48,7 @@ class FetchCheckpointAdapter implements CheckpointAdapter {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      signal,
     });
     const json = await response.json().catch(() => ({})) as { error?: string };
     if (response.ok) return { ok: true, response: json as CheckpointResponse };
@@ -78,8 +80,8 @@ async function uploadRecord(payload: UploadPayload): Promise<IngestRecordRespons
   });
   const json = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const reason = typeof json?.error === "string" ? json.error : `upload_failed_${response.status}`;
-    throw new Error(reason);
+    const code = typeof json?.error === "string" ? json.error : null;
+    throw new IngestUploadError(response.status, code, code ?? `upload_failed_${response.status}`);
   }
   return json as IngestRecordResponse;
 }
@@ -163,25 +165,7 @@ export function WritePage() {
     const element = textareaRef.current;
     if (!element || !session || session.state !== "active") return;
 
-    const onBeforeInput = (event: InputEvent) => {
-      const target = event.currentTarget as HTMLTextAreaElement;
-      const value = target.value;
-      const selectionStart = target.selectionStart;
-      const selectionEnd = target.selectionEnd;
-      const selectedCodepoints = Array.from(value.slice(selectionStart, selectionEnd)).length;
-      const selectionStartCodepoints = Array.from(value.slice(0, selectionStart)).length;
-      const beforeCodepoints = selectionStartCodepoints;
-      const afterSelectionCodepoints = Array.from(value.slice(selectionEnd)).length;
-      const inserted = event.data ?? event.dataTransfer?.getData("text/plain") ?? "";
-      const mutation = deriveMutationFromMeasuredInput({
-        inputType: event.inputType,
-        selectionStartCodepoints,
-        selectedCodepoints,
-        dataCodepoints: Array.from(inserted).length,
-        hasBackwardCodepoint: beforeCodepoints > 0,
-        hasForwardCodepoint: afterSelectionCodepoints > 0,
-      });
-      if (!mutation) return;
+    return attachWriteCapture(element, (mutation) => {
       try {
         const updated = registry.appendMutation(session.session_id, mutation);
         setSession(updated);
@@ -193,11 +177,8 @@ export function WritePage() {
         setStatus("error");
         setMessage(error instanceof Error ? error.message : String(error));
       }
-    };
-
-    element.addEventListener("beforeinput", onBeforeInput);
-    return () => element.removeEventListener("beforeinput", onBeforeInput);
-  }, [refreshSession, registry, session]);
+    });
+  }, [refreshSession, registry, session?.session_id, session?.state]);
 
   const signAndUpload = useCallback(async () => {
     if (!session) return;
@@ -229,7 +210,9 @@ export function WritePage() {
       await registry.persist();
       setUploaded(response);
       setStatus("uploaded");
-      setMessage("Record uploaded. The link points to the public writing-process record; it contains no document text.");
+      setMessage(registry.getObservationState(session.session_id) === "diverged"
+        ? "Record uploaded without server observation: the server's checkpoints for this session diverged. The link points to the public writing-process record; it contains no document text."
+        : "Record uploaded. The link points to the public writing-process record; it contains no document text.");
       void navigator.clipboard?.writeText(response.url).catch(() => undefined);
       signedDraft.current = null;
       setSession(registry.get(session.session_id) ?? null);
@@ -237,6 +220,9 @@ export function WritePage() {
       const reason = error instanceof Error ? error.message : String(error);
       try {
         registry.markFailedUpload(session.session_id, reason);
+        if (error instanceof IngestUploadError && (error.code === "observation_mismatch" || error.code === "observation_unavailable")) {
+          registry.markObservationRejected(session.session_id, error.code);
+        }
         await registry.persist();
         refreshSession(session.session_id);
       } catch {
@@ -285,7 +271,7 @@ export function WritePage() {
   const copyLink = useCallback(async () => {
     if (!uploaded) return;
     await navigator.clipboard?.writeText(uploaded.url);
-    setMessage("Signature copied to the clipboard.");
+    setMessage("Record link copied to the clipboard.");
   }, [uploaded]);
 
   const copyText = useCallback(async () => {
@@ -327,15 +313,16 @@ export function WritePage() {
   return <div className="write-shell">
     <a className="write-home" href="/">← possiblymadebyahuman</a>
 
+    <p className="write-notice">Your writing is not saved. Copy it before closing or refreshing. Uploading saves only the process record.</p>
     <div className="write-canvas-wrap">
       <textarea
         ref={textareaRef}
         id="pmbah-write-canvas"
         className="write-canvas"
         aria-label="Writing canvas"
-        placeholder=""
+        placeholder="Write here. Your text stays in this browser; only the shape of the editing, when each edit happened and how large it was, is recorded and signed."
         disabled={status === "signing"}
-        readOnly={status === "uploaded"}
+        readOnly={status !== "ready"}
         spellCheck="true"
       />
     </div>
@@ -343,7 +330,7 @@ export function WritePage() {
     {uploaded ? (
       <div className="write-result" role="status" aria-live="polite">
         <a className="write-result-link" href={uploaded.url} target="_blank" rel="noopener noreferrer">{uploaded.url}</a>
-        <a className="write-result-arrow" href={uploaded.url} target="_blank" rel="noopener noreferrer">open signature →</a>
+        <a className="write-result-arrow" href={uploaded.url} target="_blank" rel="noopener noreferrer">open record →</a>
       </div>
     ) : null}
 
@@ -358,7 +345,7 @@ export function WritePage() {
           />
           <span>{canBind ? "Bind selected text, or all canvas content if nothing is selected" : "Nothing to bind; this text has no letters or digits"}</span>
         </label>
-        {bindDocument ? null : (
+        {bindDocument ? <p className="write-sign-note">A public binding lets anyone test guesses at the wording. Binding is not encryption.</p> : (
           <p className="write-sign-note">Signing the writing process only; no document is bound to this record.</p>
         )}
         <div className="write-sign-actions">
@@ -375,10 +362,12 @@ export function WritePage() {
       </div>
     ) : null}
 
+    <p className="write-message" data-state={status} role="status" aria-label="Drafting message">{message}</p>
+
     <footer className="write-modeline" aria-label="Drafting status">
       <span className="ml-left">
-        <span className="ml-status" data-state={uploaded ? "saved" : phase} aria-live="polite" aria-atomic="true">
-          {uploaded ? "saved" : phase}
+        <span className="ml-status" data-state={uploaded ? "saved" : phase}>
+          {uploaded ? "record uploaded" : phase}
         </span>
         {!uploaded ? <>
           <span className="ml-sep">·</span>
@@ -393,7 +382,7 @@ export function WritePage() {
       </span>
       <span className="ml-right">
         {canDiscard ? <button className="ml-button" type="button" onClick={copyText}>copy text</button> : null}
-        {uploaded ? <button className="ml-button" type="button" onClick={copyLink}>copy signature</button> : null}
+        {uploaded ? <button className="ml-button" type="button" onClick={copyLink}>copy record link</button> : null}
         {uploaded ? <button className="ml-button" type="button" onClick={keepEditing}>keep editing</button> : null}
         {!uploaded ? (
           <button
@@ -406,7 +395,7 @@ export function WritePage() {
             {canRetry ? "retry" : "sign"}
           </button>
         ) : null}
-        <button className="ml-button" type="button" disabled={!canDiscard} onClick={reset}>discard</button>
+        <button className="ml-button" type="button" disabled={!canDiscard || status === "signing"} onClick={reset}>discard</button>
       </span>
     </footer>
   </div>;

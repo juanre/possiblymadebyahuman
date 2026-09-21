@@ -86,6 +86,8 @@ Owns:
 - event hash-chain computation
 - record-hash verification
 - content-blind process-length validation using Unicode codepoint offsets, with explicit JSON `null` for unknown process measurements
+- the format `0.2` text binding: `canon-letters/0.1` canonicalization, the salted commitment, and sealing the binding into `record_hash` (normative detail in `docs/text-binding.md` and `docs/spec/canonicalization.md`)
+- bounded metadata: `capture_context` accepts only its documented keys with capped string lengths, `attestations` only small typed objects with field names capped at 64 characters, producer id/version capped at 128 characters with no extra producer keys, and integer fields only the 32-bit storage range
 
 Does not own:
 
@@ -144,8 +146,8 @@ Owns:
 - content-blind manifest construction via `packages/format`
 - session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
 - capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
-- TTL sweep
-- server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before sign+upload, and a `getObservationEnvelope()` accessor for binding `(observed_session_id, token)` onto `POST /api/records`
+- TTL sweep; extension consumers retain a small uploaded-record continuation reference (without events or tokens) through the session TTL
+- server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, a 30-second attempt deadline (including response-body reads), immediate serialized persistence of checkpoint outcomes, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before sign+upload that completes observation of a session with at least one commitment (final checkpoint over the uncommitted tail, plus one more round for events that arrive while it is in flight; at most two rounds) and leaves a never-committed session alone, and a `getObservationEnvelope()` accessor that yields the `(observed_session_id, token)` binding for `POST /api/records` when a commitment exists and the session has not diverged, `{ state: "unobserved" }` when it has no commitment or is `diverged`, and `null` when no checkpoint adapter is wired
 - local observation state vocabulary (`disabled` / `unknown` / `known` / `partial` / `diverged`) distinct from the public wire vocabulary on records (`observed` / `partial` / `unobserved` / `not_requested`)
 - adapter interfaces (`StorageAdapter`, `UploadAdapter`, `CheckpointAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`)
 
@@ -154,7 +156,7 @@ Does not own:
 - DOM observation, `chrome.*`, `window.*`, `document.*`
 - Plaintext storage, hashing, replay, upload, or helper payloads
 - Text-based verification; `packages/format.verifyRecord` verifies public structure and hash chain only
-- Token persistence beyond the in-memory `SessionRecord`; consumers persist `observation` only via `StorageAdapter.write(snapshot)` and tokens never leave `SessionRecord.observation.last_observed_token`
+- Storage technology: checkpoint outcomes are persisted through `StorageAdapter.write(snapshot)`; browser consumers provide the storage implementation. Tokens stay in local observation state and are sent only to the ingest service for observation requests
 - Listing/store copy or browser packaging
 
 ### 3.4 `packages/storage`
@@ -164,7 +166,7 @@ Backend storage abstraction.
 Owns:
 
 - record-store interface
-- Postgres implementation later
+- Postgres implementation
 - immutable record save semantics
 - lookup by full `record_hash`
 - lookup by `short_signature`
@@ -214,13 +216,14 @@ Owns:
 - analyzer signal cards
 - verification panel
 - browser-side chain verification using `packages/format`
+- first-party `/write` capture and signing via `packages/producer-core`
 - standing disclaimer
 
 Does not own:
 
 - marketing/docs pages
 - ingestion
-- capture
+- capture in external editors
 
 ### 3.7 `apps/site`
 
@@ -240,7 +243,7 @@ A public blog (`/blog/*`) was scoped originally and dropped in `default-aaaa.25`
 
 ### 3.8 `apps/browser-extension`
 
-Primary future author UX for normal users.
+Primary browser author UX.
 
 Owns:
 
@@ -264,8 +267,12 @@ Owns:
 - `after-change-functions` capture
 - buffer/session status
 - sign-buffer command
-- conformant event logs
+- conformant event logs (format `0.2`)
 - capture-context prompts/redaction before upload
+- server-observed checkpoint orchestration with the `packages/producer-core` cadence and state machine (first event immediate; 50-event delta or 60 s with new events; no idle heartbeats; single in-flight plus one queued slot; 30 s attempt watchdog; 1 s→60 s backoff; `diverged` on 409/400; reset on 404 `observation_unavailable`; up to two flush rounds of an already-observed session before sign), with chain tips advanced from the last known tip by the local `scripts/chain-tip.mjs` helper from public events only
+- observation binding on upload: `(observed_session_id, token)` when a checkpoint succeeded and the session is not diverged, explicit `unobserved` when observation was requested but never succeeded or diverged (the upload message says so), absent when `pmbah-observe-process` is nil
+- one session per buffer, kept across major-mode changes and `revert-buffer` (permanent-local state)
+- per-file session persistence under `pmbah-state-directory` (SHA-256 of the file's true name, owner-only, no text) with resumption anchored at the stored session start, deletion after upload or discard, preservation of diverged observation state/reason across resumption, and `.stale` retirement when the 32-bit event-time bound, a format-version change, or an unreadable file prevents resumption
 
 ### 3.10 Producer scope invariant
 
@@ -311,7 +318,7 @@ Manifest includes:
 
 ```jsonc
 {
-  "format_version": "0.1",
+  "format_version": "0.2",
   "record_hash": "b3:...",
   "session_id": "uuid",
   "producer": {
@@ -320,6 +327,7 @@ Manifest includes:
     "capabilities": ["timing", "source_attribution", "selection", "pause_fidelity", "keystroke_level"]
   },
   "capture_context": {},
+  "text_binding": { "scheme": "canon-letters/0.1", "canonical_length": 1840, "commitment": "b3:..." }, // optional, format 0.2 only
   "event_count": 1429,
   "duration_ms": 1384502,
   "created_client_t": "client-claimed timestamp, untrusted",
@@ -328,6 +336,8 @@ Manifest includes:
   "attestations": []
 }
 ```
+
+`text_binding` is the one text-derived value a public record may carry: a salted BLAKE3 commitment to the canonical letters and digits of the text the signer chose to bind, computed locally, sealed into `record_hash` under format `0.2`. It lets a reader check that a document has the same wording as the signed text; it never reconstructs the text and it is not a check of exact text. `docs/text-binding.md` is normative. Format `0.1` records carry no binding and keep verifying unchanged.
 
 
 `parent_record` is the public manifest field for multi-session documents. It may be null for v0 records. It lets a record say “this session continues from that earlier signed record” without pretending one capture covers all writing. `parent_record_hash` is reserved for future storage/database column naming and is not part of public manifest input.
@@ -367,9 +377,11 @@ Emacs example:
 }
 ```
 
+Only the documented keys are accepted (`surface`, `label`, `browser.url`, `browser.title`, `browser.field_kind`, `emacs.buffer_name`, `emacs.major_mode`), every value is a string, and lengths are capped, so capture context cannot become a side channel for document text.
+
 Privacy rules:
 
-- The signer must be able to review, edit, or omit capture context before upload.
+- The signer must be able to review, edit, or omit capture context before upload. A producer whose context is fixed and non-identifying (`/write` uploads its own URL and a fixed label) documents exactly what it sends instead.
 - Browser URLs should strip query strings and fragments by default.
 - Browser page title may be identifying; show it before upload.
 - Emacs buffer names may be identifying; show them before upload.
@@ -428,7 +440,8 @@ long_pause_count
 Delay distribution guidance:
 
 - Compute inter-event delays from consecutive event `t` values.
-- Define an idle threshold in code/config, e.g. 30 seconds, for active-vs-idle summaries.
+- Define an idle threshold in code/config, e.g. 30 seconds, for active-vs-idle summaries. Active time is the sum of inter-event gaps below that threshold; idle time sums gaps at or above it. Neither includes unmeasured time before the first event or after the last event.
+- Timing analyzer `0.1.1` excludes unmeasured endpoint waits. For legacy cached records, the API corrects active time on read using the measured event span minus the stored idle time, preserving the original idle threshold; legacy timing signals are presented as `0.1.1`. Immutable events, hashes, commitments and stored caches are not rewritten.
 - Keep raw events available for exact process-timeline rendering; stats are a render/cache optimization, not the source of truth.
 
 ---
@@ -610,24 +623,26 @@ Input:
 {
   "manifest": {},
   "events": [],
-  "observation": { "observed_session_id": "...", "token": "..." } // optional; or { "state": "unobserved" } when observation was requested but no commitment succeeded
+  "observation": { "observed_session_id": "...", "token": "..." } // optional; or { "state": "unobserved" } when observation was requested but no commitment succeeded, or the session's checkpoints diverged from the server's
 }
 ```
 
+A producer binds `(observed_session_id, token)` only for a session with at least one commitment whose checkpoints the server has not rejected; before signing it flushes a final checkpoint over that session's uncommitted tail (and one more if events arrive while it is in flight). A session with no commitment, or one pinned `diverged`, is uploaded as `{ "state": "unobserved" }` so signing still succeeds; the producer tells the writer when that happens because of divergence.
+
 Backend behavior:
 
-1. Validate schema.
-2. Verify events are content-blind by default; no plaintext or text-derived hash field is accepted in public mode.
+1. Validate schema, including the bounded `capture_context` and `attestations` shapes and 32-bit integer ranges.
+2. Verify events are content-blind: no plaintext or text-derived field is accepted, with the single exception of the format `0.2` `text_binding` commitment (§4).
 3. Recompute canonical event bytes.
 4. Recompute BLAKE3 hash chain.
-5. Verify manifest `record_hash` equals final chain hash.
+5. Verify manifest `record_hash` equals the final chain hash, or the chain tip sealed with the `text_binding` when one is present.
 6. Verify `event_count`, `duration_ms`, and other manifest fields are structurally consistent where possible.
 7. Stamp `ingested_server_t`.
 8. Generate collision-checked `short_signature`.
 9. Store immutable record row.
 10. Compute and store `record_stats`.
 11. Run v0 analyzers and store `analysis_results` if cheap enough synchronously; otherwise queue later.
-12. If an observation binding is present, recompute every stored checkpoint prefix from the submitted public events and reject finalization on mismatch.
+12. If an observation binding is present, recompute every stored checkpoint prefix from the submitted public events and reject finalization on mismatch. If the observation is `{ "state": "unobserved" }`, store the record with public observation state `unobserved` and no commitments.
 13. Return record URL.
 
 Output:
@@ -823,8 +838,8 @@ Behavior:
 5. Extension uploads content-free manifest/events.
 6. Backend returns short URL.
 7. Extension copies URL to clipboard.
-8. Local log is cleared after successful upload.
-9. Further edits start a new session.
+8. Local log is cleared shortly after successful upload.
+9. Further edits in the same field start a new session whose `parent_record` names the uploaded record; the signed session stays frozen with its link. A failed upload can be retried with the same signed record. (`/write` differs: its canvas keeps the text on screen, so it reopens the same session and re-signs the whole process.)
 
 Unsigned local capture TTL:
 
@@ -845,8 +860,10 @@ pmbah-discard-session
 
 UX:
 
-- mode-line capture indicator
-- sign-buffer command
+- mode-line capture indicator: `PMBAH:N` plus `✓` (server has stamped every event), `·` (some events not yet stamped), or `✗` (diverged) when observation is on
+- session status reports event count, duration, observation state with the last checkpoint failure, and API URL
+- several buffers record at once, each in its own session; a file buffer resumes its saved session when the mode is re-enabled, and a message explains when saved state is set aside as `.stale`
+- sign-buffer command, flushing the final checkpoint first
 - capture-context review/redaction before upload
 - upload returns and copies short URL
 

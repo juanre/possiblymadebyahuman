@@ -18,6 +18,7 @@ import type {
   StorageAdapter,
   UuidAdapter,
 } from "./adapters.ts";
+import { redactCaptureContext as applyCaptureContextRedactions, type CaptureContextRedactions } from "./capture-context.ts";
 import { resolveSession } from "./session-id.ts";
 import { advanceChain, appendBufferMutation, durationMs } from "./timeline.ts";
 import { DEFAULT_TTL_MS, DEFAULT_UPLOADED_GRACE_MS, sweepExpired } from "./ttl.ts";
@@ -25,8 +26,8 @@ import type {
   FieldDescriptor,
   FieldOrigin,
   IngestRecordResponse,
-  ObservationEnvelope,
   ObservationLocalState,
+  ObservationUploadRequest,
   ObservedCommitment,
   PendingMutation,
   ProducerIdentity,
@@ -70,6 +71,7 @@ export type CadenceOptions = {
   backoff_initial_ms?: number;
   backoff_max_ms?: number;
   commitment_retention?: number;
+  checkpoint_timeout_ms?: number;
 };
 
 export type SessionRegistryOptions = {
@@ -96,6 +98,9 @@ export class SessionRegistry {
   readonly #backoff_initial_ms: number;
   readonly #backoff_max_ms: number;
   readonly #commitment_retention: number;
+  readonly #checkpoint_timeout_ms: number;
+  #persistTail: Promise<void> = Promise.resolve();
+  #flushing = new Set<SessionId>();
   #sessions = new Map<SessionId, SessionRecord>();
   #inFlight = new Map<SessionId, Promise<void>>();
 
@@ -110,6 +115,7 @@ export class SessionRegistry {
     this.#backoff_initial_ms = options.cadence?.backoff_initial_ms ?? DEFAULT_CHECKPOINT_BACKOFF_INITIAL_MS;
     this.#backoff_max_ms = options.cadence?.backoff_max_ms ?? DEFAULT_CHECKPOINT_BACKOFF_MAX_MS;
     this.#commitment_retention = options.cadence?.commitment_retention ?? DEFAULT_COMMITMENT_RETENTION;
+    this.#checkpoint_timeout_ms = options.cadence?.checkpoint_timeout_ms ?? 30_000;
   }
 
   async init(): Promise<void> {
@@ -138,12 +144,25 @@ export class SessionRegistry {
     return record ? cloneSession(record) : undefined;
   }
 
-  getObservationEnvelope(session_id: SessionId): ObservationEnvelope | null {
+  /**
+   * What the upload should say about server observation: `null` when no
+   * checkpoint adapter is wired (observation not requested), the bound
+   * `(observed_session_id, token)` when a commitment exists and the server's
+   * view still matches ours, and `{ state: "unobserved" }` otherwise — a
+   * session the server never committed, or one whose checkpoints diverged.
+   * A diverged session's token stays local: binding it would only make the
+   * server reject the record.
+   */
+  getObservationEnvelope(session_id: SessionId): ObservationUploadRequest | null {
     const record = this.#sessions.get(session_id);
-    if (!record) return null;
-    const { observed_session_id, last_observed_token } = record.observation;
-    if (!observed_session_id || !last_observed_token) return null;
+    if (!record || !this.#checkpoint) return null;
+    const { state, observed_session_id, last_observed_token } = record.observation;
+    if (state === "diverged" || !observed_session_id || !last_observed_token) return { state: "unobserved" };
     return { observed_session_id, token: last_observed_token };
+  }
+
+  getObservationState(session_id: SessionId): ObservationLocalState | null {
+    return this.#sessions.get(session_id)?.observation.state ?? null;
   }
 
   findOrCreate(
@@ -162,6 +181,7 @@ export class SessionRegistry {
     if (existing && (resolution.certainty === "resumed" || resolution.certainty === "collision")) {
       existing.identity_certainty = resolution.certainty;
       existing.descriptor = descriptor;
+      existing.origin = { ...origin };
       existing.last_edit_wall_ms = this.#clock.now();
       return cloneSession(existing);
     }
@@ -214,13 +234,17 @@ export class SessionRegistry {
       : "partial";
   }
 
+  /**
+   * Signs an active session, or re-signs one whose upload failed so the same
+   * record can be retried. A retry reuses the binding sealed the first time.
+   */
   sign(session_id: SessionId, options: SignOptions = {}): SignedRecordDraft {
-    const record = this.#requireSignable(session_id);
+    const record = this.#requireInState(session_id, ["active", "failed_upload"]);
     if (record.events.length === 0) {
       throw new Error(`cannot sign session ${session_id} with no events`);
     }
     const events: BufferMutation[] = record.events.map((event) => ({ ...event }));
-    const textBinding = options.textBinding;
+    const textBinding = record.state === "failed_upload" ? options.textBinding ?? record.signed_text_binding : options.textBinding;
     // When a binding is present the record hash is sealed over it; otherwise
     // it is the plain event-chain tip (the cached tip when available).
     const record_hash = textBinding
@@ -238,7 +262,7 @@ export class SessionRegistry {
       duration_ms: durationMs(events),
       created_client_t: new Date(record.base_wall_ms).toISOString(),
       ingested_server_t: null,
-      parent_record: null,
+      parent_record: record.parent_record ?? null,
       attestations,
     };
 
@@ -248,7 +272,15 @@ export class SessionRegistry {
     }
 
     record.state = "signing";
+    record.signed_text_binding = textBinding;
     return { manifest, events };
+  }
+
+  /** Applies the signer's capture-context choices before the record is signed. */
+  redactCaptureContext(session_id: SessionId, redactions: CaptureContextRedactions): SessionRecord {
+    const record = this.#requireInState(session_id, ["active", "failed_upload"]);
+    record.capture_context = applyCaptureContextRedactions(record.capture_context, redactions);
+    return cloneSession(record);
   }
 
   markUploading(session_id: SessionId): void {
@@ -271,6 +303,72 @@ export class SessionRegistry {
   }
 
   /**
+   * Records the server's rejection of the observation bound on an upload, so a
+   * retry does not bind the same token again. `observation_mismatch` (the
+   * stored checkpoints do not match the final record) pins the session
+   * `diverged`; `observation_unavailable` (the observed session is gone)
+   * resets observation. Either way the retry uploads as unobserved.
+   */
+  markObservationRejected(session_id: SessionId, code: "observation_mismatch" | "observation_unavailable"): void {
+    const record = this.#requireInState(session_id, ["uploading", "failed_upload"]);
+    record.observation.last_failure = { reason: code, status_or_kind: code === "observation_mismatch" ? "409" : "404" };
+    if (code === "observation_unavailable") {
+      this.#resetObservation(record);
+      return;
+    }
+    record.observation.state = "diverged";
+    record.observation.next_backoff_ms = 0;
+  }
+
+  /**
+   * Starts a new session for a field whose previous session was signed and
+   * uploaded. The signed session stays frozen with its link; the new session
+   * records only the further edits and names the uploaded record as its
+   * parent, so a later signature says which record it continues from.
+   */
+  continueFrom(
+    session_id: SessionId,
+    location: { origin?: FieldOrigin; descriptor?: FieldDescriptor } = {},
+  ): SessionRecord {
+    const previous = this.#requireInState(session_id, ["uploaded"]);
+    if (!previous.uploaded_response) {
+      throw new Error(`uploaded session ${session_id} has no upload response to continue from`);
+    }
+    const parentHash = previous.uploaded_response.record_hash;
+    // Edits arriving before the field learned its continuation id, or a field
+    // re-registering while the signed session is still listed, must all land in
+    // the one continuation of that record.
+    const existing = Array.from(this.#sessions.values()).find(
+      (record) => record.state === "active" && record.parent_record === parentHash,
+    );
+    if (existing) {
+      if (location.origin) existing.origin = { ...location.origin };
+      if (location.descriptor) existing.descriptor = { ...location.descriptor };
+      existing.last_edit_wall_ms = this.#clock.now();
+      return cloneSession(existing);
+    }
+    const now = this.#clock.now();
+    const record: SessionRecord = {
+      session_id: this.#uuid.uuid(),
+      format_version: FORMAT_VERSION,
+      base_wall_ms: now,
+      last_edit_wall_ms: now,
+      origin: { ...(location.origin ?? previous.origin) },
+      descriptor: { ...(location.descriptor ?? previous.descriptor) },
+      identity_certainty: "resumed",
+      producer: { ...this.#producer, capabilities: [...this.#producer.capabilities] },
+      capture_context: JSON.parse(JSON.stringify(previous.capture_context)),
+      events: [],
+      last_event_chain_tip: null,
+      state: "active",
+      parent_record: parentHash,
+      observation: emptyObservation(this.#checkpoint !== null),
+    };
+    this.#sessions.set(record.session_id, record);
+    return cloneSession(record);
+  }
+
+  /**
    * Resume editing a session that was already signed and uploaded. The recorded
    * events are kept, so continuing to write and signing again produces a record
    * of the whole writing process so far, not just the new edits. The previously
@@ -281,6 +379,7 @@ export class SessionRegistry {
     record.state = "active";
     record.uploaded_response = undefined;
     record.last_failure_reason = undefined;
+    record.signed_text_binding = undefined;
     record.observation = emptyObservation(this.#checkpoint !== null);
     record.last_edit_wall_ms = this.#clock.now();
     return cloneSession(record);
@@ -311,22 +410,40 @@ export class SessionRegistry {
     return cloned;
   }
 
-  sweep(options?: { ttl_ms?: number; uploaded_grace_ms?: number }): SessionRecord[] {
+  sweep(options?: { ttl_ms?: number; uploaded_grace_ms?: number; retain_uploaded_anchors?: boolean }): SessionRecord[] {
     const now = this.#clock.now();
     const snapshot = this.snapshot();
     const result = sweepExpired(snapshot, now, {
       ttl_ms: options?.ttl_ms ?? DEFAULT_TTL_MS,
       uploaded_grace_ms: options?.uploaded_grace_ms ?? DEFAULT_UPLOADED_GRACE_MS,
     });
+    const removedLogs: SessionRecord[] = [];
     for (const removed of result.removed) {
+      if (options?.retain_uploaded_anchors && removed.state === "uploaded"
+        && now - removed.last_edit_wall_ms < (options.ttl_ms ?? DEFAULT_TTL_MS)) {
+        // Keep only the identity/link needed by a live field to continue.
+        this.#sessions.set(removed.session_id, {
+          ...removed,
+          events: [],
+          continuation_anchor: true,
+          last_event_chain_tip: null,
+          signed_text_binding: undefined,
+          observation: emptyObservation(this.#checkpoint !== null),
+        });
+        continue;
+      }
+      removedLogs.push(removed);
       this.#sessions.delete(removed.session_id);
       this.#inFlight.delete(removed.session_id);
     }
-    return result.removed;
+    return removedLogs;
   }
 
   async persist(): Promise<void> {
-    await this.#storage.write(this.snapshot());
+    const snapshot = this.snapshot();
+    const write = this.#persistTail.catch(() => undefined).then(() => this.#storage.write(snapshot));
+    this.#persistTail = write;
+    await write;
   }
 
   /** Awaits all checkpoint work currently in-flight or queued for a session. Test helper. */
@@ -339,23 +456,38 @@ export class SessionRegistry {
   }
 
   /**
-   * Kicks one checkpoint covering uncheckpointed events and awaits it.
-   * Producers call this before sign() + upload so the server has a final commitment.
-   * Does not retry on transient failure; the consumer reads observation state and
-   * decides whether to bind a (possibly stale) envelope on the upload.
+   * Completes server observation of an already-observed session before
+   * sign() + upload, so the final commitment covers every event. The first
+   * round awaits the in-flight checkpoint or kicks one for the uncommitted
+   * tail; a second round covers events that arrived while the first was in
+   * flight. A session the server has never committed is left alone: a
+   * commitment minted at sign time would observe nothing of the writing, and
+   * the upload carries `{ state: "unobserved" }` instead. A checkpoint this
+   * flush kicked is not retried on failure (an inherited in-flight one that
+   * fails still gets the flush's own attempt); the consumer reads
+   * `getObservationEnvelope()` for what to bind.
    */
   async flushObservation(session_id: SessionId): Promise<void> {
     if (!this.#checkpoint) return;
-    const record = this.#sessions.get(session_id);
-    if (!record) return;
-    if (record.observation.state === "diverged") return;
-    const pending = record.events.length - record.observation.last_committed_event_count;
-    if (pending <= 0 && !record.observation.in_flight) return;
-    if (pending > 0 && !record.observation.in_flight) {
-      record.observation.next_backoff_ms = 0;
-      this.#kickCheckpoint(record);
+    this.#flushing.add(session_id);
+    try {
+      let kicked = false;
+      for (let round = 0; round < 2; round++) {
+        const record = this.#sessions.get(session_id);
+        if (!record || record.observation.state === "diverged") return;
+        if (kicked && record.observation.last_failure) return;
+        if (!record.observation.in_flight) {
+          if (record.observation.last_committed_event_count === 0) return;
+          if (record.events.length <= record.observation.last_committed_event_count) return;
+          record.observation.next_backoff_ms = 0;
+          this.#kickCheckpoint(record);
+          kicked = true;
+        }
+        await this.awaitObservationIdle(session_id);
+      }
+    } finally {
+      this.#flushing.delete(session_id);
     }
-    await this.awaitObservationIdle(session_id);
   }
 
   #normaliseLoadedRecord(record: SessionRecord): SessionRecord {
@@ -418,7 +550,7 @@ export class SessionRegistry {
     record.observation.last_attempt_at_wall_ms = this.#clock.now();
     const promise = this.#runCheckpointLoop(record.session_id);
     this.#inFlight.set(record.session_id, promise);
-    void promise.finally(() => {
+    void promise.catch(() => undefined).finally(() => {
       const current = this.#inFlight.get(record.session_id);
       if (current === promise) this.#inFlight.delete(record.session_id);
     });
@@ -440,7 +572,7 @@ export class SessionRegistry {
       const token = record.observation.last_observed_token;
       let result: CheckpointResult;
       try {
-        result = await this.#checkpoint!.postCheckpoint({
+        result = await this.#postCheckpoint({
           observed_session_id,
           event_count,
           chain_tip,
@@ -463,16 +595,37 @@ export class SessionRegistry {
         // appendMutation triggers will re-evaluate via #shouldTrigger.
         liveRecord.observation.in_flight = false;
         liveRecord.observation.queued = false;
+        await this.persist();
         return;
       }
-      if (liveRecord.observation.queued && (liveRecord.events.length - liveRecord.observation.last_committed_event_count) > 0) {
+      if (!this.#flushing.has(session_id) && liveRecord.observation.queued && (liveRecord.events.length - liveRecord.observation.last_committed_event_count) > 0) {
         liveRecord.observation.queued = false;
         liveRecord.observation.last_attempt_at_wall_ms = this.#clock.now();
+        await this.persist();
         continue;
       }
       liveRecord.observation.in_flight = false;
       liveRecord.observation.queued = false;
+      await this.persist();
       return;
+    }
+  }
+
+  async #postCheckpoint(request: Parameters<CheckpointAdapter["postCheckpoint"]>[0]): Promise<CheckpointResult> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<CheckpointResult>((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ ok: false, kind: "transient", status: 0, reason: "checkpoint_timeout" });
+        controller.abort();
+      }, this.#checkpoint_timeout_ms);
+    });
+    try {
+      // Racing the whole adapter also bounds reading a stalled response body.
+      // A late response cannot mutate the session after the deadline wins.
+      return await Promise.race([this.#checkpoint!.postCheckpoint(request, controller.signal), deadline]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 
@@ -567,12 +720,6 @@ export class SessionRegistry {
   }
 
   #requireMutable(session_id: SessionId): SessionRecord {
-    const record = this.#require(session_id);
-    if (record.state !== "active") throw new SessionFrozenError(session_id, record.state);
-    return record;
-  }
-
-  #requireSignable(session_id: SessionId): SessionRecord {
     const record = this.#require(session_id);
     if (record.state !== "active") throw new SessionFrozenError(session_id, record.state);
     return record;

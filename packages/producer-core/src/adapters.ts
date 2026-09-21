@@ -10,6 +10,22 @@ export interface UploadAdapter {
   postRecord(payload: IngestRecordInput): Promise<IngestRecordResponse>;
 }
 
+/**
+ * A rejected `POST /api/records`. `code` is the API's `error` field
+ * (`observation_mismatch`, `observation_unavailable`, ...) when the body
+ * carried one, so callers can act on it without parsing the message.
+ */
+export class IngestUploadError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(status: number, code: string | null, message: string) {
+    super(message);
+    this.name = "IngestUploadError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
 export interface ClockAdapter {
   now(): number;
 }
@@ -51,5 +67,5 @@ export type CheckpointResult =
   | { ok: false; kind: CheckpointFailureKind; status: number; reason: string };
 
 export interface CheckpointAdapter {
-  postCheckpoint(request: CheckpointRequest): Promise<CheckpointResult>;
+  postCheckpoint(request: CheckpointRequest, signal?: AbortSignal): Promise<CheckpointResult>;
 }

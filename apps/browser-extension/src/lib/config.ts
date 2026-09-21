@@ -1,3 +1,4 @@
+declare const __PMBAH_EXT_VERSION__: string;
 declare const __PMBAH_EXT_BASE_URL__: string;
 declare const __PMBAH_EXT_RECORDS_ENDPOINT__: string;
 
@@ -12,5 +13,6 @@ export function normalizeBaseUrl(raw: string | undefined): string {
   return parsed.toString().replace(/\/$/, "");
 }
 
+export const EXTENSION_VERSION = __PMBAH_EXT_VERSION__;
 export const API_BASE_URL = normalizeBaseUrl(__PMBAH_EXT_BASE_URL__);
 export const RECORDS_ENDPOINT = __PMBAH_EXT_RECORDS_ENDPOINT__;

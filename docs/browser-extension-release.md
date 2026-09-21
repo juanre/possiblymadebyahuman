@@ -53,7 +53,7 @@ From the repository root:
 ```bash
 npm install
 make extension-package
-unzip -l apps/browser-extension/dist/possiblymadebyahuman-extension-0.1.0.zip
+unzip -l apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip
 ```
 
 To point a local/staging package at a different API origin:
@@ -87,7 +87,7 @@ For the scaffold, the extension version comes from
 `apps/browser-extension/package.json`. Before release, reconcile it with the
 human-approved repository tag:
 
-- release tag `v0.1.0` should correspond to extension package version `0.1.0`;
+- a release tag `vX.Y.Z` should correspond to the extension package version it ships;
 - the build injects that package version into `manifest.json`;
 - Chrome Web Store uploads must use a version greater than any previously
   uploaded package for the same extension ID.
@@ -195,3 +195,5 @@ references are:
 - Privacy/data-use answers: see "Data observed locally / Data stored or
   processed locally before upload / Data transmitted on explicit sign/upload
   / Data not transmitted by the public/default extension" in the prep doc.
+
+Release tags now invoke the reusable checks before packaging or publishing. Those checks run the installed extension against a disposable production image and Postgres. The zip is also attached to the GitHub Release as a durable download; this is a sideload artifact, not evidence of Chrome Web Store approval.

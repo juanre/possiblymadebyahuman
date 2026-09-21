@@ -19,6 +19,14 @@ test.describe("public record page", () => {
     await expect(banner).toContainText("not a human/AI score");
   });
 
+  test("signet says under the title that this is the shape of a process, not a score or verdict", async ({ page }) => {
+    const scope = page.locator("header.signet h1 + .signet-scope");
+    await expect(scope).toBeVisible();
+    await expect(scope).toContainText("shape of a writing process");
+    await expect(scope).toContainText("not a human/AI score or verdict");
+    await expect(page.getByRole("region", { name: "What this record means" })).toBeVisible();
+  });
+
   test("shows browser.title and emacs.major_mode in capture context", async ({ page }) => {
     const card = page.locator("section.card", { hasText: "Capture context" });
     await expect(card).toContainText("Page title");
@@ -62,6 +70,17 @@ test.describe("public record page", () => {
     await expect(panel).toContainText("Full record hash");
     await expect(panel).toContainText("Computed hash");
     await expect(panel).toContainText("Server metadata");
+    const status = panel.locator(".chain-status");
+    await expect(status).toHaveClass(/ok/);
+    await expect(status).toContainText("reproduce the displayed record hash");
+  });
+
+  test("labels inferred start separately from upload receipt", async ({ page }) => {
+    await page.goto("/tampered");
+    await page.getByRole("heading", { name: "Signed writing record" }).waitFor();
+    const capture = page.locator("section.card", { hasText: "Capture context" });
+    await expect(capture).toContainText("Start inferred from upload and claimed duration");
+    await expect(capture).toContainText("Uploaded");
   });
 
   test("observation status line shows public state copy without overclaim", async ({ page }) => {
@@ -99,7 +118,7 @@ test.describe("public record page", () => {
   });
 
   test("a record with no binding shows the no-binding state", async ({ page }) => {
-    const card = page.locator("section.card", { hasText: "Document binding" });
+    const card = page.getByRole("region", { name: "Document binding", exact: true });
     await expect(card).toContainText("No document was bound to this record.");
   });
 
@@ -116,12 +135,72 @@ test.describe("public record page", () => {
     await expect(footer.getByRole("link", { name: "Verify a record" })).toHaveAttribute("href", "/docs/verification/");
   });
 
-  test("shows the began/ended writing window in capture context", async ({ page }) => {
+  test("labels checkpoint receipt times without calling them writing boundaries", async ({ page }) => {
     const capture = page.locator("section.card", { hasText: "Capture context" });
-    await expect(capture).toContainText("Began");
+    await expect(capture).toContainText("First checkpoint received");
     await expect(capture).toContainText("2026-05-28 14:02 UTC");
-    await expect(capture).toContainText("Ended");
+    await expect(capture).toContainText("Last checkpoint received");
     await expect(capture).toContainText("2026-05-28 14:34 UTC");
+  });
+});
+
+test.describe("unknown record address", () => {
+  test("says plainly that no record exists here and links home", async ({ page }) => {
+    const response = await page.goto("/unknown");
+    expect(response.status()).toBe(404);
+    await expect(page.getByRole("heading", { name: "No record at this address" })).toBeVisible();
+    const main = page.locator("main");
+    await expect(main).toContainText("No writing record exists at /unknown");
+    await expect(main.getByRole("link", { name: "home page" })).toHaveAttribute("href", "/");
+    await expect(main).not.toContainText("Record fetch failed");
+  });
+});
+
+test.describe("tampered record", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/tampered");
+    await page.getByRole("heading", { name: "Signed writing record" }).waitFor();
+  });
+
+  test("signature panel says plainly that the recomputed chain does not match", async ({ page }) => {
+    const panel = page.locator("section.card", { hasText: "Signature & details" });
+    const status = panel.locator(".chain-status");
+    await expect(status).toHaveClass(/error/);
+    await expect(status).toContainText("does not match");
+    await expect(panel).toContainText("Computed hash");
+  });
+
+  test("observation status is shown even when no observation was requested", async ({ page }) => {
+    const status = page.getByRole("region", { name: "Observation status" });
+    await expect(status).toContainText("No observation requested.");
+  });
+});
+
+test.describe("record with unknown document length", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto("/unknownlength");
+    await page.getByRole("heading", { name: "Signed writing record" }).waitFor();
+  });
+
+  test("timeline does not draw a document-length curve it cannot infer", async ({ page }) => {
+    const timeline = page.locator("section.card", { hasText: "Edit timeline" });
+    await expect(timeline).toContainText("length is unknown");
+    const chart = timeline.locator("svg.timeline-chart");
+    await expect(chart.locator("path.length-curve")).toHaveCount(0);
+    await expect(chart).not.toContainText(" cp");
+    await expect(chart.locator("circle:has(title)")).toHaveCount(2);
+  });
+
+  test("observation status reports the unobserved state", async ({ page }) => {
+    const status = page.getByRole("region", { name: "Observation status" });
+    await expect(status).toContainText("Not observed.");
+  });
+
+  test("a continuation record links to the record it continues from", async ({ page }) => {
+    const panel = page.locator("section.card", { hasText: "Signature & details" });
+    await expect(panel).toContainText("Continues from");
+    const link = panel.locator("a.parent-record-link");
+    await expect(link).toHaveAttribute("href", /^\/b3:[0-9a-f]{64}$/);
   });
 });
 
@@ -139,6 +218,7 @@ test.describe("text binding — bound record", () => {
     await expect(result).toHaveClass(/ok/);
     await expect(result).toContainText("Same wording as the signed text.");
     await expect(result).toContainText("ignores spacing, punctuation, case, and number formatting");
+    await expect(result).toContainText("not a check of exact text");
   });
 
   test("appended text reports a prefix match with extra characters", async ({ page }) => {
@@ -171,10 +251,10 @@ test.describe("text binding — bound record", () => {
     await expect(result).toContainText("ignores spacing, punctuation, case, and number formatting");
   });
 
-  test("signet states it signs the process and the text when bound", async ({ page }) => {
+  test("signet distinguishes the editing process from selected wording", async ({ page }) => {
     const signet = page.locator("header.signet");
     await expect(signet).toContainText("shape of the writing process");
-    await expect(signet).toContainText("text it produced");
+    await expect(signet).toContainText("wording the signer selected");
   });
 
   test("a match shows an affirmative check mark", async ({ page }) => {

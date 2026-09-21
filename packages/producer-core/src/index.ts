@@ -1,5 +1,6 @@
 export const PRODUCER_CORE_PACKAGE = "@possiblymadebyahuman/producer-core";
 
+export { IngestUploadError } from "./adapters.ts";
 export type {
   CheckpointAdapter,
   CheckpointFailureKind,
@@ -36,6 +37,7 @@ export type {
 } from "./types.ts";
 
 export { buildCaptureContext, redactCaptureContext, stripQueryAndHash } from "./capture-context.ts";
+export type { CaptureContextRedactions } from "./capture-context.ts";
 export { advanceChain, appendBufferMutation, durationMs } from "./timeline.ts";
 export {
   DEFAULT_TTL_MS,

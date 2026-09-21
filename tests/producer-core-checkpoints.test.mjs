@@ -6,6 +6,7 @@ import {
 } from "../packages/format/src/index.ts";
 import {
   SessionRegistry,
+  UnknownSessionError,
   advanceChain,
   buildCaptureContext,
 } from "../packages/producer-core/src/index.ts";
@@ -594,4 +595,264 @@ test("snapshot round-trip clears in-flight + queued and preserves commitments", 
   assert.equal(reloaded.observation.in_flight, false);
   assert.equal(reloaded.observation.queued, false);
   assert.equal(reloaded.observation.commitments.length >= 1, true);
+});
+
+test("17. flushObservation leaves a never-committed session alone; the upload request is unobserved", async () => {
+  const checkpoint = recordingCheckpoint();
+  checkpoint.queue({ ok: false, kind: "transient", status: 503, reason: "upstream unavailable" });
+  const { registry } = makeRegistry({ checkpoint });
+  const session = newSession(registry);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  await registry.awaitObservationIdle(session.session_id);
+  assert.equal(checkpoint.calls.length, 1);
+  appendMany(registry, session.session_id, 3, 1);
+  await registry.flushObservation(session.session_id);
+  assert.equal(checkpoint.calls.length, 1, "flush must not create a first commitment at sign time");
+  assert.equal(registry.get(session.session_id).observation.last_committed_event_count, 0);
+  assert.deepEqual(registry.getObservationEnvelope(session.session_id), { state: "unobserved" });
+});
+
+test("18. flushObservation covers events that arrive while the sign-time checkpoint is in flight", async () => {
+  let releaseSecond;
+  const secondGate = new Promise((resolve) => {
+    releaseSecond = resolve;
+  });
+  let callIndex = 0;
+  const checkpoint = {
+    calls: [],
+    async postCheckpoint(request) {
+      checkpoint.calls.push(request);
+      callIndex += 1;
+      if (callIndex === 2) await secondGate;
+      return {
+        ok: true,
+        response: {
+          observed_session_id: request.observed_session_id ?? `obs-${callIndex}`,
+          token: `tok-${callIndex}`,
+          checkpoint_id: `cp-${callIndex}`,
+          event_count: request.event_count,
+          chain_tip: request.chain_tip,
+          server_t: new Date(1_700_000_020_000 + callIndex).toISOString(),
+          created: true,
+        },
+      };
+    },
+  };
+  const { registry } = makeRegistry({ checkpoint });
+  const session = newSession(registry);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  await registry.awaitObservationIdle(session.session_id);
+  appendMany(registry, session.session_id, 9, 1);
+  const flushing = registry.flushObservation(session.session_id);
+  // The tail keeps growing while the flush checkpoint (event_count 10) is in flight.
+  appendMany(registry, session.session_id, 5, 10);
+  releaseSecond();
+  await flushing;
+  assert.deepEqual(checkpoint.calls.map((call) => call.event_count), [1, 10, 15]);
+  const obs = registry.get(session.session_id).observation;
+  assert.equal(obs.state, "known");
+  assert.equal(obs.last_committed_event_count, 15);
+  assert.equal(obs.commitments[obs.commitments.length - 1].event_count, 15);
+});
+
+test("19. flushObservation stops after two rounds even if events keep arriving", async () => {
+  const seeded = makeRegistry({ checkpoint: recordingCheckpoint() });
+  const session = newSession(seeded.registry);
+  seeded.registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  await seeded.registry.awaitObservationIdle(session.session_id);
+  const { registry } = makeRegistry({
+    checkpoint: {
+      calls: [],
+      async postCheckpoint(request) {
+        this.calls.push(request);
+        // Another event lands before every response comes back.
+        registry.appendMutation(session.session_id, { op: "insert", pos: request.event_count, del_len: 0, ins_len: 1, source: "typing" });
+        return {
+          ok: true,
+          response: {
+            observed_session_id: request.observed_session_id,
+            token: `tok-${this.calls.length}`,
+            checkpoint_id: `cp-${this.calls.length}`,
+            event_count: request.event_count,
+            chain_tip: request.chain_tip,
+            server_t: new Date(1_700_000_030_000 + this.calls.length).toISOString(),
+            created: true,
+          },
+        };
+      },
+    },
+    storage: inMemoryStorage(seeded.registry.snapshot()),
+  });
+  await registry.init();
+  registry.appendMutation(session.session_id, { op: "insert", pos: 1, del_len: 0, ins_len: 1, source: "typing" });
+  await registry.flushObservation(session.session_id);
+  const obs = registry.get(session.session_id).observation;
+  assert.equal(obs.commitments.length, 3, "flush kicks at most two checkpoints after the seeded one");
+  assert.equal(obs.state, "partial");
+});
+
+test("20. getObservationEnvelope yields an unobserved upload request for a diverged session", async () => {
+  const checkpoint = recordingCheckpoint();
+  checkpoint.queue(undefined, { ok: false, kind: "conflict", status: 409, reason: "chain mismatch" });
+  const { registry } = makeRegistry({ checkpoint });
+  const session = newSession(registry);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  await registry.awaitObservationIdle(session.session_id);
+  appendMany(registry, session.session_id, 50, 1);
+  await registry.awaitObservationIdle(session.session_id);
+  assert.equal(registry.get(session.session_id).observation.state, "diverged");
+  assert.ok(registry.get(session.session_id).observation.last_observed_token, "the stale token stays local");
+  assert.deepEqual(registry.getObservationEnvelope(session.session_id), { state: "unobserved" });
+});
+
+test("21. flushObservation makes one attempt of its own after an inherited in-flight checkpoint fails", async () => {
+  let releaseSecond;
+  const secondGate = new Promise((resolve) => {
+    releaseSecond = resolve;
+  });
+  let callIndex = 0;
+  const checkpoint = {
+    calls: [],
+    async postCheckpoint(request) {
+      checkpoint.calls.push(request);
+      callIndex += 1;
+      if (callIndex === 2) {
+        await secondGate;
+        return { ok: false, kind: "transient", status: 503, reason: "down" };
+      }
+      return {
+        ok: true,
+        response: {
+          observed_session_id: request.observed_session_id ?? `obs-${callIndex}`,
+          token: `tok-${callIndex}`,
+          checkpoint_id: `cp-${callIndex}`,
+          event_count: request.event_count,
+          chain_tip: request.chain_tip,
+          server_t: new Date(1_700_000_040_000 + callIndex).toISOString(),
+          created: true,
+        },
+      };
+    },
+  };
+  const { registry } = makeRegistry({ checkpoint });
+  const session = newSession(registry);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  await registry.awaitObservationIdle(session.session_id);
+  // The 50-event cadence kicks a checkpoint that is still in flight when the writer signs.
+  appendMany(registry, session.session_id, 50, 1);
+  assert.equal(checkpoint.calls.length, 2);
+  const flushing = registry.flushObservation(session.session_id);
+  releaseSecond();
+  await flushing;
+  assert.deepEqual(checkpoint.calls.map((call) => call.event_count), [1, 51, 51]);
+  const obs = registry.get(session.session_id).observation;
+  assert.equal(obs.state, "known");
+  assert.equal(obs.last_committed_event_count, 51);
+});
+
+test("22. markObservationRejected pins a mismatch as diverged and resets an unavailable observation", async () => {
+  const mismatch = makeRegistry({ checkpoint: recordingCheckpoint() });
+  const first = newSession(mismatch.registry);
+  mismatch.registry.appendMutation(first.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  await mismatch.registry.awaitObservationIdle(first.session_id);
+  mismatch.registry.sign(first.session_id);
+  mismatch.registry.markUploading(first.session_id);
+  mismatch.registry.markObservationRejected(first.session_id, "observation_mismatch");
+  assert.equal(mismatch.registry.get(first.session_id).observation.state, "diverged");
+  assert.deepEqual(mismatch.registry.getObservationEnvelope(first.session_id), { state: "unobserved" });
+
+  const unavailable = makeRegistry({ checkpoint: recordingCheckpoint() });
+  const second = newSession(unavailable.registry);
+  unavailable.registry.appendMutation(second.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  await unavailable.registry.awaitObservationIdle(second.session_id);
+  unavailable.registry.sign(second.session_id);
+  unavailable.registry.markUploading(second.session_id);
+  unavailable.registry.markFailedUpload(second.session_id, "observation_unavailable");
+  unavailable.registry.markObservationRejected(second.session_id, "observation_unavailable");
+  const obs = unavailable.registry.get(second.session_id).observation;
+  assert.equal(obs.state, "unknown");
+  assert.equal(obs.last_committed_event_count, 0);
+  assert.equal(obs.last_observed_token, null);
+  assert.deepEqual(obs.commitments, []);
+  assert.deepEqual(unavailable.registry.getObservationEnvelope(second.session_id), { state: "unobserved" });
+
+  assert.throws(() => unavailable.registry.markObservationRejected("missing", "observation_mismatch"), UnknownSessionError);
+});
+
+test("checkpoint completion is durable without another edit and persists writes in order", async () => {
+  const storage = inMemoryStorage();
+  const checkpoint = recordingCheckpoint();
+  let release;
+  checkpoint.queue((request) => new Promise((resolve) => {
+    release = () => resolve({ ok: true, response: { ...request, token: "durable-token",
+      checkpoint_id: "durable", server_t: new Date().toISOString(), created: true } });
+  }));
+  const { registry } = makeRegistry({ storage, checkpoint });
+  const session = newSession(registry);
+  appendMany(registry, session.session_id, 1);
+  await registry.persist();
+  assert.equal((await storage.read())[0].observation.last_observed_token, null);
+  release();
+  await registry.awaitObservationIdle(session.session_id);
+  const restored = makeRegistry({ storage, checkpoint }).registry;
+  await restored.init();
+  assert.equal(restored.get(session.session_id).observation.state, "known");
+  assert.equal(restored.getObservationEnvelope(session.session_id).token, "durable-token");
+});
+
+test("stalled checkpoints time out, abort, allow sign, and ignore late success", async () => {
+  let release, signal;
+  const checkpoint = { postCheckpoint(request, abortSignal) {
+    signal = abortSignal;
+    return new Promise((resolve) => { release = () => resolve({ ok: true,
+      response: { ...request, token: "too-late", checkpoint_id: "late", server_t: new Date().toISOString() } }); });
+  } };
+  const { registry } = makeRegistry({ checkpoint, cadence: { checkpoint_timeout_ms: 10 } });
+  const session = newSession(registry);
+  appendMany(registry, session.session_id, 1);
+  await registry.flushObservation(session.session_id);
+  assert.equal(signal.aborted, true);
+  assert.deepEqual(registry.getObservationEnvelope(session.session_id), { state: "unobserved" });
+  registry.sign(session.session_id);
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(registry.get(session.session_id).observation.last_observed_token, null);
+});
+
+test("overlapping persistence never lets an older snapshot overwrite a newer one", async () => {
+  const writes = [];
+  const finish = [];
+  const storage = { read: async () => [], write: (snapshot) => new Promise((resolve) => {
+    writes.push(snapshot); finish.push(resolve);
+  }) };
+  const { registry } = makeRegistry({ storage });
+  const session = newSession(registry);
+  const first = registry.persist();
+  appendMany(registry, session.session_id, 1);
+  const second = registry.persist();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(writes.length, 1);
+  finish[0](); await first;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(writes.length, 2);
+  assert.equal(writes[1][0].events.length, 1);
+  finish[1](); await second;
+});
+
+test("pre-sign flush stops after two attempts even when every response queues more edits", async () => {
+  const checkpoint = recordingCheckpoint();
+  const { registry } = makeRegistry({ checkpoint });
+  const session = newSession(registry);
+  appendMany(registry, session.session_id, 1);
+  await registry.awaitObservationIdle(session.session_id);
+  const respondWithMoreEdits = async (request) => {
+    appendMany(registry, session.session_id, 1);
+    return { ok: true, response: { ...request, token: "token", checkpoint_id: `cp-${request.event_count}`, server_t: new Date().toISOString() } };
+  };
+  checkpoint.queue(respondWithMoreEdits, respondWithMoreEdits, respondWithMoreEdits);
+  appendMany(registry, session.session_id, 1);
+  await registry.flushObservation(session.session_id);
+  assert.equal(checkpoint.calls.length, 3, "one initial checkpoint plus two flush rounds");
+  assert.equal(registry.getObservationState(session.session_id), "partial");
+  assert.equal(registry.get(session.session_id).observation.in_flight, false);
 });

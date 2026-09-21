@@ -1,6 +1,6 @@
 # Text binding
 
-Status: **approved direction, design detail under review.** Coordinator
+Status: **approved and implemented in format 0.2.** Coordinator
 has signed off on the direction (bind a visible artifact to a record;
 two separate claims; aggressive canonicalization as the starting
 semantic; seal the binding into the signed surface). This document is the
@@ -9,7 +9,7 @@ not change the product promise: still content-blind in storage, still no
 humanness verdict, score, or badge. The binding is artifact provenance,
 not detection.
 
-If accepted it amends spec `§3.4` (content opacity boundary) to permit
+It amends spec `§3.4` (content opacity boundary) to permit
 one text-derived commitment in the public manifest, and bumps the format
 to `0.2` (the binding is sealed into `record_hash`).
 
@@ -156,9 +156,7 @@ Consequences:
 **Circularity note:** the commitment is salted with `session_id`
 (`b3(session_id ‖ canonical_form)`), **not** with `record_hash` —
 `record_hash` now depends on the binding, so it cannot also be an input
-to the commitment. `session_id` is a per-record UUID nonce, sufficient to
-defeat cross-record correlation and precomputed-dictionary attacks on the
-canonical form.
+to the commitment. `session_id` is a per-record UUID nonce, which prevents direct comparison of commitment hashes across records and reuse of a precomputed dictionary. The salt is public: an attacker can still test guesses for any particular record. Binding is not encryption, especially for short or predictable wording.
 
 **Verification dispatch.** `verifyRecord` reads `manifest.format_version`
 and branches:

@@ -4,9 +4,9 @@
 
 It is **not** a human/AI detector. It does not emit humanness verdicts, confidence percentages, or certification-style badges. The allowed claim is just: this record shows the shape of an editing process.
 
-The public service is content-blind by default: uploaded records store mutation structure, metadata, statistics, and analyzer facts, not plaintext writing. Producers may transiently inspect editor text only to derive numeric process metadata, then must discard it; they do not store, hash, reconstruct, or upload document text.
+The public service is content-blind by default: uploaded records store mutation structure, metadata, statistics, and analyzer facts, not plaintext writing. Producers may transiently inspect editor text only to derive numeric process metadata, then must discard it; they do not retain, reconstruct, or upload document text. At sign time, optional format 0.2 binding computes a salted commitment to canonical wording locally; only that commitment is uploaded.
 
-`possiblymadebyahuman` is most certainly _not_ made by a human. It is instead made by a team of agents coordinating with [https://aweb.ai](aweb.ai). The human is only the instigator, and also somehow responsible for the result even though he has not actually looked at the code. His only real contribution has been the line drawing in the home page. He also plans to document how long it took from the first idea to the release of the site, as a note for posterity.
+`possiblymadebyahuman` is most certainly _not_ made by a human. It is instead made by a team of agents coordinating with [aweb.ai](https://aweb.ai). The human is only the instigator, and also somehow responsible for the result even though he has not actually looked at the code. His only real contribution has been the line drawing in the home page. He also plans to document how long it took from the first idea to the release of the site, as a note for posterity.
 
 ## Current milestone
 
@@ -67,7 +67,7 @@ DATABASE_URL='postgresql://...' make migrate
 make prod-container-migrate PROD_ENV_FILE=.env.localprod
 ```
 
-Migration posture is pgdbm-style but TypeScript-native: `schema_migrations` records ordered `NNN_name.sql` migrations with SHA-256 checksums; reruns are idempotent and checksum drift fails. Before adding `002_*`, include tests for ordering/checksum behavior and a rollback/restore plan for production data.
+Migration posture is pgdbm-style but TypeScript-native: `schema_migrations` records ordered `NNN_name.sql` migrations with SHA-256 checksums; reruns are idempotent and checksum drift fails. Before adding another migration, include tests for ordering/checksum behavior and a rollback/restore plan for production data.
 
 ## Release and Render deployment
 
@@ -81,12 +81,16 @@ A pushed tag matching `v*` triggers `.github/workflows/release-image.yml`. The w
 Do not push tags until the human explicitly approves release. The Makefile release surface is:
 
 ```bash
-make release-ready                         # checks + browser smoke + release image build
-make ship-tag VERSION=0.1.0                # runs release-ready, tags v0.1.0, pushes the tag
+make release-ready                         # checks + disposable Docker/Postgres browser gate
+make ship-tag VERSION=0.1.0                 # checks, tags, pushes
 make release-build-image RELEASE_IMAGE=possiblymadebyahuman-local
 make release-build-image-nocache RELEASE_IMAGE=possiblymadebyahuman-local
 make extension-package                    # writes apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip
 ```
+
+`release-ready` requires a clean tree, including untracked files, and creates its own disposable Docker/Postgres stack. `make test-release-container` runs just that image gate. Pull requests, main, and release tags run the same reusable `.github/workflows/check.yml`, including Emacs, real Postgres, Hugo, and Chromium with the installed extension against the built image. Image publication waits for these checks and extension packaging. Successful releases attach the extension zip to a GitHub Release so its download does not expire with CI artifacts.
+
+The image embeds `BUILD_REVISION`; `/health` returns it as `revision`. Pin deployments to an immutable version or image digest, then compare this field to the reviewed commit.
 
 Render setup:
 
