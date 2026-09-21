@@ -195,3 +195,5 @@ references are:
 - Privacy/data-use answers: see "Data observed locally / Data stored or
   processed locally before upload / Data transmitted on explicit sign/upload
   / Data not transmitted by the public/default extension" in the prep doc.
+
+Release tags now invoke the reusable checks before packaging or publishing. Those checks run the installed extension against a disposable production image and Postgres. The zip is also attached to the GitHub Release as a durable download; this is a sideload artifact, not evidence of Chrome Web Store approval.

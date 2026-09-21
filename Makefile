@@ -1,4 +1,4 @@
-.PHONY: help install check test typecheck dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container-build local-container local-container-down local-container-reset local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser test-extension-e2e build-site release-ready ship-tag
+.PHONY: help install check test typecheck dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container-build local-container local-container-down local-container-reset local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser test-extension-e2e build-site test-release-container release-ready ship-tag
 
 ENV_FILE ?= .env.local-container
 PROD_ENV_FILE ?= .env.localprod
@@ -11,6 +11,7 @@ IMAGE ?= possiblymadebyahuman:latest
 PMBAH_PORT ?= $(or $(shell sed -n 's/^PMBAH_PORT=//p' $(ENV_FILE) 2>/dev/null),8000)
 DOCKER_PLATFORM ?= linux/amd64
 RELEASE_PLATFORM ?= linux/amd64
+BUILD_REVISION ?= $(shell git rev-parse HEAD)
 LOCAL_COMPOSE = ENV_FILE=$(ENV_FILE) LOCAL_IMAGE=$(LOCAL_IMAGE) docker compose --env-file $(ENV_FILE) -f docker-compose.local-container.yml -p pmbah-local
 PROD_COMPOSE = IMAGE=$(PROD_IMAGE) ENV_FILE=$(PROD_ENV_FILE) docker compose --env-file $(PROD_ENV_FILE) -f docker-compose.prod.yml -p pmbah-prod
 
@@ -77,18 +78,18 @@ extension-package:
 	npm --workspace @possiblymadebyahuman/browser-extension run package
 
 docker-build:
-	docker build --platform $(DOCKER_PLATFORM) -t $(IMAGE) .
+	docker build --build-arg BUILD_REVISION=$(BUILD_REVISION) --platform $(DOCKER_PLATFORM) -t $(IMAGE) .
 
 local-container-build:
 	$(MAKE) docker-build IMAGE=$(LOCAL_IMAGE)
 
 release-build-image:
 	@echo "Building production release image $(RELEASE_IMAGE):latest for $(RELEASE_PLATFORM)..."
-	docker build --platform $(RELEASE_PLATFORM) -t $(RELEASE_IMAGE):latest .
+	docker build --build-arg BUILD_REVISION=$(BUILD_REVISION) --platform $(RELEASE_PLATFORM) -t $(RELEASE_IMAGE):latest .
 
 release-build-image-nocache:
 	@echo "Building production release image without cache $(RELEASE_IMAGE):latest for $(RELEASE_PLATFORM)..."
-	docker build --platform $(RELEASE_PLATFORM) --no-cache -t $(RELEASE_IMAGE):latest .
+	docker build --build-arg BUILD_REVISION=$(BUILD_REVISION) --platform $(RELEASE_PLATFORM) --no-cache -t $(RELEASE_IMAGE):latest .
 
 local-container: local-container-build
 	@test -f "$(ENV_FILE)" || (echo "Missing $(ENV_FILE). Copy .env.local-container.example first." && exit 1)
@@ -160,14 +161,19 @@ build-site:
 	command -v hugo >/dev/null || (echo "hugo is required for build-site" && exit 1)
 	hugo --source apps/site --destination public --minify
 
+test-release-container:
+	npm run build:web
+	$(MAKE) extension-build
+	BUILD_REVISION=$(BUILD_REVISION) node scripts/test-release-container.mjs
+
 release-ready:
 	git diff --quiet
 	git diff --cached --quiet
+	@test -z "$$(git ls-files --others --exclude-standard)" || (echo "Untracked files must be reviewed before release." && exit 1)
 	$(MAKE) check
-	$(MAKE) test-web-browser
+	$(MAKE) test-release-container
 	$(MAKE) build-site
 	$(MAKE) extension-package
-	$(MAKE) release-build-image RELEASE_IMAGE=possiblymadebyahuman-release-ready
 	@echo "Release-ready checks passed. Next: make ship-tag VERSION=x.y.z after human approval."
 
 ship-tag: release-ready

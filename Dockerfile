@@ -25,6 +25,8 @@ COPY apps/site apps/site
 RUN hugo --source apps/site --destination /site-public --minify
 
 FROM node:24-slim AS runtime
+ARG BUILD_REVISION=development
+ENV BUILD_REVISION=$BUILD_REVISION
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 1001 pmbah \
