@@ -10,19 +10,20 @@ import {
   type FetchLike,
 } from "../lib/adapters.ts";
 import { BackgroundDispatcher } from "../lib/dispatcher.ts";
-import { isContentMessage } from "../lib/messages.ts";
+import { isContentMessage, isOpenControlsRequest } from "../lib/messages.ts";
 import { API_BASE_URL, EXTENSION_VERSION, RECORDS_ENDPOINT } from "../lib/config.ts";
 
 export const BACKGROUND_ENTRYPOINT = "service-worker";
 
 declare const chrome: {
+  action: { openPopup(options?: { windowId: number }): Promise<void> };
   storage: { local: ChromeStorageLocalSlice };
   runtime: {
     onMessage: {
       addListener(
         listener: (
           message: unknown,
-          sender: { tab?: { id?: number }; frameId?: number; url?: string },
+          sender: { tab?: { id?: number; windowId?: number }; frameId?: number; url?: string },
           sendResponse: (response: unknown) => void,
         ) => boolean | void,
       ): void;
@@ -60,6 +61,15 @@ const dispatcher = new BackgroundDispatcher({
 void dispatcher.ensureInitialised();
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (isOpenControlsRequest(message)) {
+    // Keep popup opening separate from record operations and their responses.
+    // Older Chrome versions can reject this API; the field then shows a hint.
+    void Promise.resolve().then(() => chrome.action.openPopup(
+      sender.tab?.windowId === undefined ? undefined : { windowId: sender.tab.windowId },
+    )).then(() => sendResponse({ kind: "open_controls_result" }))
+      .catch(() => sendResponse({ kind: "error", reason: "open_from_toolbar" }));
+    return true;
+  }
   if (!isContentMessage(message)) {
     sendResponse({ kind: "error", reason: "unrecognised_message" });
     return false;

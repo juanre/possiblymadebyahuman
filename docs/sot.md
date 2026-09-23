@@ -822,7 +822,7 @@ Primary normal-user author UX.
 
 Surfaces:
 
-- Field badge on textareas/contenteditable fields.
+- A “PMBAH · writing record ↗” control on textareas/contenteditable fields. It follows the field, hides when the field is hidden or removed, and opens the extension popup without signing or disturbing the selected text.
 - Extension popup listing current captured sessions.
 - Sign modal: “Finish & get link.”
 - Capture-context review/redaction before upload.

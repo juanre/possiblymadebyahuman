@@ -55,6 +55,12 @@ export type ComputeBindingResponse =
   | { kind: "binding_result"; text_binding: TextBinding | null }
   | { kind: "binding_error"; reason: string };
 
+// UI-only request handled by the worker; it never returns session data to a page.
+export type OpenControlsRequest = { kind: "open_controls" };
+export function isOpenControlsRequest(value: unknown): value is OpenControlsRequest {
+  return !!value && typeof value === "object" && (value as { kind?: unknown }).kind === "open_controls";
+}
+
 export function isComputeBindingRequest(value: unknown): value is ComputeBindingRequest {
   return !!value && typeof value === "object" && (value as { kind?: unknown }).kind === "compute_binding";
 }
@@ -70,6 +76,7 @@ export type SignSessionResult =
   | { kind: "failed"; reason: string };
 
 export type BackgroundResponse =
+  | { kind: "open_controls_result" }
   | { kind: "register_field_result"; result: RegisterFieldResult }
   // session_id is present when the edit started a continuation session and the
   // content script must record further edits under that id.
@@ -84,13 +91,15 @@ export type BackgroundResponse =
  * Responses that may be returned to a content-script context. These MUST NOT
  * carry the bearer `observation.last_observed_token` or any field from
  * `SessionRecord.observation`. The content script forwards only register_field
- * and append_mutation messages, so only these two response kinds are reachable
+ * and append_mutation messages, plus the UI-only open_controls request,
+ * so only their response kinds are reachable
  * from a content-script context. A recursive regression test
  * (`tests/browser-extension-canary.test.mjs`) asserts that no string equal to
  * the bearer token and no key named `last_observed_token` ever appears in a
  * response of one of these kinds.
  */
 export const CONTENT_SCRIPT_REACHABLE_RESPONSE_KINDS = [
+  "open_controls_result",
   "register_field_result",
   "append_mutation_result",
   "error",
