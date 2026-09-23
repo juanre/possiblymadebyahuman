@@ -4,6 +4,8 @@ Status: approved architecture for v0 implementation.
 Audience: coordinator, developer, reviewer, and future contributors.  
 Spec reference: `docs/spec.md` remains the product/format thesis; this document is the implementation source of truth for architecture, UI, backend, database, routing, and work breakdown.
 
+Extension UX amendment, 23 September 2026: the owner requires explicit activation on the chosen editor and no persistent controls over webpage content. Sections 3.8 and 13.1 describe that target; extension 0.1.1/0.1.2 still implement the superseded passive-capture behavior. Implementation is tracked in [UX-reset epic #3](https://github.com/juanre/possiblymadebyahuman/issues/3) and [the review](extension-ux-review-2026-09-23.md).
+
 ---
 
 ## 1. Product promise
@@ -247,10 +249,9 @@ Primary browser author UX.
 
 Owns:
 
-- capture-all text-field/contenteditable observation
+- explicitly activated text-field/contenteditable observation; no capture or checkpoints from unchosen fields
 - per-field session identity
-- field badge
-- popup
+- browser-owned session controls; no persistent injected field labels or overlays
 - sign modal
 - local unsigned capture TTL
 - sign/freeze/upload/copy-link flow
@@ -818,28 +819,28 @@ Build/deploy note:
 
 ### 13.1 Browser extension UI
 
-Primary normal-user author UX.
+Primary normal-user author UX. The explicit-start requirements below supersede the previous passive/capture-all design. They are the implementation target, not a claim that the currently distributed extension already satisfies them.
 
 Surfaces:
 
-- Field badge on textareas/contenteditable fields.
-- Extension popup listing current captured sessions.
+- An explicit start action on a chosen editor, with context-menu and accessible keyboard/toolbar paths.
+- Extension toolbar status and browser-owned session controls. A browser side panel is the recommended surface in the review; persistent controls over the host page are prohibited.
 - Sign modal: “Finish & get link.”
 - Capture-context review/redaction before upload.
-- Degraded-capture warning where applicable.
-- Toast after signing: “Record saved, link copied.”
+- Actionable explanations that distinguish editor identity, available measurements and server observation; no raw `degraded` or `collision` labels.
+- Persistent saved-record result with the full URL, Open record and Copy link; separate upload and clipboard outcomes.
 
 Behavior:
 
-1. Capture passively and locally.
-2. User signs when they want a link.
+1. Start only after explicit activation of the chosen editor. Unchosen fields create no sessions, capture text measurements or send checkpoints. Define activation, stop, reload and continuation behavior explicitly; local retention must not silently enroll fields again.
+2. The user finishes when they want a link and reviews context and binding. A requested binding that cannot be obtained must pause for Retry, Cancel or an explicit process-only choice; it cannot be silently omitted.
 3. Signing freezes the session.
 4. Extension computes the public process hash chain locally.
 5. Extension uploads content-free manifest/events.
 6. Backend returns short URL.
-7. Extension copies URL to clipboard.
+7. Extension presents a persistent saved-record result and attempts to copy the URL. Claim copied only after clipboard success, and retain a visible usable URL if copying fails.
 8. Local log is cleared shortly after successful upload.
-9. Further edits in the same field start a new session whose `parent_record` names the uploaded record; the signed session stays frozen with its link. A failed upload can be retried with the same signed record. (`/write` differs: its canvas keeps the text on screen, so it reopens the same session and re-signs the whole process.)
+9. Continuations must respect explicit activation and truthfully identify their coverage, linking to the uploaded record through `parent_record`; signed sessions stay frozen with their links. Edits missed while capture was stopped must not later appear covered. A failed upload can be retried with the same signed record. Same-document session sharing across deliberately activated tabs remains supported. (`/write` retains its existing behavior: its canvas keeps the text on screen, so it reopens the same session and re-signs the whole process.)
 
 Unsigned local capture TTL:
 
