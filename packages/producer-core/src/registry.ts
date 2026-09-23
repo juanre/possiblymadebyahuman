@@ -503,6 +503,13 @@ export class SessionRegistry {
 
   #normaliseLoadedRecord(record: SessionRecord): SessionRecord {
     const cloned = cloneSession(record);
+    // These states describe work owned by the previous process. Its outcome
+    // may be unknown, so keep the signed events/binding frozen for an exact
+    // idempotent retry rather than leave the draft permanently busy or reopen it.
+    if (cloned.state === "signing" || cloned.state === "uploading") {
+      cloned.state = "failed_upload";
+      cloned.last_failure_reason = "Saving was interrupted. Retry to recover the same signed record.";
+    }
     if (!cloned.observation) {
       cloned.observation = emptyObservation(this.#checkpoint !== null);
     } else {

@@ -188,6 +188,10 @@ export class BackgroundDispatcher {
       const observation = this.registry.getObservationEnvelope(session_id);
       const diverged = this.registry.getObservationState(session_id) === "diverged";
       this.registry.markUploading(session_id);
+      // Save the frozen events and binding before a request can reach the
+      // server. A terminated worker must retry this exact record, never offer
+      // its already-submitted session for further editing.
+      await this.registry.persist();
       const response = await this.#upload.postRecord({
         manifest: draft.manifest,
         events: draft.events,

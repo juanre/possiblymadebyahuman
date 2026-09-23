@@ -7,6 +7,7 @@ Status: implemented on `feat/explicit-writing-sessions`, extension source versio
 - Migration `003_long_session_times.sql` widens the nine elapsed-time columns to PostgreSQL `bigint`. Calendar dates already use `timestamptz`. Event times live in JSON and need no SQL conversion.
 - Format and API validation accept exact non-negative millisecond integers through `Number.MAX_SAFE_INTEGER`. Counts and codepoint offsets retain their existing 32-bit bounds. PostgreSQL bigint values decode to exact JSON numbers; unsafe values fail rather than round silently.
 - Existing format versions, event bytes, record hashes and published links remain unchanged. Viewer durations and timeline ticks handle days, and inferred calendar dates outside JavaScript's date range do not crash the page.
+- Frozen upload intent is persisted before sending HTTP. Interrupted signing/uploading reloads as a failed upload with the same events and binding, allowing an exact retry instead of leaving the draft stuck on Saving.
 - Browser extension drafts and saved-link anchors no longer expire. Uploaded event logs and checkpoint credentials still clear after their grace period. Existing locally retained anchors need no rewritten storage schema; already deleted links cannot be recovered.
 - Unsigned server checkpoint evidence no longer expires after seven days. Producer-local commitment caches remain bounded, preserving the oldest anchor and recent commitments; the server retains its checkpoint history. No idle heartbeat was added.
 - The text-check checkbox now uses plain, generic field wording and omits the comparison-normalization sentence from the primary flow.
@@ -23,8 +24,8 @@ The local `~/prj/pgdbm` source was inspected after the owner requested it. Its t
 ## Deployment and recovery
 
 1. Keep a recoverable database backup/snapshot before applying schema changes. The widening may lock/rewrite the affected tables; schedule for the actual database size and traffic. Existing migration lock acquisition has a 30-second timeout.
-2. Deploy the updated API/viewer with migration 003 before relying on clients to publish sessions beyond the old bound. The production startup command runs the existing checked migration runner; the existing `npm run migrate` entrypoint can also apply it separately. The new decoder is compatible with old integer columns as well as bigint columns.
-3. Verify readiness and migration status, then install/distribute extension 0.2.1. Earlier clients still have their old local expiry policy; a server deployment cannot change an installed extension.
+2. Deploy the updated API/viewer with migration 003 before relying on clients to publish sessions beyond the old bound. Stop old service instances before starting the new image; an overlapping rolling deployment can leave old readers serving bigint durations as JSON strings after migration commits. The production startup command runs the existing checked migration runner; the existing `npm run migrate` entrypoint can also apply it separately. The new decoder is compatible with old integer columns as well as bigint columns.
+3. Verify `/ready`, migration status, `/health` revision against the released commit, and an existing record response before restoring traffic; then install/distribute extension 0.2.1. Earlier clients still have their old local expiry policy; a server deployment cannot change an installed extension.
 4. A failed transactional migration rolls back without recording 003. Diagnose and rerun the unchanged migration. After a successful migration, prefer a forward repair: an old image's migration runner rejects the unknown version 003, and old readers do not handle long-duration records correctly. Do not casually narrow columns back or delete migration history. If restoration is necessary, stop writes and restore the verified pre-deployment backup with the matching application version, accounting explicitly for writes since that backup.
 
 ## Validation and review
@@ -34,7 +35,7 @@ The local `~/prj/pgdbm` source was inspected after the owner requested it. Its t
 - Browser lifecycle tests cover restart, explicit resumption into nonempty fields, route authorization, preserved clock/checkpoint chain, pending-gap persistence, immediate finish and saved links retained after ten years.
 - Installed-extension tests cover navigation, repeated same-field stop/resume, fresh text binding and plaintext-free upload. Viewer browser tests cover both 60 days and durations beyond the inferred calendar range.
 - Real Emacs tests cover 60-day persisted resumption/publication and clock rollback.
-- Storage, lifecycle, temporal handling and tests received independent agent reviews. The integration gate passed 86 browser tests; typecheck and 306 unit tests passed without skips.
+- Storage, lifecycle, temporal handling and tests received independent agent reviews. The integration gate passed 86 browser tests; typecheck and 309 unit tests passed without skips, including interrupted-upload recovery.
 
 ## Remaining product work
 

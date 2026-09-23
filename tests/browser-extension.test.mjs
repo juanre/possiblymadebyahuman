@@ -1160,3 +1160,69 @@ test("dispatcher: resume without a new edit can publish earlier activity but can
   assert.equal(upload.calls[0].manifest.duration_ms, 1000, "duration remains time through the last observed edit, not trailing idle");
   assert.equal(upload.calls[0].manifest.text_binding, undefined);
 });
+
+test("dispatcher: interrupted upload restarts frozen and retries the identical durable record", async () => {
+  const clock = mutableClock(1000);
+  const uuid = deterministicUuid();
+  const storage = inMemoryStorage();
+  const checkpoint = recordingCheckpoint();
+  let requestStarted;
+  const started = new Promise(resolve => { requestStarted = resolve; });
+  let firstPayload;
+  const interruptedUpload = { async postRecord(payload) {
+    firstPayload = structuredClone(payload);
+    const persisted = (await storage.read())[0];
+    assert.equal(persisted.state, "uploading", "upload intent must be durable before sending HTTP");
+    assert.deepEqual(persisted.events, payload.events);
+    assert.deepEqual(persisted.signed_text_binding, payload.manifest.text_binding);
+    requestStarted();
+    // Simulate a process lost after the server may have received its request.
+    return new Promise(() => {});
+  } };
+  const dispatcher = new BackgroundDispatcher({ storage, clock, uuid, checkpoint, upload: interruptedUpload, producer: PRODUCER });
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const sid = (await dispatcher.handle(registration)).result.session_id;
+  const mutation = { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" };
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  const binding = createTextBinding("abc", sid);
+  void dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: binding, capture_context_redactions: { drop_url: true } });
+  await started;
+  clock.advance(60 * 24 * 60 * 60 * 1000);
+  const upload = recordingUpload();
+  const restarted = new BackgroundDispatcher({ storage, clock, uuid, checkpoint, upload, producer: PRODUCER });
+  await restarted.ensureInitialised();
+  const recovered = restarted.registry.get(sid);
+  assert.equal(recovered.state, "failed_upload");
+  assert.match(recovered.last_failure_reason, /interrupted/);
+  assert.equal((await restarted.handle({ kind: "append_mutation", session_id: sid, mutation })).kind, "error");
+  assert.equal((await restarted.handle({ ...registration, resume_session_id: sid })).kind, "error");
+  const result = await restarted.handle({ kind: "retry_failed_upload", session_id: sid });
+  assert.equal(result.result.kind, "uploaded");
+  assert.deepEqual(upload.calls[0], firstPayload, "retry preserves hash, binding, context, events, clock and observation credentials");
+  assert.equal(verifyRecord(upload.calls[0]).valid, true);
+  assert.equal((await storage.read())[0].uploaded_response.url, result.result.response.url);
+});
+
+test("dispatcher: failed upload-intent persistence prevents the HTTP request", async () => {
+  const { dispatcher, storage, upload } = makeDispatcher();
+  const sid = (await dispatcher.handle({ kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true })).result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.registry.persist();
+  const write = storage.write;
+  let refused = false;
+  storage.write = async snapshot => {
+    if (!refused && snapshot.some(record => record.state === "uploading")) {
+      refused = true;
+      throw new Error("Local storage unavailable");
+    }
+    return write(snapshot);
+  };
+  const result = await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: createTextBinding("abc", sid) });
+  assert.equal(result.result.kind, "failed");
+  assert.match(result.result.reason, /Local storage unavailable/);
+  assert.equal(upload.calls.length, 0);
+  assert.equal((await storage.read())[0].state, "failed_upload");
+  assert.equal((await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid })).result.kind, "uploaded");
+});
