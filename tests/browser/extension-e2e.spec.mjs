@@ -153,14 +153,14 @@ test.describe("browser extension against the local service", () => {
     const draft = panel.locator("article.selected");
     const sessionId = await draft.getAttribute("data-session-id");
     await draft.getByRole("button", { name: "Stop", exact: true }).click();
-    await expect(draft.getByRole("button", { name: "Resume in chosen field" })).toBeVisible();
+    await expect(draft.getByRole("button", { name: "Resume in chosen field" })).toBeEnabled();
     // A restored page can contain edits from elsewhere; no text import or
     // inferred replacement is allowed during explicit reattachment.
     await page.reload();
     await field.fill("offline text");
     await page.bringToFront();
     await field.focus();
-    await panel.evaluate(() => [...document.querySelectorAll("button")].find(button => button.textContent === "Resume in chosen field").click());
+    await draft.getByRole("button", { name: "Resume in chosen field" }).evaluate(button => button.click());
     await expect(panel.locator("#toast")).toContainText("Draft resumed");
     await expect(draft).toContainText("6 editing events");
     await page.keyboard.press("End");
@@ -171,9 +171,10 @@ test.describe("browser extension against the local service", () => {
     // Stop/resume again in the same DOM node: stale entry WeakRefs and cached
     // frozen snapshots must not supply an earlier pass's binding.
     await draft.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(draft.getByRole("button", { name: "Resume in chosen field" })).toBeEnabled();
     await page.bringToFront();
     await field.focus();
-    await panel.evaluate(() => [...document.querySelectorAll("button")].find(button => button.textContent === "Resume in chosen field").click());
+    await draft.getByRole("button", { name: "Resume in chosen field" }).evaluate(button => button.click());
     await expect(panel.locator("#toast")).toContainText("Draft resumed");
     await page.keyboard.type("!");
     await panel.reload();

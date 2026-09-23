@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/*.test.mjs",
+    "test": "uv run --locked pytest -q -s tests/database/test_node.py",
     "check": "npm run typecheck && npm test",
     "build:web": "npm --workspace @possiblymadebyahuman/web run build",
     "migrate": "node apps/ingest-api/scripts/migrate.mjs",
@@ -18,7 +18,8 @@
     "start:production": "node apps/ingest-api/scripts/start-production.mjs",
     "smoke:local-container": "node scripts/smoke-local-container.mjs",
     "test:web-browser": "playwright test --config playwright.config.mjs",
-    "test:extension-e2e": "playwright test --config playwright.config.mjs tests/browser/extension-e2e.spec.mjs"
+    "test:extension-e2e": "playwright test --config playwright.config.mjs tests/browser/extension-e2e.spec.mjs",
+    "test:release-container": "uv run --locked pytest -q -s tests/database/test_release.py"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",

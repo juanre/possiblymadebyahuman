@@ -44,3 +44,7 @@ The broader panel design is tracked in [issue #13](https://github.com/juanre/pos
 [Issue #14](https://github.com/juanre/possiblymadebyahuman/issues/14) tracks the remaining finish-time and publication boundaries. An unsigned draft is resumable; an already published record remains immutable. Continued work after publication needs a separately specified snapshot/continuation model. Browser duration still ends at the last captured edit: a new edit after a two-month pause includes that pause, but returning only to publish does not append trailing idle time. A signed end-time representation needs a format decision rather than a fabricated mutation. The `/write` producer's existing local cleanup policy is unchanged.
 
 Authenticated Gmail acceptance and production deployment remain separate from the local automated evidence above.
+
+## Test infrastructure follow-up
+
+After the release review, the owner required pgdbm's provided fixtures for database tests. `tests/database/conftest.py` imports `test_db` and `test_db_factory`; pytest owns database setup/teardown around the existing Node tests and container gate. CI supplies PostgreSQL as a service with a TCP health check. Local tests use `make test-db`. This replaces the bespoke database-container setup without replacing the application's TypeScript migration runner or changing migration history.

@@ -1,4 +1,7 @@
 .git
+.venv
+.pytest_cache
+**/__pycache__
 .aw
 .dev
 *.dev

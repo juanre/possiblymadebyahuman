@@ -27,6 +27,7 @@ The Makefile is the main management surface:
 ```bash
 make help
 make install
+make test-db               # PostgreSQL server for pgdbm fixtures
 make check
 make docker-build
 make local-container
@@ -44,10 +45,20 @@ Equivalent npm checks remain available:
 
 ```bash
 npm install
+uv sync --locked
+make test-db
 npm run typecheck
 npm test
 npm run check
 ```
+
+## Database tests
+
+Tests use the provided `pgdbm` pytest fixtures (`test_db` and `test_db_factory`) to create and clean up isolated databases. The Python test wrapper supplies their connections to the Node integration tests and release-image gate; neither creates or drops databases itself. Application SQL migrations still run through the existing TypeScript runner, so tests exercise the production migration path.
+
+Install Node 24+, Python 3.11+, uv and Docker, then run `make install`, `make test-db`, and `make check`. The dedicated PostgreSQL service listens at `127.0.0.1:25433` with development-only `postgres` credentials. It is separate from the normal local application database. `make test-db-down` stops that disposable service. For an existing test server, set `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_USER` and `TEST_DB_PASSWORD` before starting pytest; the role must be able to create test databases. Never point these at production.
+
+`npm test` runs the Node suite under pgdbm fixture ownership. `make test-release-container` uses another fixture-owned database for the built container's startup migrations, HTTP smoke and browser tests. CI provides a PostgreSQL service with a TCP health check and uses the same fixtures. Python dependencies are pinned in `uv.lock`; no Python dependency is added to the production image.
 
 ## Database operations
 
@@ -88,7 +99,7 @@ make release-build-image-nocache RELEASE_IMAGE=possiblymadebyahuman-local
 make extension-package                    # writes apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip
 ```
 
-`release-ready` requires a clean tree, including untracked files, and creates its own disposable Docker/Postgres stack. `make test-release-container` runs just that image gate. Pull requests, main, and release tags run the same reusable `.github/workflows/check.yml`, including Emacs, real Postgres, Hugo, and Chromium with the installed extension against the built image. Image publication waits for these checks and extension packaging. Successful releases attach the extension zip to a GitHub Release so its download does not expire with CI artifacts.
+`release-ready` requires a clean tree, including untracked files, and a running test PostgreSQL service (`make test-db`). The release gate runs its application container against a fresh database managed by pgdbm fixtures. `make test-release-container` runs just that image gate. Pull requests, main, and release tags run the same reusable `.github/workflows/check.yml`, including Emacs, real Postgres, Hugo, and Chromium with the installed extension against the built image. Image publication waits for these checks and extension packaging. Successful releases attach the extension zip to a GitHub Release so its download does not expire with CI artifacts.
 
 The image embeds `BUILD_REVISION`; `/health` returns it as `revision`. Pin deployments to an immutable version or image digest, then compare this field to the reviewed commit.
 
