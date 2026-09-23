@@ -4,10 +4,9 @@ Status: approved architecture for v0 implementation.
 Audience: coordinator, developer, reviewer, and future contributors.  
 Spec reference: `docs/spec.md` remains the product/format thesis; this document is the implementation source of truth for architecture, UI, backend, database, routing, and work breakdown.
 
-Extension UX amendment, 23 September 2026: the owner requires explicit activation on the chosen editor and no persistent controls over webpage content. Sections 3.8 and 13.1 define the extension 0.2.1 behavior; extension 0.1.1/0.1.2 implement the superseded passive-capture behavior. Implementation is tracked in [UX-reset epic #3](https://github.com/juanre/possiblymadebyahuman/issues/3) and [the review](extension-ux-review-2026-09-23.md).
+Extension UX amendment, 23 September 2026: the owner requires explicit activation on the chosen editor and no persistent controls over webpage content. Extension 0.2.1 is the currently deployed release. The **0.3.0 candidate** implements the next panel and signed-finish contract in sections 3.8 and 13.1; this document is not deployment evidence. Versions before 0.2.0 use the superseded passive-capture behavior. Work follows [UX-reset epic #3](https://github.com/juanre/possiblymadebyahuman/issues/3), [the review](extension-ux-review-2026-09-23.md), and [the panel/session design](extension-panel-design-2026-09-23.md).
 
-
-Further owner direction, 23 September 2026: cards must be user-nameable with contextual defaults, use generic field wording, and follow the focused editor. Saved links and unfinished sessions must not expire automatically. A writer must be able to return after months, resume the same session and sign a timeline that includes the pause. Extension 0.2.1 implements indefinite local retention, explicit unfinished-session resumption, and longer time ranges. Editable card names, focus following, collapsed/searchable history, and the broader panel redesign remain pending. These changes are not present in extension 0.2.0. See [the revised panel/session design](extension-panel-design-2026-09-23.md), including time-range, durable identity and server-observation work. Existing published records remain immutable.
+Further owner direction, 23 September 2026: cards have private editable names with contextual defaults, use generic field wording, and follow the focused editor without starting capture. Saved links and unfinished sessions have no automatic expiry. Extension 0.2.1 supplies long-duration storage and explicit unfinished-session resumption. The 0.3.0 candidate adds the focus-aware panel, collapsed searchable/exportable history, signed finish time and explicit linked continuations. Existing published records remain immutable. See [signed finish and continuations](signed-finish-and-continuations.md) for the versioned format contract and compatibility boundaries. Deploy the compatible API/viewer before distributing 0.3.0; integrated release checks and authenticated-site acceptance are separate gates.
 
 ---
 
@@ -91,7 +90,8 @@ Owns:
 - event hash-chain computation
 - record-hash verification
 - content-blind process-length validation using Unicode codepoint offsets, with explicit JSON `null` for unknown process measurements
-- the format `0.2` text binding: `canon-letters/0.1` canonicalization, the salted commitment, and sealing the binding into `record_hash` (normative detail in `docs/text-binding.md` and `docs/spec/canonicalization.md`)
+- the format `0.2`/`0.3` text binding: `canon-letters/0.1` canonicalization, the salted commitment, and sealing the binding into `record_hash` (normative detail in `docs/text-binding.md` and `docs/spec/canonicalization.md`)
+- the format `0.3` final seal over elapsed finish time, optional `parent_record`, and optional text binding, while reusing the `0.2` event-chain domain to preserve checkpoints and keeping historical hashes unchanged
 - bounded metadata: `capture_context` accepts only its documented keys with capped string lengths, `attestations` only small typed objects with field names capped at 64 characters, producer id/version capped at 128 characters with no extra producer keys, counts/offsets within the 32-bit storage range, and elapsed millisecond fields within the JavaScript safe-integer range
 
 Does not own:
@@ -152,7 +152,7 @@ Owns:
 - session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
 - capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
 - configurable TTL sweep; the extension disables draft expiry and retains uploaded-record references indefinitely, without events or checkpoint tokens after cleanup; the `/write` consumer retains its existing policy
-- server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, a 30-second attempt deadline (including response-body reads), immediate serialized persistence of checkpoint outcomes, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before sign+upload that completes observation of a session with at least one commitment (final checkpoint over the uncommitted tail, plus one more round for events that arrive while it is in flight; at most two rounds) and leaves a never-committed session alone, and a `getObservationEnvelope()` accessor that yields the `(observed_session_id, token)` binding for `POST /api/records` when a commitment exists and the session has not diverged, `{ state: "unobserved" }` when it has no commitment or is `diverged`, and `null` when no checkpoint adapter is wired
+- server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, a 30-second attempt deadline (including response-body reads), immediate serialized persistence of checkpoint outcomes, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before upload (after freezing and persisting the signed record in extension 0.3.0) that completes observation of a session with at least one commitment (final checkpoint over the uncommitted tail, plus one more round for events that arrive while it is in flight; at most two rounds) and leaves a never-committed session alone, and a `getObservationEnvelope()` accessor that yields the `(observed_session_id, token)` binding for `POST /api/records` when a commitment exists and the session has not diverged, `{ state: "unobserved" }` when it has no commitment or is `diverged`, and `null` when no checkpoint adapter is wired
 - local observation state vocabulary (`disabled` / `unknown` / `known` / `partial` / `diverged`) distinct from the public wire vocabulary on records (`observed` / `partial` / `unobserved` / `not_requested`)
 - adapter interfaces (`StorageAdapter`, `UploadAdapter`, `CheckpointAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`)
 
@@ -258,8 +258,11 @@ Owns:
 - sign modal
 - durable unsigned captures and saved links, retained until explicit local removal
 - sign/freeze/upload/copy-link flow
-- local clear after upload
-- capture-context prompt review before upload
+- uploaded event/token cleanup after the saved link is durably retained
+- capture-context prompt review before upload; private card names are separate from the public label
+- exact focused-editor routing scoped to the panel’s browser window and active tab; focus alone never authorizes capture
+- compact saved history with search, paging, link export and explicit local removal
+- format 0.3 signed finish and explicit linked continuation, enabled only for this producer
 
 ### 3.9 `producers/emacs`
 
@@ -283,7 +286,7 @@ Owns:
 All v0 producers record the writing process captured after a user starts a session. They do not silently wrap pre-existing document content into a new record scope.
 
 - **Emacs** may enable `pmbah-mode` in a non-empty buffer. It records only mutations after capture starts, using Emacs' absolute positions and lengths for those later mutations. Its helper receives only process metadata (`events`, producer info, capture context, duration), not inserted text, text hashes-for-anything-else, initial snapshots/baselines, or text replay fixtures. **Local transient-binding exception:** at sign time the helper may receive the active region when `use-region-p` is true, otherwise the whole buffer, *solely* to compute the approved content-blind text binding (the `canon-letters/0.1` commitment) locally via the shared `packages/format` implementation. The helper must discard that text without persisting, logging, replaying, uploading, or passing it onward; only the sealed binding object (`scheme`, `canonical_length`, `commitment`) and the record survive. The text never leaves the user's machine — this is a local-compute exception, not a storage-policy exception, and plaintext storage/upload remains forbidden.
-- **Browser extension** requires explicit start in an empty editor. It never enrolls another field by heuristic matching. An additional editor may explicitly join the same active document session; this is a user choice, not an automatic inference. Reload, full-document navigation, stop, and finish retire capture authorization. Historical local drafts remain stopped. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths. At sign time, if binding is enabled, the content script may transiently read selected text in the active field/editor, or all current content of that field/editor when no in-field selection is available, solely to compute the content-blind binding commitment; only the binding object may cross to the service worker/upload. It must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
+- **Browser extension** requires explicit start in an empty editor for a new independent session. Explicit resumption or linked continuation may attach to a non-empty editor on the same site origin; missing edits remain unknown and are never reconstructed. It never enrolls another field by heuristic matching. An additional editor may explicitly join the same active document session; this is a user choice, not an automatic inference. Reload, full-document navigation, stop, and finish retire capture authorization. Historical local drafts remain stopped. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths. At sign time, if binding is enabled, the content script may transiently read selected text in the active field/editor, or all current content of that field/editor when no in-field selection is available, solely to compute the content-blind binding commitment; only the binding object may cross to the service worker/upload. It must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
 - **`/write` first-party page** starts from an empty textarea and clears/discards the visible canvas independently of the persisted content-blind session record. At sign time, if binding is enabled, it binds selected text in the writing canvas, or all current canvas content when nothing is selected.
 - **`packages/producer-core`** accepts only public mutation shapes and session metadata. It must not require plaintext, final text, inserted text, text hashes, or text replay to sign/verify a record.
 
@@ -331,7 +334,7 @@ Manifest includes:
     "capabilities": ["timing", "source_attribution", "selection", "pause_fidelity", "keystroke_level"]
   },
   "capture_context": {},
-  "text_binding": { "scheme": "canon-letters/0.1", "canonical_length": 1840, "commitment": "b3:..." }, // optional, format 0.2 only
+  "text_binding": { "scheme": "canon-letters/0.1", "canonical_length": 1840, "commitment": "b3:..." }, // optional, formats 0.2 and 0.3
   "event_count": 1429,
   "duration_ms": 1384502,
   "created_client_t": "client-claimed timestamp, untrusted",
@@ -341,10 +344,12 @@ Manifest includes:
 }
 ```
 
-`text_binding` is the one text-derived value a public record may carry: a salted BLAKE3 commitment to the canonical letters and digits of the text the signer chose to bind, computed locally, sealed into `record_hash` under format `0.2`. It lets a reader check that a document has the same wording as the signed text; it never reconstructs the text and it is not a check of exact text. `docs/text-binding.md` is normative. Format `0.1` records carry no binding and keep verifying unchanged.
+`text_binding` is the one text-derived value a public record may carry: a salted BLAKE3 commitment to the canonical letters and digits of the text the signer chose to bind, computed locally, sealed into `record_hash` under formats `0.2` and `0.3`. It lets a reader check that a document has the same wording as the signed text; it never reconstructs the text and it is not a check of exact text. `docs/text-binding.md` is normative. Format `0.1` records carry no binding and keep verifying unchanged.
 
 
-`parent_record` is the public manifest field for multi-session documents. It may be null for v0 records. It lets a record say “this session continues from that earlier signed record” without pretending one capture covers all writing. `parent_record_hash` is reserved for future storage/database column naming and is not part of public manifest input.
+`parent_record` is the public manifest field for multi-session documents. It may be null. In format 0.3 it is part of the final seal and lets a record say “this session continues from that earlier signed record” without pretending one capture covers all writing. `parent_record_hash` is the existing database column name, not a public manifest input field.
+
+Format 0.3 always computes a final record hash over the event tip plus canonical JSON of exactly `{format_version: "0.3", duration_ms, parent_record: hash-or-null, text_binding: object-or-null}`. The event chain uses the literal 0.2 domain. Duration is the safe-integer elapsed time at confirmed finish, at least the last event time; changing it changes the hash. Freeze and persist it before checkpoint flushing or upload, and reuse it unchanged on retry. It is a signed client claim, not a server observation. Calendar metadata and capture context remain outside this final seal. See `docs/spec/canonicalization.md` for normative bytes. Formats 0.1 and 0.2 keep their original hashes; old 0.1 drafts and failed legacy uploads keep their original finalization semantics.
 
 ---
 
@@ -482,7 +487,7 @@ producer_capabilities    jsonb not null
 capture_context          jsonb null
 
 event_count              integer not null
-duration_ms              integer not null
+duration_ms              bigint not null
 created_client_t         timestamptz null
 ingested_server_t        timestamptz not null
 
@@ -518,15 +523,15 @@ inserted_codepoints_total           integer not null
 deleted_codepoints_total            integer not null
 largest_atomic_insert_codepoints    integer not null
 
-inter_event_delay_min_ms            integer null
-inter_event_delay_p50_ms            integer null
-inter_event_delay_p90_ms            integer null
-inter_event_delay_p95_ms            integer null
-inter_event_delay_p99_ms            integer null
-inter_event_delay_max_ms            integer null
+inter_event_delay_min_ms            bigint null
+inter_event_delay_p50_ms            bigint null
+inter_event_delay_p90_ms            bigint null
+inter_event_delay_p95_ms            bigint null
+inter_event_delay_p99_ms            bigint null
+inter_event_delay_max_ms            bigint null
 
-active_time_ms                      integer not null
-idle_time_ms                        integer not null
+active_time_ms                      bigint not null
+idle_time_ms                        bigint not null
 long_pause_count                    integer not null
 
 delay_histogram                     jsonb not null
@@ -631,15 +636,15 @@ Input:
 }
 ```
 
-A producer binds `(observed_session_id, token)` only for a session with at least one commitment whose checkpoints the server has not rejected; before signing it flushes a final checkpoint over that session's uncommitted tail (and one more if events arrive while it is in flight). A session with no commitment, or one pinned `diverged`, is uploaded as `{ "state": "unobserved" }` so signing still succeeds; the producer tells the writer when that happens because of divergence.
+A producer binds `(observed_session_id, token)` only for a session with at least one commitment whose checkpoints the server has not rejected; before upload it flushes a final checkpoint over that session's uncommitted tail (and one more if capture is still active and events arrive while it is in flight). Extension 0.3.0 freezes and persists its signed record before this network flush; Emacs and `/write` retain their existing finalization ordering. A session with no commitment, or one pinned `diverged`, is uploaded as `{ "state": "unobserved" }` so signing still succeeds; the producer tells the writer when that happens because of divergence.
 
 Backend behavior:
 
-1. Validate schema, including the bounded `capture_context` and `attestations` shapes, 32-bit count/offset ranges, and non-negative safe-integer elapsed milliseconds (`t` and `duration_ms`, at most 9,007,199,254,740,991). Durations and derived delay/active/idle statistics use PostgreSQL `bigint`; actual dates remain `timestamptz`. Existing format versions, canonical bytes and hashes are unchanged.
-2. Verify events are content-blind: no plaintext or text-derived field is accepted, with the single exception of the format `0.2` `text_binding` commitment (§4).
+1. Validate schema, including the bounded `capture_context` and `attestations` shapes, 32-bit count/offset ranges, and non-negative safe-integer elapsed milliseconds (`t` and `duration_ms`, at most 9,007,199,254,740,991). Durations and derived delay/active/idle statistics use PostgreSQL `bigint`; actual dates remain `timestamptz`. Widening the time range preserves existing canonical bytes and hashes. The separately versioned format 0.3 final seal follows its own verification rules.
+2. Verify events are content-blind: no plaintext or text-derived field is accepted, with the single exception of the format `0.2`/`0.3` `text_binding` commitment (§4).
 3. Recompute canonical event bytes.
 4. Recompute BLAKE3 hash chain.
-5. Verify manifest `record_hash` equals the final chain hash, or the chain tip sealed with the `text_binding` when one is present.
+5. Verify manifest `record_hash` using its format: 0.1 event tip, 0.2 optional binding seal, or 0.3 required duration/parent/binding final seal. Format 0.3 shares the 0.2 event-chain domain; do not rewrite existing checkpoint prefixes.
 6. Verify `event_count`, `duration_ms`, and other manifest fields are structurally consistent where possible.
 7. Stamp `ingested_server_t`.
 8. Generate collision-checked `short_signature`.
@@ -751,13 +756,13 @@ The page should show:
 2. Capture context, if present.
 3. Quick stats:
    - event count
-   - duration
+   - signed duration for 0.3, reported duration for legacy records, and editing span separately
    - observed process length, or unknown when process measurements contain nulls
    - typing events / typed codepoints
    - insertions / deletions / replacements
    - paste/unknown counts
    - largest atomic insert
-   - active vs idle time
+   - active vs idle time between captured edits, excluding leading and trailing waits
    - delay distribution summary
 4. Process timeline.
 5. Analyzer signals as facts.
@@ -767,7 +772,9 @@ The page should show:
 
 The public service should not render or reconstruct text. Instead, the timeline visualizes structure:
 
-- document length over time
+- document length as a step-after curve, flat between edits and jumping only at a captured edit; stop at unknown measurements and do not extend through uncaptured trailing time
+- explicit no-captured-edit intervals before the first edit and between the last edit and a format 0.3 signed finish
+- readable duration summaries and explicit rhythm counts below 16 ms and above 100 s, without clamping long pauses into finite bins
 - insertion/deletion position on a horizontal document bar
 - event size
 - source color
@@ -822,7 +829,7 @@ Build/deploy note:
 
 ### 13.1 Browser extension UI
 
-Primary normal-user author UX. The explicit-start requirements below supersede the previous passive/capture-all design. Extension 0.2.0 introduced explicit activation; 0.2.1 adds durable drafts/links and explicit resumption. Versions before 0.2.0 use the superseded passive-capture behavior.
+Primary normal-user author UX. The explicit-start requirements below supersede the previous passive/capture-all design. Extension 0.2.0 introduced explicit activation; deployed 0.2.1 adds durable drafts/links and explicit resumption. Candidate 0.3.0 adds the panel and signed-finish changes below. Versions before 0.2.0 use the superseded passive-capture behavior.
 
 Surfaces:
 
@@ -831,13 +838,16 @@ Surfaces:
 - Sign modal: “Finish & get link.”
 - Capture-context review/redaction before upload.
 - Actionable explanations that distinguish editor identity, available measurements and server observation; no raw `degraded` or `collision` labels.
-- Persistent saved-record result with the full URL, Open record and Copy link; separate upload and clipboard outcomes.
+- Current-editor section follows exact editor focus within the panel’s window/active tab; inactive fields explicitly show no capture. Other drafts stay separate.
+- Private Rename controls use site/field metadata and a stable distinguishing number for defaults; they never read document contents to invent names or automatically publish names as labels.
+- Saved records appear last in collapsed, searchable history with bounded pages. Export all links includes private names and link metadata but no document text, event logs or checkpoint tokens. Explicit removal changes local history only.
+- A single latest saved-record result shows the full URL, Open record and Copy link until Done; separate upload and clipboard outcomes. History retains the link afterward.
 
 Behavior:
 
 1. Start only after explicit activation of the chosen editor. Unchosen fields create no sessions, capture text measurements or send checkpoints. Define activation, stop, reload and continuation behavior explicitly; local retention must not silently enroll fields again.
-2. The user finishes when they want a link and reviews context and binding. A requested binding that cannot be obtained must pause for Cancel or an explicit process-only choice; it cannot be silently omitted. An immutable stopped snapshot cannot be resampled from later edits, so do not offer a dead-end binding retry. Upload failures can retry the same frozen record.
-3. Signing freezes the session.
+2. The user finishes when they want a link and reviews context and binding. The target stays pinned during review. Show “Selected text” or “Whole field” separately; if scope changes, require renewed confirmation. Explain text-check limitations before publication, without mail-specific scope wording. A requested binding that cannot be obtained must pause for Cancel or an explicit process-only choice; it cannot be silently omitted. An immutable stopped snapshot cannot be resampled from later edits, so do not offer a dead-end binding retry. Upload failures can retry the same frozen record.
+3. Signing freezes and durably persists the session and format 0.3 elapsed finish time before network work. No synthetic mutation is added for waiting.
 4. Extension computes the public process hash chain locally.
 5. Extension uploads content-free manifest/events.
 6. Backend returns short URL.
@@ -851,8 +861,9 @@ Extension local retention and resumption:
 - Startup/registration/hourly cleanup removes redundant uploaded event logs and checkpoint credentials after the grace period while preserving the saved link.
 - Reload and navigation detach capture. Select an unfinished draft, focus its field and choose **Resume in chosen field**; the field may contain existing text. Resumption is explicit and restricted to the same site origin, without guessing document identity.
 - Resume preserves session identity, event history, checkpoint credentials and original clock. The next real edit includes the intervening pause. If prior edits may have been missed, its position is unknown (`pos: null`), so the viewer does not invent a continuous document-length curve. Reattachment adds no event.
-- Duration ends at the last captured edit. Returning only to publish does not extend the signed event timeline to the publish action. Published records cannot be resumed or mutated in place.
-- Shared producer-core default TTL and `/write` reload behavior are unchanged; this indefinite-retention policy applies to the extension.
+- Candidate 0.3.0 opts into `signedFinishTime`; active 0.2 drafts finish as 0.3 without changing event/checkpoint prefixes. Elapsed finish includes a pause followed only by publication. Old 0.1 drafts retain last-edit timing and failed legacy uploads retain their frozen version/hash. After resumption, a text check remains unavailable until another real edit; publication of editing activity alone is allowed.
+- Published records cannot be resumed or mutated in place. **Continue in chosen field** explicitly starts a new session with a sealed parent hash and only new mutations. Its clock begins at the prior signed finish; legacy saved anchors use their retained local upload time as an approximate boundary. Saved links remain. Reattachment never infers document identity or claims missed edits were captured.
+- Shared producer-core default TTL and `/write` reload behavior are unchanged; this indefinite-retention policy applies to the extension. `/write` and Emacs have not opted into format 0.3 signed finish.
 
 ### 13.2 Emacs UI
 

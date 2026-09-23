@@ -2,14 +2,15 @@ import type { ProducerIdentity } from "../../../../packages/producer-core/src/in
 import type { TextBinding } from "../../../../packages/format/src/index.ts";
 import { createChromeStorageAdapter, createCryptoUuidAdapter, createDateClockAdapter, createFetchCheckpointAdapter, createFetchUploadAdapter, type ChromeStorageLocalSlice, type CryptoSlice, type FetchLike } from "../lib/adapters.ts";
 import { BackgroundDispatcher } from "../lib/dispatcher.ts";
-import { isContentMessage, type ContentToBackground, type BackgroundResponse, type ComputeBindingResponse } from "../lib/messages.ts";
+import { isContentMessage, type ContentToBackground, type BackgroundResponse, type ComputeBindingResponse, type FinishScopePreview, type CurrentEditor } from "../lib/messages.ts";
+import { ensurePanelNames, sessionSummary, savedLink, savedPage, type PanelNames } from "../lib/panel-model.ts";
 import { API_BASE_URL, EXTENSION_VERSION, RECORDS_ENDPOINT } from "../lib/config.ts";
 
 export const BACKGROUND_ENTRYPOINT = "service-worker";
 type Sender = { id?: string; tab?: { id?: number }; frameId?: number; documentId?: string; url?: string };
 type Route = { tab: number; frame: number; document?: string; session: string; active: boolean };
-type Snapshot = { binding: TextBinding | null; reason?: string };
-type Routing = { routes: Route[]; snapshots: Record<string, Snapshot>; shared?: Record<string, boolean>; selected?: string; last_start_error?: string };
+type Snapshot = { binding: TextBinding | null; reason?: string; scope_changed?: boolean; scope?: FinishScopePreview["scope"]; scope_token?: string };
+type Routing = PanelNames & { routes: Route[]; snapshots: Record<string, Snapshot>; shared?: Record<string, boolean>; selected?: string; last_start_error?: string };
 declare const chrome: {
   storage: { local: ChromeStorageLocalSlice };
   runtime: { id: string; onMessage: { addListener(listener: (message: unknown, sender: Sender, reply: (response: unknown) => void) => boolean | void): void }; onInstalled: { addListener(listener: () => void): void } };
@@ -30,11 +31,12 @@ let routing: Routing = { routes: [], snapshots: {} };
 let routingSerialized = JSON.stringify(routing);
 let persistTail = Promise.resolve();
 const ready = Promise.all([dispatcher.ensureInitialised(), chrome.storage.local.get([ROUTING_KEY]).then((stored) => { if (stored[ROUTING_KEY]) routing = stored[ROUTING_KEY] as Routing; routingSerialized = JSON.stringify(routing); })]);
-const grants = new Map<string, { tab: number; frame: number; document?: string; share?: string; resume?: string }>();
+const grants = new Map<string, { tab: number; frame: number; document?: string; share?: string; resume?: string; continuation?: string }>();
 const finishing = new Map<string, Promise<Snapshot>>();
 const signing = new Set<string>();
 const starting = new Set<string>();
 const resuming = new Set<string>();
+const renameAttempts = new Map<string, symbol>();
 async function persist(): Promise<void> {
   const snapshot = JSON.stringify(routing);
   persistTail = persistTail.catch(() => {}).then(async () => {
@@ -47,20 +49,23 @@ async function persist(): Promise<void> {
 function target(route: Route): { frameId: number; documentId?: string } { return { frameId: route.frame, ...(route.document ? { documentId: route.document } : {}) }; }
 function isOwnUI(sender: Sender): boolean { return sender.id === chrome.runtime.id && !!sender.url?.startsWith(`chrome-extension://${chrome.runtime.id}/`); }
 async function badge(tab: number): Promise<void> { await chrome.action.setBadgeText({ tabId: tab, text: routing.routes.some((route) => route.tab === tab && route.active) ? "ON" : "" }).catch(() => {}); }
-async function startEditor(tab: number, frame: number, mode: "context" | "focused", share?: string, resume?: string): Promise<BackgroundResponse> {
+async function startEditor(tab: number, frame: number, mode: "context" | "focused", share?: string, resume?: string, continuation?: string, expectedDocument?: { id?: string }): Promise<BackgroundResponse> {
   await ready;
+  if ([share, resume, continuation].filter(Boolean).length > 1) return { kind: "start_editor_result", reason: "Choose one way to start this editor." };
+  if (continuation && dispatcher.registry.get(continuation)?.state !== "uploaded") return { kind: "start_editor_result", reason: "Choose a saved record to continue." };
   if (resume && (share || resuming.has(resume) || signing.has(resume) || finishing.has(resume) || dispatcher.registry.get(resume)?.state !== "active" || routing.routes.some(route => route.session === resume && route.active))) return { kind: "start_editor_result", reason: "Stop this draft in its current editor before resuming it." };
   if (share && (!routing.routes.some((route) => route.session === share && route.active) || finishing.has(share))) return { kind: "start_editor_result", reason: "That writing record is no longer active." };
   const frameInfo = (await chrome.webNavigation.getAllFrames({ tabId: tab }))?.find((candidate) => candidate.frameId === frame);
   if (!frameInfo) return { kind: "start_editor_result", reason: "The selected editor is no longer available." };
+  if (expectedDocument && frameInfo.documentId !== expectedDocument.id) return { kind: "start_editor_result", reason: "The selected page changed. Click its editor and start again." };
   if (share && routing.routes.some((route) => route.session === share && route.tab === tab && route.frame === frame && route.document === frameInfo.documentId)) return { kind: "start_editor_result", reason: "This document already participates in that writing record. Choose another tab to share it." };
   const activation_id = cryptoRef.randomUUID();
   if (resume && resuming.has(resume)) return { kind: "start_editor_result", reason: "This draft is already being resumed." };
   if (resume) resuming.add(resume);
-  grants.set(activation_id, { tab, frame, document: frameInfo.documentId, share, resume });
+  grants.set(activation_id, { tab, frame, document: frameInfo.documentId, share, resume, continuation });
   starting.add(`${tab}:${frame}`);
   try {
-    const result = await chrome.tabs.sendMessage(tab, { kind: "start_editor", target: mode, activation_id, ...(share ? { share_session_id: share } : {}), ...(resume ? { resume_session_id: resume } : {}) }, { frameId: frame, ...(frameInfo.documentId ? { documentId: frameInfo.documentId } : {}) }) as BackgroundResponse;
+    const result = await chrome.tabs.sendMessage(tab, { kind: "start_editor", target: mode, activation_id, ...(share ? { share_session_id: share } : {}), ...(resume ? { resume_session_id: resume } : {}), ...(continuation ? { continue_session_id: continuation } : {}) }, { frameId: frame, ...(frameInfo.documentId ? { documentId: frameInfo.documentId } : {}) }) as BackgroundResponse;
     routing.last_start_error = result.kind === "start_editor_result" ? result.reason : undefined;
     if (result.kind === "start_editor_result" && result.session_id && routing.routes.some((route) => route.active && route.session === result.session_id && route.tab === tab && route.frame === frame && route.document === frameInfo.documentId)) routing.selected = result.session_id;
     await persist();
@@ -68,20 +73,20 @@ async function startEditor(tab: number, frame: number, mode: "context" | "focuse
   } catch { return { kind: "start_editor_result", reason: "This page is unavailable. Reload it, click the editor and try again." }; }
   finally { grants.delete(activation_id); starting.delete(`${tab}:${frame}`); if (resume) resuming.delete(resume); }
 }
-async function focusedEditor(share?: string, resume?: string): Promise<BackgroundResponse> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+async function focusedEditor(share?: string, resume?: string, continuation?: string, windowId?: number): Promise<BackgroundResponse> {
+  const [tab] = await chrome.tabs.query({ active: true, ...(windowId !== undefined ? { windowId } : { currentWindow: true }) });
   if (tab?.id === undefined) return { kind: "start_editor_result", reason: "Choose a browser tab containing an editor." };
   const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id }) ?? [];
   const probes = await Promise.all(frames.map(async (frame) => {
-    try { const reply = await chrome.tabs.sendMessage(tab.id!, { kind: "probe_editor" }, { frameId: frame.frameId }) as { focused?: boolean }; return reply.focused ? frame.frameId : null; } catch { return null; }
+    try { const reply = await chrome.tabs.sendMessage(tab.id!, { kind: "probe_editor" }, { frameId: frame.frameId, ...(frame.documentId ? { documentId: frame.documentId } : {}) }) as { focused?: boolean }; return reply.focused ? frame : null; } catch { return null; }
   }));
-  const candidates = probes.filter((frame): frame is number => frame !== null);
+  const candidates = probes.filter(frame => frame !== null);
   // The page retains its activeElement when the side panel takes focus.
   // Exactly one frame must identify that editor; reject ambiguous targets.
   if (candidates.length !== 1) return { kind: "start_editor_result", reason: "Click inside the editor, then use Alt+Shift+W or right-click → Start writing record." };
-  return startEditor(tab.id, candidates[0]!, "focused", share, resume);
+  return startEditor(tab.id, candidates[0]!.frameId, "focused", share, resume, continuation, { id: candidates[0]!.documentId });
 }
-async function freeze(session: string, bind = false): Promise<Snapshot> {
+async function freeze(session: string, bind = false, expectedScopeToken?: string): Promise<Snapshot> {
   if (routing.snapshots[session]) return routing.snapshots[session]!;
   const pending = finishing.get(session); if (pending) return pending;
   const task = (async (): Promise<Snapshot> => {
@@ -91,10 +96,14 @@ async function freeze(session: string, bind = false): Promise<Snapshot> {
     // Keep append authorization until each content frame acknowledges draining;
     // no new routes are permitted while this session is finishing.
     const results = await Promise.all(routes.map(async (route): Promise<ComputeBindingResponse> => {
-      try { return await chrome.tabs.sendMessage(route.tab, { kind: "freeze_session", session_id: session, bind: bind && !shared }, target(route)) as ComputeBindingResponse; }
-      catch { return { kind: "binding_error", reason: "The selected editor is no longer available. You can still save its captured editing activity." }; }
-      finally { route.active = false; }
+      try {
+        const result = await chrome.tabs.sendMessage(route.tab, { kind: "freeze_session", session_id: session, bind: bind && !shared, expected_scope_token: expectedScopeToken }, target(route)) as ComputeBindingResponse;
+        if (result.kind !== "binding_scope_changed") route.active = false;
+        return result;
+      } catch { route.active = false; return { kind: "binding_error", reason: "The selected editor is no longer available. You can still save its captured editing activity." }; }
     }));
+    const changed = results.find((result) => result.kind === "binding_scope_changed");
+    if (changed?.kind === "binding_scope_changed") return { binding: null, scope_changed: true, ...changed, reason: "The text selection changed. Review the scope and confirm again." };
     // Multiple deliberately shared surfaces can differ; never choose one
     // silently for a wording binding.
     let snapshot: Snapshot = { binding: null, reason: "The editor is no longer available for text binding." };
@@ -109,6 +118,34 @@ async function freeze(session: string, bind = false): Promise<Snapshot> {
   finishing.set(session, task);
   try { return await task; } finally { finishing.delete(session); }
 }
+function captureStatus(session: string): "active" | "stopped" | "legacy" {
+  return routing.routes.some(route => route.session === session && route.active) ? "active" : routing.routes.some(route => route.session === session) || routing.snapshots[session] ? "stopped" : "legacy";
+}
+async function currentEditor(windowId: number): Promise<CurrentEditor> {
+  if (!Number.isInteger(windowId)) return { state: "unavailable" };
+  const [tab] = await chrome.tabs.query({ active: true, windowId });
+  if (tab?.id === undefined) return { state: "none" };
+  const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id }) ?? [];
+  const probes = await Promise.all(frames.map(async frame => {
+    try {
+      const probe = await chrome.tabs.sendMessage(tab.id!, { kind: "probe_editor" }, { frameId: frame.frameId, ...(frame.documentId ? { documentId: frame.documentId } : {}) }) as { focused?: boolean; session_id?: string };
+      if (!probe.focused) return null;
+      const exact = probe.session_id && routing.routes.some(route => route.tab === tab.id && route.frame === frame.frameId && route.document === frame.documentId && route.session === probe.session_id);
+      return exact ? { state: "tracked" as const, session_id: probe.session_id } : { state: "untracked" as const };
+    } catch { return null; }
+  }));
+  const focused = probes.filter(probe => probe !== null);
+  return focused.length === 1 ? focused[0]! : { state: focused.length > 1 ? "unavailable" : "none" };
+}
+async function inspectFinish(session: string): Promise<FinishScopePreview> {
+  const routes = routing.routes.filter(route => route.session === session && route.active);
+  if (routing.shared?.[session] || routing.routes.filter(route => route.session === session).length > 1) return { scope: "unavailable", reason: "This draft spans multiple editors. Readers can inspect the editing activity but cannot check a copy of the text." };
+  if (dispatcher.registry.get(session)?.pending_observation_gap) return { scope: "unavailable", reason: "Make an edit after resuming to include a text check. You can still publish the earlier editing activity." };
+  if (routes.length !== 1) return { scope: "unavailable", reason: "The editor is not active. Readers can still inspect its editing activity." };
+  try { return await chrome.tabs.sendMessage(routes[0]!.tab, { kind: "inspect_finish", session_id: session }, target(routes[0]!)) as FinishScopePreview; }
+  catch { return { scope: "unavailable", reason: "The editor is no longer available." }; }
+}
+
 async function routeMessage(message: ContentToBackground, sender: Sender): Promise<BackgroundResponse> {
   await ready;
   if (sender.tab && !isOwnUI(sender)) {
@@ -116,7 +153,7 @@ async function routeMessage(message: ContentToBackground, sender: Sender): Promi
     if (sender.id !== chrome.runtime.id || tab === undefined) return { kind: "error", reason: "unauthorised_sender" };
     if (message.kind === "register_field") {
       const grant = message.activation_id ? grants.get(message.activation_id) : undefined;
-      if (!grant || grant.tab !== tab || grant.frame !== frame || grant.document !== sender.documentId || grant.share !== message.share_session_id || grant.resume !== message.resume_session_id) return { kind: "error", reason: "explicit_start_required" };
+      if (!grant || grant.tab !== tab || grant.frame !== frame || grant.document !== sender.documentId || grant.share !== message.share_session_id || grant.resume !== message.resume_session_id || grant.continuation !== message.continue_session_id) return { kind: "error", reason: "explicit_start_required" };
       grants.delete(message.activation_id!);
       let url: URL; try { url = new URL(sender.url!); } catch { return { kind: "error", reason: "invalid_sender_url" }; }
       if (grant.resume && (signing.has(grant.resume) || finishing.has(grant.resume) || routing.routes.some(route => route.session === grant.resume && route.active))) return { kind: "error", reason: "This draft is busy in another editor." };
@@ -131,6 +168,8 @@ async function routeMessage(message: ContentToBackground, sender: Sender): Promi
         }
         if (grant.share) (routing.shared ??= {})[session] = true;
         routing.routes.push({ tab, frame, document: sender.documentId, session, active: true }); routing.selected = session;
+        ensurePanelNames(routing, dispatcher.registry.list());
+        if (grant.continuation && routing.names?.[grant.continuation]) routing.names![session] = `${routing.names[grant.continuation]} · continued`;
         await persist(); await badge(tab);
       }
       return response;
@@ -139,23 +178,56 @@ async function routeMessage(message: ContentToBackground, sender: Sender): Promi
     return { kind: "error", reason: "unauthorised_content_message" };
   }
   if (!isOwnUI(sender)) return { kind: "error", reason: "unauthorised_sender" };
-  if (message.kind === "start_focused_editor") return focusedEditor(message.share_session_id, message.resume_session_id);
+  if (message.kind === "start_focused_editor") return focusedEditor(message.share_session_id, message.resume_session_id, message.continue_session_id, message.window_id);
   if (message.kind === "register_field" || message.kind === "append_mutation") return { kind: "error", reason: "content_sender_required" };
-  if (message.kind === "list_sessions") {
+  if (message.kind === "list_sessions" || message.kind === "list_panel_sessions") {
     await Promise.all(routing.routes.filter((route) => route.active && !finishing.has(route.session) && !starting.has(`${route.tab}:${route.frame}`)).map(async (route) => {
       try { const status = await chrome.tabs.sendMessage(route.tab, { kind: "capture_status", session_id: route.session }, target(route)) as { active?: boolean }; if (!status.active && !finishing.has(route.session) && !starting.has(`${route.tab}:${route.frame}`)) route.active = false; }
       catch { if (!finishing.has(route.session) && !starting.has(`${route.tab}:${route.frame}`)) route.active = false; }
       if (!route.active) await badge(route.tab);
     }));
+    ensurePanelNames(routing, dispatcher.registry.list());
     await persist();
+    if (message.kind === "list_panel_sessions") {
+      const all = dispatcher.registry.list();
+      const page = savedPage(all, routing.names ?? {}, message.history_query, message.history_offset, message.history_limit);
+      const summary = (session: typeof all[number]) => sessionSummary(session, routing.names![session.session_id]!, captureStatus(session.session_id));
+      return { kind: "panel_sessions_result", drafts: all.filter(session => session.state !== "uploaded").map(summary), saved: page.sessions.map(summary), saved_count: page.total, matching_saved_count: page.matching, history_offset: page.offset, current_editor: await currentEditor(message.window_id), last_start_error: routing.last_start_error };
+    }
     const result = await dispatcher.handle(message);
     if (result.kind !== "list_sessions_result") return result;
     return { ...result, selected_session_id: routing.selected, last_start_error: routing.last_start_error, capture_status: Object.fromEntries(result.sessions.map((session) => [session.session_id, routing.routes.some((route) => route.session === session.session_id && route.active) ? "active" : routing.routes.some((route) => route.session === session.session_id) || routing.snapshots[session.session_id] ? "stopped" : "legacy"])) };
   }
+  if (message.kind === "inspect_finish") return { kind: "finish_scope_result", ...await inspectFinish(message.session_id) };
+  if (message.kind === "rename_session") {
+    if (!dispatcher.registry.get(message.session_id)) return { kind: "error", reason: "This draft is no longer available." };
+    const name = message.name.trim();
+    if (!name || name.length > 160) return { kind: "error", reason: "Choose a name between 1 and 160 characters." };
+    const previous = routing.names?.[message.session_id];
+    const attempt = Symbol(); renameAttempts.set(message.session_id, attempt);
+    (routing.names ??= {})[message.session_id] = name;
+    try { await persist(); } catch (error) {
+      if (renameAttempts.get(message.session_id) === attempt) { if (previous) routing.names![message.session_id] = previous; else delete routing.names![message.session_id]; }
+      throw error;
+    } finally { if (renameAttempts.get(message.session_id) === attempt) renameAttempts.delete(message.session_id); }
+    return { kind: "rename_result", ok: true };
+  }
+  if (message.kind === "export_saved") {
+    ensurePanelNames(routing, dispatcher.registry.list()); await persist();
+    return { kind: "export_saved_result", links: dispatcher.registry.list().filter(session => session.state === "uploaded" && session.uploaded_response).map(session => savedLink(session, routing.names![session.session_id]!)) };
+  }
+  if (message.kind === "remove_saved" || message.kind === "clear_saved") {
+    const sessions = dispatcher.registry.list().filter(session => session.state === "uploaded" && (message.kind === "clear_saved" || session.session_id === message.session_id));
+    if (message.kind === "remove_saved" && !sessions.length) return { kind: "error", reason: "This saved link is no longer available." };
+    await dispatcher.registry.discardPersisted(sessions.map(session => session.session_id));
+    await pruneRoutes();
+    return message.kind === "clear_saved" ? { kind: "clear_saved_result", ok: true } : { kind: "remove_saved_result", ok: true };
+  }
   if ("session_id" in message && resuming.has(message.session_id)) return { kind: "error", reason: "This draft is being resumed. Try again when it is ready." };
   if (message.kind === "prepare_finish" || message.kind === "stop_session") {
-    const snapshot = await freeze(message.session_id, message.kind === "prepare_finish" && message.bind);
+    const snapshot = await freeze(message.session_id, message.kind === "prepare_finish" && message.bind, message.kind === "prepare_finish" ? message.expected_scope_token : undefined);
     if (message.kind === "stop_session") return { kind: "stop_session_result", ok: true };
+    if (snapshot.scope_changed) return { kind: "prepare_finish_result", text_binding: null, scope_changed: true, scope: snapshot.scope, scope_token: snapshot.scope_token, reason: snapshot.reason };
     return { kind: "prepare_finish_result", text_binding: message.bind ? snapshot.binding : null, ...(message.bind && (!snapshot.binding || snapshot.reason) ? { reason: snapshot.reason ?? "The editor has no text to bind. Choose editing activity only to continue." } : {}) };
   }
   if (message.kind === "sign_session") {
@@ -178,6 +250,7 @@ async function pruneRoutes(): Promise<void> {
   routing.routes = routing.routes.filter((route) => sessions.has(route.session));
   for (const session of Object.keys(routing.snapshots)) if (!sessions.has(session)) delete routing.snapshots[session];
   for (const session of Object.keys(routing.shared ?? {})) if (!sessions.has(session)) delete routing.shared![session];
+  for (const session of Object.keys(routing.names ?? {})) if (!sessions.has(session)) delete routing.names![session];
   if (routing.selected && !sessions.has(routing.selected)) delete routing.selected;
   await persist();
 }

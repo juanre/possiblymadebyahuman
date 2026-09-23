@@ -16,6 +16,7 @@ import { extractDescriptor, isEligibleTag } from "../lib/descriptor.ts";
 import {
   type BackgroundResponse,
   type ComputeBindingResponse,
+  type FinishScopePreview,
   type ContentToBackground,
 } from "../lib/messages.ts";
 import type { PendingMutation } from "../../../../packages/producer-core/src/index.ts";
@@ -147,9 +148,9 @@ function isFieldEmpty(element: HTMLElement): boolean {
   return true;
 }
 
-async function registerField(element: HTMLElement, activation_id: string, share_session_id?: string, resume_session_id?: string): Promise<BackgroundResponse> {
+async function registerField(element: HTMLElement, activation_id: string, share_session_id?: string, resume_session_id?: string, continue_session_id?: string): Promise<BackgroundResponse> {
   const known = fields.get(element);
-  if (known?.state === "recording" && resume_session_id && known.session_id !== resume_session_id) return { kind: "start_editor_result", reason: "This editor already has an active draft. Stop it first." };
+  if (known?.state === "recording" && ((resume_session_id && known.session_id !== resume_session_id) || continue_session_id)) return { kind: "start_editor_result", reason: "This editor already has an active draft. Stop it first." };
   if (known?.state === "recording") return { kind: "start_editor_result", session_id: known.session_id! };
   if (known?.state === "pending") return { kind: "start_editor_result", reason: "Start is already in progress." };
   if (!element.isConnected || !isEligibleElement(element)) return { kind: "start_editor_result", reason: "Choose an editable text field first." };
@@ -172,7 +173,7 @@ async function registerField(element: HTMLElement, activation_id: string, share_
     kind: "register_field", tab_id: -1, frame_id: -1,
     origin_url: window.location.origin, page_path: window.location.pathname,
     page_title: document.title, descriptor, field_is_empty: isFieldEmpty(element),
-    activation_id, ...(share_session_id ? { share_session_id } : {}), ...(resume_session_id ? { resume_session_id } : {}),
+    activation_id, ...(share_session_id ? { share_session_id } : {}), ...(resume_session_id ? { resume_session_id } : {}), ...(continue_session_id ? { continue_session_id } : {}),
   }).catch((error): BackgroundResponse => ({ kind: "error", reason: `The editor could not be started. ${String(error)}` }));
   if (response.kind !== "register_field_result" || response.result.kind !== "registered") {
     entry.state = "error";
@@ -399,10 +400,14 @@ function editorFor(target: EventTarget | null): HTMLElement | null {
   return root;
 }
 
-async function freezeSession(session_id: string, bind = false): Promise<ComputeBindingResponse> {
+async function freezeSession(session_id: string, bind = false, expected_scope_token?: string): Promise<ComputeBindingResponse> {
   const entry = entries().find((candidate) => candidate.session_id === session_id);
   if (!entry) return { kind: "binding_error", reason: "The selected editor is no longer available." };
   if (entry.finish_binding) return entry.finish_binding;
+  if (bind && expected_scope_token !== undefined) {
+    const preview = bindingScopeForSession(session_id);
+    if (preview.scope_token !== expected_scope_token) return { kind: "binding_scope_changed", ...preview };
+  }
   const transient = transients.get(entry.element);
   const wasError = entry.state === "error";
   entry.state = "signed"; // Terminal locally: never pretend to capture edits after finish/stop.
@@ -440,6 +445,34 @@ function computeBindingForSession(session_id: string): ComputeBindingResponse {
   const text = bindingTextForElement(element);
   if (canonicalizeTextForBinding(text).length === 0) return { kind: "binding_result", text_binding: null };
   return { kind: "binding_result", text_binding: createTextBinding(text, session_id) };
+}
+
+// Scope inspection reads selection coordinates only, never the field's words.
+// Node identities stay in this isolated context and invalidate replaced ranges.
+const scopeNodes = new WeakMap<Node, number>();
+let scopeNodeSequence = 0;
+function scopeNodeId(node: Node): number {
+  let id = scopeNodes.get(node);
+  if (id === undefined) { id = ++scopeNodeSequence; scopeNodes.set(node, id); }
+  return id;
+}
+function bindingScopeForSession(session_id: string): FinishScopePreview {
+  const entry = entries().find(candidate => candidate.session_id === session_id);
+  if (!entry?.element.isConnected || entry.state !== "recording") return { scope: "unavailable", reason: "The editor is not active. Readers can still inspect its saved editing activity." };
+  const element = entry.element;
+  const revision = transients.get(element)?.cycle ?? 0;
+  let range = "whole";
+  if (isTextField(element)) {
+    const start = element.selectionStart, end = element.selectionEnd;
+    if (start !== null && end !== null && start !== end) range = `${Math.min(start, end)}:${Math.max(start, end)}`;
+  } else {
+    const selection = window.getSelection?.();
+    if (selection && !selection.isCollapsed && selection.rangeCount > 0 && nodeIsInsideElement(selection.anchorNode, element) && nodeIsInsideElement(selection.focusNode, element)) {
+      const selected = selection.getRangeAt(0);
+      range = `${scopeNodeId(selected.startContainer)}:${selected.startOffset}:${scopeNodeId(selected.endContainer)}:${selected.endOffset}`;
+    }
+  }
+  return { scope: range === "whole" ? "whole_field" : "selection", scope_token: `${scopeNodeId(element)}:${revision}:${range}` };
 }
 
 function bindingTextForElement(element: HTMLElement): string {
@@ -480,7 +513,7 @@ function start(): void {
   document.addEventListener("contextmenu", (event) => { if (!event.isTrusted) return; const target = editorFor(event.composedPath()[0] ?? event.target); contextTarget = target ? new WeakRef(target) : null; }, true);
   document.addEventListener("focusin", (event) => { const target = editorFor(event.composedPath()[0] ?? event.target); focusedTarget = target ? new WeakRef(target) : null; }, true);
   chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
-    const message = raw as { kind?: string; target?: string; activation_id?: string; share_session_id?: string; resume_session_id?: string; session_id?: string; bind?: boolean };
+    const message = raw as { kind?: string; target?: string; activation_id?: string; share_session_id?: string; resume_session_id?: string; continue_session_id?: string; session_id?: string; bind?: boolean; expected_scope_token?: string };
     // Only extension-owned contexts can drive capture or read a binding.
     const source = sender as { id?: string; tab?: unknown; url?: string };
     if (source.tab || (source.id && source.id !== chrome.runtime.id) || (source.url && !source.url.startsWith(`chrome-extension://${chrome.runtime.id}/`))) return false;
@@ -491,18 +524,24 @@ function start(): void {
     }
     if (message.kind === "probe_editor") {
       const focused = focusedTarget?.deref();
-      sendResponse({ kind: "editor_probe", focused: !!focused?.isConnected && (document.activeElement === focused || focused.contains(document.activeElement)) });
+      const isFocused = !!focused?.isConnected && (document.activeElement === focused || focused.contains(document.activeElement));
+      const entry = isFocused ? fields.get(focused!) : undefined;
+      sendResponse({ kind: "editor_probe", focused: isFocused, ...(entry?.session_id ? { session_id: entry.session_id } : {}) });
       return false;
     }
     if (message.kind === "start_editor" && message.activation_id) {
       const target = (message.target === "context" ? contextTarget : focusedTarget)?.deref();
       contextTarget = null;
       if (!target) { sendResponse({ kind: "start_editor_result", reason: "Click inside the editor, then choose Start writing record." }); return false; }
-      void registerField(target, message.activation_id, message.share_session_id, message.resume_session_id).then(sendResponse).catch((error) => sendResponse({ kind: "start_editor_result", reason: String(error) }));
+      void registerField(target, message.activation_id, message.share_session_id, message.resume_session_id, message.continue_session_id).then(sendResponse).catch((error) => sendResponse({ kind: "start_editor_result", reason: String(error) }));
       return true;
     }
+    if (message.kind === "inspect_finish" && message.session_id) {
+      sendResponse(bindingScopeForSession(message.session_id));
+      return false;
+    }
     if (message.kind === "freeze_session" && message.session_id) {
-      void freezeSession(message.session_id, message.bind === true).then(sendResponse);
+      void freezeSession(message.session_id, message.bind === true, message.expected_scope_token).then(sendResponse);
       return true;
     }
     return false;

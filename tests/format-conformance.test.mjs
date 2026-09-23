@@ -266,3 +266,29 @@ test("time fields accept exact long durations while counts retain their existing
   }
   assert.notDeepEqual(validateManifest({...manifest, event_count: 2 ** 31}), []);
 });
+
+test("0.3 seals finish duration and continuation without rewriting 0.2 checkpoint prefixes", async () => {
+  const [golden] = await readJson("packages/conformance/vectors/golden-records.json");
+  const record = structuredClone(golden.record);
+  record.manifest.format_version = "0.3";
+  record.manifest.duration_ms = 60 * 86400000;
+  const oldChain = computeEventHashChain(record.events, record.manifest.session_id, "0.2");
+  assert.deepEqual(computeEventHashChain(record.events, record.manifest.session_id, "0.3"), oldChain);
+  record.manifest.record_hash = computeRecordHash(record.events, record.manifest.session_id, "0.3", undefined, record.manifest);
+  assert.notEqual(record.manifest.record_hash, oldChain.at(-1));
+  assert.equal(verifyRecord(record).valid, true);
+  for (const change of [{ duration_ms: record.manifest.duration_ms + 1 }, { parent_record: oldChain.at(-1) }, { text_binding: createTextBinding("one", record.manifest.session_id) }]) {
+    assert.equal(verifyRecord({ ...record, manifest: { ...record.manifest, ...change } }).valid, false, JSON.stringify(change));
+  }
+  const bound = { ...record.manifest, text_binding: createTextBinding("one", record.manifest.session_id) };
+  bound.record_hash = computeRecordHash(record.events, bound.session_id, "0.3", bound.text_binding, bound);
+  assert.equal(verifyRecord({ manifest: bound, events: record.events }).valid, true);
+  assert.equal(verifyRecord({ manifest: { ...bound, text_binding: { ...bound.text_binding, canonical_length: 0 } }, events: record.events }).valid, false);
+  assert.throws(() => computeRecordHash(record.events, record.manifest.session_id, "0.3"), /duration_ms/);
+});
+
+test("0.3 finalization canonical vector remains stable", () => {
+  const events = [{ seq: 0, t: 1000, op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" }];
+  assert.equal(computeRecordHash(events, "00000000-0000-4000-8000-000000000001", "0.3", undefined, { duration_ms: 5184000000, parent_record: null }),
+    "b3:91e988e0a466dfaf60be4864ed3b69cc26421f28474fc7c9df9841c1ea50662c");
+});

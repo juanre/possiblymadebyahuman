@@ -1,0 +1,17 @@
+# Signed finish and explicit continuations
+
+Format 0.3 seals elapsed finish time, an optional prior-record link, and the optional wording commitment. The normative bytes are specified in [canonicalization](spec/canonicalization.md#format-03-finalization). Formats 0.1 and 0.2 remain readable with unchanged hashes.
+
+An unfinished browser draft can be resumed after months. Its original event clock and checkpoint credentials survive. At confirmed publication, the producer freezes elapsed time before flushing checkpoints or uploading. Returning only to finish therefore includes the elapsed pause without creating a mutation. The frozen duration, binding and events persist before network work; interrupted attempts retry the same signed record.
+
+A published record is immutable. An explicit **Continue in chosen field** action creates a new session with a new UUID and a sealed `parent_record` link. The previous record and its saved link remain. The new session starts its elapsed clock at the previous segment's signed finish, so a pause before the next edit is represented as leading elapsed time. It stores only new mutations, not another copy of the published event log. Its first mutation has an unknown position when the field contains existing text; the new record does not pretend to reconstruct the parent document or cover edits made while capture was stopped. No field is attached by inferred identity.
+
+Old saved anchors have no signed finish. Their retained local upload time supplies the continuation boundary; this is a local legacy approximation, not new server evidence. Old 0.1 unfinished sessions also retain their existing finish semantics, because replacing their event-chain domain would invalidate prior checkpoints. Active 0.2 drafts can upgrade to 0.3 while keeping their original event chain. Failed legacy uploads retain their original version/hash for retry.
+
+Producer-core enables this contract through `signedFinishTime: true`. Other consumers remain on their current contract until explicitly opted in. New continuation sessions preserve old saved anchors even after uploaded event logs and checkpoint tokens have been cleared. Removing a local saved link is explicit; `discardPersisted` preserves the in-memory links if storage rejects the removal and leaves other drafts' concurrent edits intact. Local removal never deletes the public record.
+
+Finish elapsed time is signed as a client claim. Calendar metadata and capture context are not newly sealed. Server-observed span is still the span between received checkpoints. Active and idle measures remain sums between consecutive real events; the extra time before the first or after the last event is outside those measurements.
+
+No new database column or migration is required: `duration_ms` and `parent_record_hash` already store these fields, and format version is text. The API verifies the new finalization hash, retains compatible 0.2 checkpoint prefixes, and preserves old public records. Deploy the new API/viewer before distributing a producer that emits 0.3. Existing old clients cannot verify 0.3 records, and an older API rejects them.
+
+Validation covers duration/parent/binding tampering, a stable canonical hash vector, trailing pauses without edits, clock rollback, frozen retries across restart, legacy checkpoint preservation, retained links across continuation and storage failure, and a real PostgreSQL/API roundtrip under pgdbm-owned test databases.

@@ -41,6 +41,7 @@ export class BackgroundDispatcher {
       storage: options.storage,
       producer: options.producer,
       checkpoint: options.checkpoint,
+      signedFinishTime: true,
     });
     this.#upload = options.upload;
   }
@@ -61,6 +62,12 @@ export class BackgroundDispatcher {
     await this.ensureInitialised();
     try {
       switch (message.kind) {
+        case "list_panel_sessions":
+        case "rename_session":
+        case "remove_saved":
+        case "clear_saved":
+        case "export_saved":
+        case "inspect_finish":
         case "start_focused_editor":
         case "prepare_finish":
         case "stop_session":
@@ -68,7 +75,7 @@ export class BackgroundDispatcher {
         case "register_field":
           return await this.#handleRegister(message);
         case "append_mutation":
-          return this.#handleAppend(message);
+          return await this.#handleAppend(message);
         case "list_sessions":
           return { kind: "list_sessions_result", sessions: this.registry.list() };
         case "sign_session":
@@ -76,7 +83,7 @@ export class BackgroundDispatcher {
         case "retry_failed_upload":
           return await this.#handleRetry(message);
         case "discard_session":
-          return this.#handleDiscard(message);
+          return await this.#handleDiscard(message);
       }
     } catch (error) {
       return { kind: "error", reason: error instanceof Error ? error.message : String(error) };
@@ -91,6 +98,16 @@ export class BackgroundDispatcher {
       tab_id: message.tab_id,
       frame_id: message.frame_id,
     };
+    if (message.continue_session_id) {
+      const parent = this.registry.get(message.continue_session_id);
+      if (!parent || parent.state !== "uploaded" || parent.origin.origin !== origin.origin) return { kind: "error", reason: "Continue this saved record in a field on its original site." };
+      if (this.registry.list().some(session => session.state !== "uploaded" && session.parent_record === parent.uploaded_response?.record_hash)) {
+        return { kind: "error", reason: "An unfinished draft already continues this record. Choose that draft and resume it instead." };
+      }
+      const continuation = this.registry.continueFrom(parent.session_id, { origin, descriptor: message.descriptor });
+      await this.registry.persist();
+      return { kind: "register_field_result", result: { kind: "registered", session_id: continuation.session_id, certainty: "fresh" } };
+    }
     if (message.resume_session_id) {
       const existing = this.registry.get(message.resume_session_id);
       if (!existing || existing.state !== "active" || existing.origin.origin !== origin.origin) {
@@ -128,14 +145,14 @@ export class BackgroundDispatcher {
     const session = resumable?.state === "uploaded"
       ? this.registry.continueFrom(resumable.session_id, { origin, descriptor: message.descriptor })
       : this.registry.findOrCreate(origin, message.descriptor, capture, { fresh: !!message.activation_id });
-    void this.registry.persist();
+    await this.registry.persist();
     return {
       kind: "register_field_result",
       result: { kind: "registered", session_id: session.session_id, certainty: session.identity_certainty },
     };
   }
 
-  #handleAppend(message: Extract<ContentToBackground, { kind: "append_mutation" }>): BackgroundResponse {
+  async #handleAppend(message: Extract<ContentToBackground, { kind: "append_mutation" }>): Promise<BackgroundResponse> {
     // The full SessionRecord stays inside the service worker. The response
     // returned to the content script is a pure ack — sending the session
     // record would leak `observation.last_observed_token` (the bearer token)
@@ -148,10 +165,10 @@ export class BackgroundDispatcher {
       if (!(error instanceof SessionFrozenError) || error.state !== "uploaded") throw error;
       const continuation = this.registry.continueFrom(message.session_id);
       this.registry.appendMutation(continuation.session_id, message.mutation);
-      void this.registry.persist();
+      await this.registry.persist();
       return { kind: "append_mutation_result", session_id: continuation.session_id };
     }
-    void this.registry.persist();
+    await this.registry.persist();
     return { kind: "append_mutation_result" };
   }
 
@@ -175,16 +192,17 @@ export class BackgroundDispatcher {
     return { kind: "retry_result", result };
   }
 
-  #handleDiscard(message: Extract<ContentToBackground, { kind: "discard_session" }>): BackgroundResponse {
-    this.registry.discard(message.session_id);
-    void this.registry.persist();
+  async #handleDiscard(message: Extract<ContentToBackground, { kind: "discard_session" }>): Promise<BackgroundResponse> {
+    await this.registry.discardPersisted([message.session_id]);
     return { kind: "discard_result", ok: true };
   }
 
   async #runSignUpload(session_id: SessionRecord["session_id"], textBinding?: TextBinding): Promise<SignSessionResult> {
     try {
-      await this.registry.flushObservation(session_id);
       const draft = this.registry.sign(session_id, textBinding ? { textBinding } : {});
+      // Persist the confirmed finish before any checkpoint network await.
+      await this.registry.persist();
+      await this.registry.flushObservation(session_id);
       const observation = this.registry.getObservationEnvelope(session_id);
       const diverged = this.registry.getObservationState(session_id) === "diverged";
       this.registry.markUploading(session_id);
@@ -202,12 +220,13 @@ export class BackgroundDispatcher {
       return {
         kind: "uploaded",
         response,
+        ...(draft.manifest.text_binding ? { text_binding: draft.manifest.text_binding } : {}),
         ...(diverged ? { observation_note: DIVERGED_OBSERVATION_NOTE } : {}),
       };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       const live = this.registry.get(session_id);
-      if (live && live.state === "uploading") {
+      if (live && (live.state === "uploading" || live.state === "signing")) {
         this.registry.markFailedUpload(session_id, reason);
         if (error instanceof IngestUploadError && (error.code === "observation_mismatch" || error.code === "observation_unavailable")) {
           this.registry.markObservationRejected(session_id, error.code);

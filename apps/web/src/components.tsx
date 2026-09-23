@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildActivityBins, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDelayMs, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
+import { buildActivityBins, buildDelayHistogram, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDelayMs, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 export function DisclaimerBanner() {
@@ -70,20 +70,23 @@ export function CaptureContextSummary({ record }: { record: RecordApiResponse })
 
 export function QuickStatsPanel({ record }: { record: RecordApiResponse }) {
   const stats = record.stats;
+  const timing = recordTimingDetails(record);
   return (
     <section className="card">
       <h2>Quick facts</h2>
       <div className="stats-grid">
         <Stat label="Events" value={stats.event_count} />
-        <Stat label="Duration" value={formatDuration(stats.duration_ms)} />
+        <Stat label={timing.signedFinish ? "Signed duration" : "Reported duration"} value={formatDuration(stats.duration_ms)} />
+        <Stat label="Editing span" value={formatDuration(timing.editingSpanMs)} />
         <Stat label="Observed length" value={stats.observed_final_length === null ? "unknown" : `${stats.observed_final_length} codepoints`} />
         <Stat label="Typing events" value={stats.typed_event_count} />
         <Stat label="Insert / delete / replace" value={`${stats.insert_op_count} / ${stats.delete_op_count} / ${stats.replace_op_count}`} />
         <Stat label="Paste / unknown" value={`${stats.paste_event_count} / ${stats.unknown_source_count}`} />
         <Stat label="Largest atomic insert" value={`${stats.largest_atomic_insert_codepoints} codepoints`} />
-        <Stat label="Active / idle" value={`${formatDuration(stats.active_time_ms)} / ${formatDuration(stats.idle_time_ms)}`} />
+        <Stat label="Active / idle between edits" value={`${formatDuration(stats.active_time_ms)} / ${formatDuration(stats.idle_time_ms)}`} />
         <Stat label="Delay p50 / p95" value={`${formatDelayMs(stats.inter_event_delay_p50_ms)} / ${formatDelayMs(stats.inter_event_delay_p95_ms)}`} />
       </div>
+      <p className="muted">Editing span runs from the first captured edit to the last. Active and idle totals cover only intervals between edits; endpoint waits are separate.</p>
     </section>
   );
 }
@@ -154,6 +157,7 @@ function formatTimelineTick(seconds: number): string {
 }
 
 export function EditTimeline({ record }: { record: RecordApiResponse }) {
+  const timing = recordTimingDetails(record);
   const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
   // The length curve is drawn for the prefix of events whose document length can
   // be inferred; from the first event with an unknown position onwards only
@@ -176,20 +180,15 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   // With no inferable length there is no curve; markers sit on a neutral mid line.
   const markerY = (point: { documentLength: number | null }) => point.documentLength !== null ? ly(point.documentLength) : baseline - plotH / 2;
 
-  // Document length over time. The fill closes down to the baseline at both
-  // ends (correct for an area); the stroked line traces ONLY the curve, so it
-  // does not follow the closing edge back to zero at the end.
-  const areaCommands: string[] = [`M ${TIMELINE_PAD_L} ${baseline}`];
-  for (const point of knownPoints) {
-    areaCommands.push(`L ${tx(point.t)} ${ly(point.documentLength ?? 0)}`);
-  }
-  // Close the fill straight down at the LAST data point, not out at the (often
-  // later) duration mark — otherwise the fill slopes diagonally to zero at the
-  // end and reads as the document length collapsing.
-  const lastX = knownPoints.length > 0 ? tx(knownPoints[knownPoints.length - 1]!.t) : TIMELINE_PAD_L;
-  areaCommands.push(`L ${lastX} ${baseline} Z`);
-  const areaPath = areaCommands.join(" ");
-  const linePath = knownPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${tx(point.t)} ${ly(point.documentLength ?? 0)}`).join(" ");
+  // Only the fill closes to zero. The line holds each observed length until
+  // an actual edit changes it, with no growth drawn across an idle interval.
+  const steps = buildLengthStepPoints(points);
+  const linePath = steps.map((point, index) => `${index === 0 ? "M" : "L"} ${tx(point.t)} ${ly(point.length)}`).join(" ");
+  const firstStep = steps[0];
+  const lastStep = steps.at(-1);
+  const areaPath = firstStep && lastStep
+    ? `M ${tx(firstStep.t)} ${baseline} L ${tx(firstStep.t)} ${ly(firstStep.length)} ${steps.slice(1).map(point => `L ${tx(point.t)} ${ly(point.length)}`).join(" ")} L ${tx(lastStep.t)} ${baseline} Z`
+    : "";
 
   const pauseSpans = points.filter((point) => point.isLongPause && point.delayFromPreviousMs > 0);
   // Only NOTABLE events get a marker — pastes, drops, cuts/deletes, and large
@@ -222,13 +221,25 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
       {points.length === 0 ? (
         <p className="muted">No edit events were included in this record.</p>
       ) : lengthKnownThroughout ? (
-        <p className="muted">Document length over time. Pastes, cuts, and large inserts are marked on the curve; shaded bands are long pauses. Steady typing is the rising line itself.</p>
+        <p className="muted">Document length over time. Pastes, cuts, and large inserts are marked on the curve; shaded bands are long pauses. The line stays flat between edits and changes at each captured edit.</p>
       ) : lengthKnown ? (
         <p className="muted">Document length over time, up to edit {knownPoints.length} of {points.length}. Later events lack enough measurements to reconstruct length. Editing activity remains visible below; shaded bands mark long pauses.</p>
       ) : (
         <p className="muted">Document length is unknown because this record lacks enough measurements to reconstruct it. The bars show when edits happened and how many were captured, not document length. Shaded bands mark long pauses.</p>
       )}
+      {timing.signedFinish && <p className="muted signed-finish-summary">Signed finish at {formatDuration(record.manifest.duration_ms)} from the session start.
+        {timing.beforeFirstEditMs > 0 && <> No edits were captured during the first {formatDuration(timing.beforeFirstEditMs)}.</>}
+        {timing.afterLastEditMs > 0 && <> The final {formatDuration(timing.afterLastEditMs)} contains no captured edits. The length curve ends at the last measurable edit; it does not describe that later interval.</>}
+      </p>}
       <svg ref={chartRef} className="timeline-chart" viewBox={`0 0 ${chartW} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
+        {timing.signedFinish && timing.beforeFirstEditMs > 0 && <rect className="before-first-edit-gap" x={tx(0)} y={TIMELINE_PAD_T}
+          width={Math.max(1, tx(timing.beforeFirstEditMs) - tx(0))} height={plotH} fill="#dce3e8" opacity={0.65}>
+          <title>{`No captured edits before the first edit: ${formatDuration(timing.beforeFirstEditMs)}`}</title>
+        </rect>}
+        {timing.signedFinish && timing.afterLastEditMs > 0 && <rect className="signed-finish-gap" x={tx(points.at(-1)?.t ?? 0)} y={TIMELINE_PAD_T}
+          width={Math.max(1, tx(record.manifest.duration_ms) - tx(points.at(-1)?.t ?? 0))} height={plotH} fill="#dce3e8" opacity={0.65}>
+          <title>{`No captured edits between the last edit and signed finish: ${formatDuration(timing.afterLastEditMs)}`}</title>
+        </rect>}
         {pauseSpans.map((point) => {
           const startT = Math.max(0, point.t - point.delayFromPreviousMs);
           const x = tx(startT);
@@ -295,6 +306,7 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
         {notableSources.has("programmatic") && <><span className="dot source-programmatic" /> programmatic </>}
         {hasLargeInsert && <><span className="dot large" /> large insert </>}
         {hasLongPause && <><span className="dot pause" /> long pause</>}
+        {timing.signedFinish && (timing.beforeFirstEditMs > 0 || timing.afterLastEditMs > 0) && <span>gray bands: no captured edits before the first edit or after the last</span>}
       </div>
     </section>
   );
@@ -626,68 +638,66 @@ export function CommensurabilityCard({ record }: { record: RecordApiResponse }) 
   );
 }
 
-const FP_MIN_MS = 16;
-const FP_MAX_MS = 100_000;
-const FP_BINS = 40;
 const FP_FALLBACK_W = 660;
 const FP_TICKS: { ms: number; label: string }[] = [
   { ms: 100, label: "100ms" },
   { ms: 1000, label: "1s" },
   { ms: 10000, label: "10s" },
-  { ms: 60000, label: "1m" },
+  { ms: RHYTHM_MAX_MS, label: "100s" },
 ];
 
-// A "fingerprint" of the writing rhythm: a finely log-bucketed distribution of
-// time between consecutive edits, drawn as a continuous area + line. Log bins
-// keep the typing cadence crisp while long pauses fall into the right tail, so
-// a single big pause never flattens the curve.
 export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   const [chartRef, W] = useContentWidth<SVGSVGElement>(FP_FALLBACK_W);
-  const points = buildTimelinePoints(record.events);
-  const delays = points.filter((point) => point.seq > 0).map((point) => point.delayFromPreviousMs).filter((delay) => delay > 0);
-  if (delays.length === 0) return null;
-  const logMin = Math.log10(FP_MIN_MS);
-  const span = Math.log10(FP_MAX_MS) - logMin;
-  const counts = new Array(FP_BINS).fill(0) as number[];
-  for (const delay of delays) {
-    const clamped = Math.min(FP_MAX_MS, Math.max(FP_MIN_MS, delay));
-    const index = Math.min(FP_BINS - 1, Math.max(0, Math.floor(((Math.log10(clamped) - logMin) / span) * FP_BINS)));
-    counts[index] += 1;
-  }
-  const maxCount = Math.max(...counts, 1);
+  const histogram = useMemo(() => buildDelayHistogram(record.events), [record.events]);
+  if (histogram.total === 0) return null;
+  const { bins, underflow, overflow } = histogram;
+  const logMin = Math.log10(RHYTHM_MIN_MS);
+  const span = Math.log10(RHYTHM_MAX_MS) - logMin;
+  const maxCount = Math.max(underflow, overflow, ...bins.map(bin => bin.count), 1);
   const stats = record.stats;
-  const H = 150, padL = 8, padR = 8, padT = 10, padB = 26;
-  const innerW = W - padL - padR;
+  const timing = recordTimingDetails(record);
+  const H = 150, padL = 54, padR = 64, padT = 10, padB = 26;
+  const innerW = Math.max(1, W - padL - padR);
   const innerH = H - padT - padB;
   const baseY = padT + innerH;
-  const xForFrac = (frac: number) => padL + frac * innerW;
-  const xForBin = (index: number) => xForFrac((index + 0.5) / FP_BINS);
-  const yForCount = (count: number) => baseY - (count / maxCount) * innerH;
-  const xForMs = (ms: number) => xForFrac((Math.log10(ms) - logMin) / span);
-  const linePoints = counts.map((count, index) => `${xForBin(index).toFixed(1)},${yForCount(count).toFixed(1)}`).join(" ");
-  const areaPath =
-    `M ${xForBin(0).toFixed(1)},${baseY} ` +
-    counts.map((count, index) => `L ${xForBin(index).toFixed(1)},${yForCount(count).toFixed(1)}`).join(" ") +
-    ` L ${xForBin(FP_BINS - 1).toFixed(1)},${baseY} Z`;
+  const xForMs = (ms: number) => padL + (Math.log10(ms) - logMin) / span * innerW;
+  const barWidth = innerW / bins.length;
+  const boundaryBarWidth = 24;
   return (
     <section className="card fingerprint-card" aria-label="Writing rhythm">
       <h2>Writing rhythm</h2>
-      <p className="muted">Time between consecutive edits, on a log scale.</p>
-      <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of time between edits">
+      <p className="muted">Gaps between consecutive edits. The middle bars use a log scale from 16ms to 100s; separate bars show shorter and longer gaps. Bar height counts gaps.</p>
+      <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of gaps between edits, with separate bars below 16 milliseconds and above 100 seconds">
         {FP_TICKS.map((tick) => (
           <line key={`line-${tick.ms}`} x1={xForMs(tick.ms)} y1={padT} x2={xForMs(tick.ms)} y2={baseY} className="fp-tick-line" />
         ))}
-        <path d={areaPath} className="fp-area" />
-        <polyline points={linePoints} className="fp-line" />
+        {bins.map((bin, index) => <rect key={index} className="fp-bin" data-count={bin.count}
+          x={padL + index * barWidth} y={baseY - bin.count / maxCount * innerH}
+          width={Math.max(0.5, barWidth - 0.5)} height={bin.count / maxCount * innerH} fill="#769bc7">
+          <title>{`${bin.count} gaps · approximately ${formatDuration(Math.round(bin.start))} to ${formatDuration(Math.round(bin.end))}`}</title>
+        </rect>)}
+        <rect className="fp-underflow" data-count={underflow} x={8} y={baseY - underflow / maxCount * innerH}
+          width={boundaryBarWidth} height={underflow / maxCount * innerH} fill="#769bc7">
+          <title>{`${underflow} gaps shorter than 16ms, including simultaneous edits`}</title>
+        </rect>
+        <rect className="fp-overflow" data-count={overflow} x={W - 36} y={baseY - overflow / maxCount * innerH}
+          width={boundaryBarWidth} height={overflow / maxCount * innerH} fill="#769bc7">
+          <title>{`${overflow} gaps longer than 100 seconds`}</title>
+        </rect>
+        <text x={20} y={H - 6} className="fp-label" textAnchor="middle">&lt;16ms</text>
         {FP_TICKS.map((tick) => (
-          <text key={`text-${tick.ms}`} x={xForMs(tick.ms)} y={H - 6} className="fp-label">{tick.label}</text>
+          <text key={`text-${tick.ms}`} x={xForMs(tick.ms)} y={H - 6} className="fp-label" textAnchor="middle">{tick.label}</text>
         ))}
+        <text x={W - 24} y={H - 6} className="fp-label" textAnchor="middle">&gt;100s</text>
       </svg>
+      <p className="muted rhythm-overflow-summary">{overflow} {overflow === 1 ? "gap longer" : "gaps longer"} than 100 seconds. {underflow} shorter than 16ms, including gaps of zero milliseconds.</p>
       <dl className="fingerprint-stats">
         <div><dt>Edits</dt><dd>{stats.event_count}</dd></div>
-        <div><dt>Duration</dt><dd>{formatDuration(stats.duration_ms)}</dd></div>
-        <div><dt>Median gap</dt><dd>{stats.inter_event_delay_p50_ms === null ? "n/a" : `${stats.inter_event_delay_p50_ms}ms`}</dd></div>
-        <div><dt>Longest pause</dt><dd>{stats.inter_event_delay_max_ms === null ? "n/a" : formatDuration(stats.inter_event_delay_max_ms)}</dd></div>
+        <div><dt>{timing.signedFinish ? "Signed duration" : "Reported duration"}</dt><dd>{formatDuration(stats.duration_ms)}</dd></div>
+        <div><dt>Editing span</dt><dd>{formatDuration(timing.editingSpanMs)}</dd></div>
+        <div><dt>Median gap</dt><dd>{formatDelayMs(stats.inter_event_delay_p50_ms)}</dd></div>
+        <div><dt>95th-percentile gap</dt><dd>{formatDelayMs(stats.inter_event_delay_p95_ms)}</dd></div>
+        <div><dt>Longest pause</dt><dd>{formatDelayMs(stats.inter_event_delay_max_ms)}</dd></div>
       </dl>
     </section>
   );

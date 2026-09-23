@@ -9,6 +9,17 @@ import type {
   SessionRecord,
 } from "../../../../packages/producer-core/src/index.ts";
 
+export type CaptureStatus = "active" | "stopped" | "legacy";
+export type SessionSummary = Omit<SessionRecord, "events" | "observation"> & {
+  event_count: number;
+  display_name: string;
+  capture_status: CaptureStatus;
+};
+export type FinishScope = "selection" | "whole_field" | "unavailable";
+export type FinishScopePreview = { scope: FinishScope; scope_token?: string; reason?: string };
+export type CurrentEditor = { state: "tracked" | "untracked" | "none" | "unavailable"; session_id?: string };
+export type SavedLink = { session_id: string; name: string; site: string; saved_at: string; url: string; record_hash: string; text_check: boolean };
+
 export type ContentToBackground =
   | {
       kind: "register_field";
@@ -22,6 +33,7 @@ export type ContentToBackground =
       activation_id?: string;
       share_session_id?: string;
       resume_session_id?: string;
+      continue_session_id?: string;
     }
   | {
       kind: "append_mutation";
@@ -29,8 +41,14 @@ export type ContentToBackground =
       mutation: PendingMutation;
     }
   | { kind: "list_sessions" }
-  | { kind: "start_focused_editor"; share_session_id?: string; resume_session_id?: string }
-  | { kind: "prepare_finish"; session_id: string; bind: boolean }
+  | { kind: "list_panel_sessions"; window_id: number; history_query?: string; history_offset?: number; history_limit?: number }
+  | { kind: "rename_session"; session_id: string; name: string }
+  | { kind: "remove_saved"; session_id: string }
+  | { kind: "clear_saved" }
+  | { kind: "export_saved" }
+  | { kind: "inspect_finish"; session_id: string }
+  | { kind: "start_focused_editor"; window_id?: number; share_session_id?: string; resume_session_id?: string; continue_session_id?: string }
+  | { kind: "prepare_finish"; session_id: string; bind: boolean; expected_scope_token?: string }
   | { kind: "stop_session"; session_id: string }
   | {
       kind: "sign_session";
@@ -59,7 +77,8 @@ export type ComputeBindingRequest = {
 
 export type ComputeBindingResponse =
   | { kind: "binding_result"; text_binding: TextBinding | null }
-  | { kind: "binding_error"; reason: string };
+  | { kind: "binding_error"; reason: string }
+  | ({ kind: "binding_scope_changed" } & FinishScopePreview);
 
 export function isComputeBindingRequest(value: unknown): value is ComputeBindingRequest {
   return !!value && typeof value === "object" && (value as { kind?: unknown }).kind === "compute_binding";
@@ -72,7 +91,7 @@ export type RegisterFieldResult =
 export type SignSessionResult =
   // observation_note explains, for the signer, when the record was uploaded
   // without server observation although observation had been requested.
-  | { kind: "uploaded"; response: IngestRecordResponse; observation_note?: string }
+  | { kind: "uploaded"; response: IngestRecordResponse; observation_note?: string; text_binding?: TextBinding }
   | { kind: "failed"; reason: string };
 
 export type BackgroundResponse =
@@ -81,8 +100,14 @@ export type BackgroundResponse =
   // content script must record further edits under that id.
   | { kind: "append_mutation_result"; session_id?: SessionId }
   | { kind: "list_sessions_result"; sessions: SessionRecord[]; capture_status?: Record<string, "active" | "stopped" | "legacy">; selected_session_id?: string; last_start_error?: string }
+  | { kind: "panel_sessions_result"; drafts: SessionSummary[]; saved: SessionSummary[]; saved_count: number; matching_saved_count: number; history_offset: number; current_editor: CurrentEditor; last_start_error?: string }
+  | { kind: "rename_result"; ok: true }
+  | { kind: "remove_saved_result"; ok: true }
+  | { kind: "clear_saved_result"; ok: true }
+  | { kind: "export_saved_result"; links: SavedLink[] }
+  | ({ kind: "finish_scope_result" } & FinishScopePreview)
   | { kind: "start_editor_result"; session_id?: string; reason?: string }
-  | { kind: "prepare_finish_result"; text_binding: TextBinding | null; reason?: string }
+  | { kind: "prepare_finish_result"; text_binding: TextBinding | null; reason?: string; scope_changed?: boolean; scope?: FinishScope; scope_token?: string }
   | { kind: "stop_session_result"; ok: true }
   | { kind: "sign_session_result"; result: SignSessionResult }
   | { kind: "retry_result"; result: SignSessionResult }
@@ -108,6 +133,12 @@ export const CONTENT_SCRIPT_REACHABLE_RESPONSE_KINDS = [
 export const MESSAGE_KINDS = [
   "register_field",
   "append_mutation",
+  "list_panel_sessions",
+  "rename_session",
+  "remove_saved",
+  "clear_saved",
+  "export_saved",
+  "inspect_finish",
   "start_focused_editor",
   "prepare_finish",
   "stop_session",

@@ -1,6 +1,6 @@
 # Canonicalization
 
-Status: normative for PMBAH format `0.1` event JSON and format `0.2` text bindings.
+Status: normative for PMBAH format `0.1` event JSON, format `0.2` text bindings, and format `0.3` finalization.
 
 Canonicalization is part of the record contract. Conformant implementations must produce the same UTF-8 bytes for the same public process event and the same text-binding input.
 
@@ -75,6 +75,60 @@ record_hash = H(bytes(event_tip) || utf8(canon(text_binding)))
 ```
 
 A `text_binding` is invalid on a format `0.1` manifest.
+
+## Format 0.3 finalization
+
+Format `0.3` changes the final record seal, not the mutation schema. Its event
+chain **uses the literal `"0.2"` domain in the first event hash**, exactly as a
+format `0.2` event chain does. This is intentional: an unfinished `0.2` draft
+can finish as `0.3` without rewriting any already received server checkpoint.
+The manifest's `format_version` is `"0.3"`; implementations must not hash that
+literal into the event-chain genesis. Existing `0.1` and `0.2` algorithms and
+hashes are unchanged.
+
+Every `0.3` record has a finalization seal, even without a text binding:
+
+```text
+record_hash = H(bytes(event_tip) || utf8(canon(finalization)))
+```
+
+`finalization` has exactly these four keys (canonical JSON sorts them):
+
+```jsonc
+{
+  "format_version": "0.3",
+  "duration_ms": 5184000000,
+  "parent_record": null,
+  "text_binding": null
+}
+```
+
+`duration_ms` is elapsed client milliseconds at the confirmed finish action,
+not merely the last edit time. It must be a non-negative safe integer, at least
+the last event's `t`. It is frozen once and reused across upload retries.
+Finishing after a pause extends this duration without adding an edit.
+`parent_record` is the previous published record's `b3:` hash, or `null`;
+`text_binding` is the normal binding object, or `null`. Optional absent values
+in the manifest normalize to these explicit nulls in the seal. Altering finish
+duration, parent, or binding changes the record hash. Other manifest metadata
+remains outside this seal and must not be described as cryptographically bound.
+
+Checkpoint chain tips remain **event** tips, not final record hashes. A signed
+finish is a client claim; it does not extend server-observed time or establish
+continuous capture. Active/idle statistics continue to measure intervals
+between actual events; leading/trailing elapsed waits are not invented edits
+or reclassified as measured activity.
+
+Conformance vector: with session `00000000-0000-4000-8000-000000000001`, one event
+`{"seq":0,"t":1000,"op":"insert","pos":0,"del_len":0,"ins_len":1,"source":"typing"}`,
+and the finalization above, the record hash is
+`b3:91e988e0a466dfaf60be4864ed3b69cc26421f28474fc7c9df9841c1ea50662c`.
+
+New readers accept all three versions; old readers must reject unsupported
+`0.3` records. Deploy compatible API/viewer code before enabling `0.3` producers.
+An already signed legacy retry retains its original version and hash. An
+unfinished `0.1` draft remains legacy because its event commitments use a
+different domain; do not discard checkpoints to force an upgrade.
 
 ## Text binding canonicalization: `canon-letters/0.1`
 

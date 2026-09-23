@@ -14,6 +14,20 @@
     .intro { border-bottom: 1px solid #d8c8a6; padding-bottom: 1rem; margin-bottom: 1rem; }
     article, .sign-confirm, .saved-result { border: 1px solid #d8c8a6; border-radius: 10px; background: #fffdf8; padding: .8rem; margin: .8rem 0; }
     article.selected { border: 2px solid #315b39; }
+    article.current { background: #f5faf2; }
+    .saved-row { padding: .65rem; margin: .5rem 0; }
+    .saved-row time { color: #62594e; font-size: 12px; }
+    .saved-row .session-actions { margin-top: .4rem; }
+    summary { cursor: pointer; font-weight: 600; }
+    details { margin: .75rem 0; }
+    details p { font-size: 13px; }
+    #current, #drafts, #latest { margin-bottom: 1rem; }
+    #current { margin-top: 1rem; }
+    #saved-history { border-top: 1px solid #d8c8a6; padding-top: 1rem; }
+    #history-title { font-size: 16px; }
+    .pagination { display: flex; align-items: center; justify-content: space-between; gap: .4rem; margin-top: .8rem; }
+    .binding-scope { font-weight: 600; padding-left: 1.5rem; }
+    .rename-form { border-top: 1px solid #d8c8a6; margin-top: .7rem; }
     .session-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; }
     .session-title { font-weight: 600; overflow-wrap: anywhere; }
     .session-state { color: #315b39; }
@@ -25,7 +39,7 @@
     :focus-visible { outline: 3px solid #386cb0; outline-offset: 3px; }
     label { display: flex; align-items: flex-start; gap: .45rem; margin: .6rem 0; }
     input[type=checkbox] { margin-top: .35rem; flex-shrink: 0; }
-    input[type=text], input[type=url] { width: 100%; min-width: 0; font: inherit; border: 1px solid #b8a787; border-radius: 5px; padding: .45rem; background: white; color: #221b17; }
+    input[type=text], input[type=url], input[type=search] { width: 100%; min-width: 0; font: inherit; border: 1px solid #b8a787; border-radius: 5px; padding: .45rem; background: white; color: #221b17; }
     .sign-label-row { display: block; }
     .notice { border-left: 3px solid #315b39; padding: .7rem; margin: .8rem 0; background: #eaf0e7; overflow-wrap: anywhere; }
     .notice.error { border-color: #872626; background: #fff0ed; color: #652424; }
@@ -39,18 +53,24 @@
 </head>
 <body>
   <h1>PMBAH · Writing records</h1>
-  <p class="lede">Choose an editor before starting. The record contains editing measurements, not your words.</p>
-  <section class="intro" aria-labelledby="start-title">
-    <h2 id="start-title">Start in an editor</h2>
-    <p class="note">Right-click an empty editor and choose “Start writing record”. Or focus the editor, then use the button below. Opening this panel does not start anything.</p>
-    <button id="start">Start in focused editor</button>
-    <label id="share-option" hidden><input type="checkbox" id="share" /> This is the same document as the selected active draft. Share its writing record.</label>
-    <p class="note">Keyboard alternative: focus the editor, then press Alt+Shift+W to start its writing record and open this panel. You can change the shortcut in Chrome’s extension settings.</p>
-  </section>
+  <details id="help"><summary>Help</summary><p>Right-click an empty editor and choose “Start writing record”, or focus it and press Alt+Shift+W. You can also use the button below. Only a field you explicitly choose is captured.</p><p>A writing record contains editing measurements, not your words. Stop to pause a draft; resume it later in the chosen field. Finishing publishes a record and stops capture.</p></details>
+  <button id="start" disabled>Start in focused editor</button>
+  <label id="share-option" hidden><input type="checkbox" id="share" /> This is the same document as the chosen active draft. Share its writing record.</label>
   <p id="toast" class="notice" role="status" aria-live="polite" hidden></p>
   <section id="review" aria-label="Review before publishing"></section>
-  <section id="app" aria-label="Your writing records"></section>
-  <p class="footer">Checkpoints send edit measurements while a chosen draft is active. Finishing stops capture. A saved public record cannot be deleted here. <a href="https://possiblymadebyahuman.com/docs/privacy/" target="_blank" rel="noopener">Privacy details</a></p>
+  <section id="app" aria-label="Your writing records">
+    <section id="current" aria-label="This editor"></section>
+    <section id="latest" aria-label="Recently saved record"></section>
+    <section id="drafts" aria-label="Other drafts"></section>
+    <details id="saved-history"><summary id="history-title">Saved records (0)</summary>
+      <label class="sign-label-row">Search saved records<input id="history-search" type="search" placeholder="Name, site, date or link" /></label>
+      <div class="session-actions"><button id="export-history" class="secondary">Export all links</button><button id="clear-history" class="secondary">Remove all saved links</button></div>
+      <p class="note">Links stay in this browser until you remove them. Export a backup before uninstalling or clearing browser data. Removing a link here does not delete its public record.</p>
+      <div id="history-rows"></div>
+      <nav class="pagination" aria-label="Saved records pages"><button id="history-previous" class="secondary">Previous</button><span id="history-page" class="note"></span><button id="history-next" class="secondary">Next</button></nav>
+    </details>
+  </section>
+  <p class="footer">Checkpoints send edit measurements while a chosen draft is active. <a href="https://possiblymadebyahuman.com/docs/privacy/" target="_blank" rel="noopener">Privacy details</a></p>
   <script type="module" src="popup.js"></script>
 </body>
 </html>

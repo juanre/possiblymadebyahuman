@@ -4,6 +4,9 @@ import test from "node:test";
 import {
   canonicalizeEvent,
   computeRecordHash,
+  computeEventHashChain,
+  createTextBinding,
+  verifyRecord,
   validateManifest,
 } from "../packages/format/src/index.ts";
 import {
@@ -116,7 +119,7 @@ function makeRegistry(opts = {}) {
   const clock = opts.clock ?? mutableClock();
   const uuid = opts.uuid ?? deterministicUuids();
   const storage = opts.storage ?? inMemoryStorage();
-  const registry = new SessionRegistry({ clock, uuid, storage, producer });
+  const registry = new SessionRegistry({ clock, uuid, storage, producer, signedFinishTime: opts.signedFinishTime });
   return { registry, clock, uuid, storage };
 }
 
@@ -551,4 +554,117 @@ test("UnknownSessionError surfaces explicit id", () => {
     () => registry.appendMutation("00000000-0000-4000-8000-deadbeefdead", { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" }),
     UnknownSessionError,
   );
+});
+
+test("signed finish includes a two-month trailing pause without an edit and freezes retries", async () => {
+  const { registry, clock, storage } = makeRegistry({ signedFinishTime: true });
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
+  clock.set(1000);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  clock.set(60 * 86400000);
+  const signed = registry.sign(session.session_id, { textBinding: createTextBinding("a", session.session_id) });
+  assert.equal(signed.manifest.format_version, "0.3");
+  assert.equal(signed.manifest.duration_ms, 60 * 86400000);
+  assert.equal(signed.events.length, 1);
+  assert.equal(signed.events[0].t, 1000);
+  assert.equal(verifyRecord(signed).valid, true);
+  registry.markUploading(session.session_id);
+  await registry.persist();
+  clock.advance(60 * 86400000);
+  const { registry: restarted } = makeRegistry({ clock, storage, signedFinishTime: true });
+  await restarted.init();
+  assert.equal(restarted.get(session.session_id).state, "failed_upload");
+  assert.deepEqual(restarted.sign(session.session_id, { textBinding: createTextBinding("different", session.session_id) }), signed);
+});
+
+test("0.2 draft upgrades at finish preserving checkpoint chain; old failed uploads keep their old hashes", () => {
+  const { registry, clock } = makeRegistry();
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
+  clock.set(1000);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  const oldSnapshot = registry.snapshot();
+  const { registry: upgraded } = makeRegistry({ clock, signedFinishTime: true });
+  upgraded.load(oldSnapshot);
+  clock.set(60 * 86400000);
+  const signed = upgraded.sign(session.session_id);
+  assert.equal(signed.manifest.format_version, "0.3");
+  assert.equal(signed.manifest.duration_ms, clock.now());
+  assert.equal(computeEventHashChain(signed.events, session.session_id, "0.3").at(-1), oldSnapshot[0].last_event_chain_tip);
+  const legacySigned = registry.sign(session.session_id);
+  registry.markUploading(session.session_id);
+  registry.markFailedUpload(session.session_id, "network unavailable");
+  upgraded.load(registry.snapshot());
+  clock.advance(60 * 86400000);
+  assert.deepEqual(upgraded.sign(session.session_id), legacySigned);
+});
+
+test("explicit continuation keeps prior saved links and starts its clock at the signed finish", () => {
+  const { registry, clock } = makeRegistry({ signedFinishTime: true });
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
+  clock.set(1000);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  clock.set(5000);
+  const first = registry.sign(session.session_id);
+  registry.markUploading(session.session_id);
+  registry.markUploaded(session.session_id, { record_hash: first.manifest.record_hash, short_signature: "saved", url: "https://example.test/saved", created: true });
+  clock.advance(60 * 86400000);
+  registry.sweep({ ttl_ms: Infinity, retain_uploaded_anchors: true });
+  const anchor = registry.get(session.session_id);
+  assert.equal(anchor.events.length, 0);
+  const continuation = registry.continueFrom(session.session_id, { origin: originA, descriptor: desc });
+  assert.notEqual(continuation.session_id, session.session_id);
+  assert.equal(continuation.base_wall_ms, 5000);
+  assert.equal(continuation.parent_record, first.manifest.record_hash);
+  assert.deepEqual(registry.get(session.session_id), anchor);
+  registry.appendMutation(continuation.session_id, { op: "insert", pos: 1, del_len: 0, ins_len: 1, source: "typing" });
+  const second = registry.sign(continuation.session_id);
+  assert.equal(second.events[0].pos, null, "pre-existing field content is not imported into the new segment");
+  assert.equal(second.events[0].t, 60 * 86400000);
+  assert.equal(second.manifest.duration_ms, 60 * 86400000);
+  assert.equal(second.manifest.parent_record, first.manifest.record_hash);
+  assert.equal(verifyRecord(second).valid, true);
+  assert.equal(registry.get(session.session_id).uploaded_response.url, "https://example.test/saved");
+});
+
+test("finish after a backward clock adjustment never precedes the last recorded edit", () => {
+  const { registry, clock } = makeRegistry({ signedFinishTime: true });
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
+  clock.set(1000);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  clock.set(100);
+  assert.equal(registry.sign(session.session_id).manifest.duration_ms, 1000);
+});
+
+test("failed persisted removal restores saved links without losing other drafts' concurrent edits", async () => {
+  const { registry, clock, storage } = makeRegistry();
+  const desc = descriptor();
+  const saved = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
+  registry.appendMutation(saved.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  const signed = registry.sign(saved.session_id);
+  registry.markUploading(saved.session_id);
+  registry.markUploaded(saved.session_id, { record_hash: signed.manifest.record_hash, short_signature: "saved", url: "https://example.test/saved", created: true });
+  const active = registry.findOrCreate(originB, desc, captureForOrigin(originB, desc));
+  await registry.persist();
+  const write = storage.write;
+  let first = true;
+  storage.write = async snapshot => {
+    if (first) {
+      first = false;
+      clock.advance(1000);
+      registry.appendMutation(active.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+      throw new Error("Storage unavailable");
+    }
+    await write(snapshot);
+  };
+  await assert.rejects(registry.discardPersisted([saved.session_id]), /Storage unavailable/);
+  assert.equal(registry.get(saved.session_id).uploaded_response.url, "https://example.test/saved");
+  assert.equal(registry.get(active.session_id).events.length, 1);
+  assert.equal(storage.peek().find(record => record.session_id === saved.session_id).uploaded_response.url, "https://example.test/saved");
+  await registry.discardPersisted([saved.session_id]);
+  assert.equal(registry.get(saved.session_id), undefined);
+  assert.equal(storage.peek().some(record => record.session_id === saved.session_id), false);
 });

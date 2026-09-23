@@ -6,7 +6,7 @@ import test from "node:test";
 import pg from "pg";
 
 import { createIngestApi } from "../apps/ingest-api/src/index.ts";
-import { computeEventHashChain, computeRecordHash } from "../packages/format/src/index.ts";
+import { computeEventHashChain, computeRecordHash, verifyRecord } from "../packages/format/src/index.ts";
 import { PostgresRecordStore } from "../packages/storage/src/index.ts";
 import { applyMigrations, loadSqlMigrations } from "../packages/storage/src/migrations.ts";
 
@@ -27,6 +27,49 @@ async function textBindingFixtureRecord() {
 test("Postgres observed-session finalization validates the exact public checkpoint set", async (t) => {
   const harness = await connectFixtureDatabase(t, "PMBAH_TEST_DATABASE_URL");
   const { api, pool } = harness;
+
+  await t.test("0.3 seals a finish-only pause and parent while preserving older checkpoints and records", async () => {
+    const parent = await freshRecord();
+    const savedParent = await api.postRecord(parent);
+    assert.equal(savedParent.status, 201);
+    const parentBefore = await api.getRecord(savedParent.body.short_signature);
+    const child = await freshRecord();
+    child.manifest.format_version = "0.2";
+    const checkpointChain = computeEventHashChain(child.events, child.manifest.session_id, "0.2");
+    const checkpoint = await api.postObservedCheckpoint(child.manifest.session_id, {
+      event_count: child.events.length, chain_tip: checkpointChain.at(-1),
+    });
+    assert.equal(checkpoint.status, 201);
+    const originalEvents = clone(child.events);
+    child.manifest.format_version = "0.3";
+    child.manifest.duration_ms = 60 * 86400000;
+    child.manifest.parent_record = parent.manifest.record_hash;
+    child.manifest.record_hash = computeRecordHash(child.events, child.manifest.session_id, "0.3", undefined, child.manifest);
+    const input = { ...child, observation: { observed_session_id: child.manifest.session_id, token: checkpoint.body.token } };
+    const uploaded = await api.postRecord(input);
+    assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
+    assert.equal((await api.postRecord(input)).status, 200, "interrupted upload retries the exact immutable record");
+    const fetched = await api.getRecord(uploaded.body.short_signature);
+    assert.equal(fetched.body.manifest.format_version, "0.3");
+    assert.equal(fetched.body.manifest.duration_ms, 60 * 86400000);
+    assert.equal(fetched.body.manifest.parent_record, parent.manifest.record_hash);
+    // pg returns timestamptz values as Date objects; verify the public JSON
+    // boundary that HTTP clients receive, not the pre-serialization API body.
+    const wireRecord = await (await api.handleRequest(new Request(`https://possiblymadebyahuman.test/api/records/${uploaded.body.short_signature}`))).json();
+    const verification = verifyRecord(wireRecord);
+    assert.equal(verification.valid, true, verification.errors.join("; "));
+    assert.deepEqual(fetched.body.events, originalEvents, "finishing adds no artificial edit");
+    assert.equal(fetched.body.observation.state, "observed");
+    assert.equal(fetched.body.observation.server_observed_span_ms, 0, "the finish duration is not server-observed time");
+    assert.equal(fetched.body.observation.commitments[0].chain_tip, checkpointChain.at(-1));
+    assert.deepEqual(await api.getRecord(savedParent.body.short_signature), parentBefore);
+    const tampered = await api.postRecord({ ...input, manifest: { ...child.manifest, duration_ms: child.manifest.duration_ms + 1 } });
+    assert.equal(tampered.status, 400);
+    assert.match(tampered.body.details.join(" "), /record_hash mismatch/);
+    const raw = await pool.query("select duration_ms, format_version, parent_record_hash from records where record_hash = $1", [child.manifest.record_hash]);
+    assert.equal(raw.rows[0].duration_ms, String(60 * 86400000));
+    assert.equal(raw.rows[0].parent_record_hash, parent.manifest.record_hash);
+  });
 
   await t.test("invalid containers and integer overflows are client errors before persistence", async () => {
     const record = await fixtureRecord();
