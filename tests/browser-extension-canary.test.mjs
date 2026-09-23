@@ -114,10 +114,11 @@ test("manifest version matches the package version", async () => {
   const manifest = JSON.parse(await readFile(`${DIST}/manifest.json`, "utf8"));
   const packageJson = JSON.parse(await readFile("apps/browser-extension/package.json", "utf8"));
   assert.equal(manifest.version, packageJson.version);
-  // Permissions never grow without intent: the v0 surface is exactly these three
-  // plus the <all_urls> host permission asserted below. storage for chrome.storage.local,
-  // clipboardWrite for copying the record URL after upload, alarms for the TTL sweep.
-  assert.deepEqual(manifest.permissions, ["storage", "clipboardWrite", "alarms"]);
+  // Permissions remain explicit: persistence, link copying, TTL cleanup,
+  // user-selected editable context menus, browser-owned controls, and exact
+  // frame/document routing. Broad hosts are still needed to inject dormant
+  // target tracking; registration and measurements require a separate gesture.
+  assert.deepEqual(manifest.permissions, ["storage", "clipboardWrite", "alarms", "contextMenus", "sidePanel", "webNavigation"]);
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);
 });
 
@@ -275,8 +276,9 @@ test("FieldEntry type carries no text-bearing string field", async () => {
   const fieldEntryMatch = source.match(/type\s+FieldEntry\s*=\s*\{([^}]+)\}/m);
   assert.ok(fieldEntryMatch, "FieldEntry type declaration not found");
   const declaration = fieldEntryMatch[1];
-  // Allowed fields are exactly element / session_id / state.
-  const expectedFields = ["element", "session_id", "state"];
+  // DOM reference and UUID/state, an append-drain promise, and a sealed binding
+  // response are allowed. No plaintext or text-producing closures are allowed.
+  const expectedFields = ["element", "session_id", "state", "sending", "finish_binding"];
   const declaredFields = (declaration.match(/^\s*(\w+)\s*[:?]/gm) ?? [])
     .map((line) => line.trim().replace(/[:?].*$/, ""));
   assert.deepEqual(
@@ -284,6 +286,8 @@ test("FieldEntry type carries no text-bearing string field", async () => {
     expectedFields.sort(),
     `FieldEntry must declare exactly ${expectedFields.join(", ")} — extra fields invite retained-text leakage`,
   );
+  assert.match(declaration, /sending:\s*Promise<void>;/, "append draining cannot retain text results");
+  assert.match(declaration, /finish_binding\?:\s*ComputeBindingResponse;/, "only the sealed binding response may be cached");
   // Defense in depth: no `string` type or "() => string" closure type on the
   // entry. The session_id is typed `string | null` (UUID), but the bans below
   // catch standalone string types or closure-returning-string patterns.

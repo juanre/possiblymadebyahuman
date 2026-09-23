@@ -1028,18 +1028,20 @@ test("Emacs file buffers open at the same time keep independent sessions", { ski
   }
 });
 
-test("Emacs producer starts fresh, keeping the stale state, when a resumed session would exceed the 32-bit time bound", { skip: emacs ? false : "emacs binary not available" }, async () => {
+test("Emacs producer resumes and builds the same persisted session after a sixty-day pause", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-time-bound-"));
   const outputPath = join(temp, "bound.json");
   const scriptPath = join(temp, "bound.el");
   const documentPath = join(temp, "old.txt");
   const modePath = resolve("producers/emacs/pmbah-mode.el");
-  await writeFile(documentPath, "");
-  const thirtyDaysAgoMs = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  await writeFile(documentPath, "past");
+  const pauseMs = 60 * 24 * 60 * 60 * 1000;
+  const sixtyDaysAgoMs = Date.now() - pauseMs;
 
-  await writeFile(scriptPath, `;;; bound.el --- a session older than the time bound is retired -*- lexical-binding: t; -*-
+  await writeFile(scriptPath, `;;; bound.el --- a months-old session resumes with its original clock -*- lexical-binding: t; -*-
 (load ${JSON.stringify(modePath)})
 (setq pmbah-observe-process nil)
+(setq pmbah-helper-script ${JSON.stringify(resolve("producers/emacs/scripts/build-record.mjs"))})
 (setq pmbah-state-directory ${JSON.stringify(join(temp, "state/"))})
 (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
   (let ((path (pmbah--state-file)))
@@ -1047,14 +1049,17 @@ test("Emacs producer starts fresh, keeping the stale state, when a resumed sessi
     (with-temp-file path
       (insert (pmbah--json-encode
                (list :session_id "11111111-2222-4333-8444-555555555555"
-                     :session_start_ms ${thirtyDaysAgoMs}
+                     :session_start_ms ${sixtyDaysAgoMs}
                      :format_version pmbah-format-version
                      :events [(:seq 0 :t 0 :op "insert" :pos 0 :del_len 0 :ins_len 4 :source "typing")]
                      :observation (list :token nil :committed_event_count 0 :commitments [])))))
     (pmbah-mode 1)
+    (goto-char (point-max))
     (insert "new")
+    (pmbah--write-state)
     (let ((output (list :session pmbah--session-id
                         :event_count pmbah--next-seq
+                        :record (pmbah-build-record-for-current-buffer (list :surface "emacs"))
                         :first_t (plist-get (car (pmbah--session-events)) :t)
                         :state_file_exists (if (file-exists-p path) t :json-false)
                         :stale_file_exists (if (file-exists-p (concat path ".stale")) t :json-false))))
@@ -1068,12 +1073,18 @@ test("Emacs producer starts fresh, keeping the stale state, when a resumed sessi
     const result = await runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(await readFile(outputPath, "utf8"));
-    assert.notEqual(output.session, "11111111-2222-4333-8444-555555555555");
-    assert.equal(output.event_count, 1);
-    assert.ok(output.first_t < 60_000, "the fresh session's clock starts now");
-    assert.equal(output.state_file_exists, false);
-    assert.equal(output.stale_file_exists, true, "the old state is kept, not discarded");
-    assert.match(result.stderr, /stale/);
+    assert.equal(output.session, "11111111-2222-4333-8444-555555555555");
+    assert.equal(output.event_count, 2);
+    assert.equal(output.first_t, 0, "the existing history is unchanged");
+    assert.equal(output.state_file_exists, true);
+    assert.equal(output.stale_file_exists, false, "age alone must not retire a draft");
+    assert.equal(output.record.manifest.session_id, output.session);
+    assert.deepEqual(output.record.events[0], { seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 4, source: "typing" });
+    assert.ok(output.record.events[1].t >= pauseMs);
+    assert.ok(output.record.events[1].t < pauseMs + 60_000);
+    assert.ok(output.record.manifest.duration_ms >= output.record.events[1].t);
+    assert.equal(verifyRecord(output.record).valid, true);
+    assert.equal(JSON.stringify(output.record).includes("past"), false);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -1133,19 +1144,21 @@ test("Emacs state file follows the buffer when the visited file is renamed", { s
   }
 });
 
-test("Emacs producer retires a session whose duration passed the 32-bit bound instead of uploading it", { skip: emacs ? false : "emacs binary not available" }, async () => {
-  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-duration-bound-"));
+test("Emacs signs a sixty-day session and a backward clock correction cannot reorder edits", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-long-duration-"));
   const outputPath = join(temp, "duration.json");
   const scriptPath = join(temp, "duration.el");
   const documentPath = join(temp, "long.txt");
   const modePath = resolve("producers/emacs/pmbah-mode.el");
   await writeFile(documentPath, "");
-  const thirtyDaysAgo = Math.floor((Date.now() - 30 * 24 * 60 * 60 * 1000) / 1000);
+  const pauseMs = 60 * 24 * 60 * 60 * 1000;
+  const sixtyDaysAgoMs = Date.now() - pauseMs;
 
-  await writeFile(scriptPath, `;;; duration.el --- sign time honours the record clock bound -*- lexical-binding: t; -*-
+  await writeFile(scriptPath, `;;; duration.el --- long durations and backwards clocks remain signable -*- lexical-binding: t; -*-
 (require 'cl-lib)
 (load ${JSON.stringify(modePath)})
 (setq pmbah-observe-process nil)
+(setq pmbah-helper-script ${JSON.stringify(resolve("producers/emacs/scripts/build-record.mjs"))})
 (setq pmbah-state-directory ${JSON.stringify(join(temp, "state/"))})
 (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
   (text-mode)
@@ -1153,22 +1166,21 @@ test("Emacs producer retires a session whose duration passed the 32-bit bound in
   (insert "Long ago")
   (let ((session pmbah--session-id)
         (path (pmbah--state-file))
-        (signal-message nil)
         (uploaded nil))
+    (setq pmbah--session-start-time (seconds-to-time (/ ${sixtyDaysAgoMs} 1000.0)))
+    (insert " again")
     (pmbah--write-state)
-    ;; The session started 30 days ago; its duration no longer fits a record.
-    (setq pmbah--session-start-time (seconds-to-time ${thirtyDaysAgo}))
-    (cl-letf (((symbol-function 'pmbah--post-record)
-               (lambda (_body) (setq uploaded t) (list :url "https://example.test/never"))))
-      (condition-case error
-          (pmbah-sign-buffer (list :surface "emacs") t)
-        (user-error (setq signal-message (error-message-string error)))))
+    (let ((corrected-time (time-subtract (current-time) (seconds-to-time 3600))))
+      (cl-letf (((symbol-function 'current-time) (lambda () corrected-time))
+                ((symbol-function 'pmbah--post-record)
+                 (lambda (body) (setq uploaded body) '((url . "https://example.test/saved")))))
+        (insert "!")
+        (pmbah-sign-buffer (list :surface "emacs") t)))
     (with-temp-file ${JSON.stringify(outputPath)}
       (insert (pmbah--json-encode
-               (list :signal_message signal-message
-                     :uploaded (if uploaded t :json-false)
+               (list :original_session session
+                     :record uploaded
                      :same_session (if (equal session pmbah--session-id) t :json-false)
-                     :event_count pmbah--next-seq
                      :state_file_exists (if (file-exists-p path) t :json-false)
                      :stale_file_exists (if (file-exists-p (concat path ".stale")) t :json-false)))))
     (set-buffer-modified-p nil)
@@ -1179,12 +1191,17 @@ test("Emacs producer retires a session whose duration passed the 32-bit bound in
     const result = await runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const output = JSON.parse(await readFile(outputPath, "utf8"));
-    assert.equal(output.uploaded, false, "nothing is uploaded");
-    assert.match(output.signal_message, /clock/);
-    assert.equal(output.same_session, false, "a fresh session starts");
-    assert.equal(output.event_count, 0);
-    assert.equal(output.state_file_exists, false);
-    assert.equal(output.stale_file_exists, true, "the old session is kept as .stale");
+    assert.equal(output.record.manifest.session_id, output.original_session);
+    assert.equal(output.record.events.length, 3);
+    assert.ok(output.record.events[1].t >= pauseMs);
+    assert.ok(output.record.events[1].t < pauseMs + 60_000);
+    assert.equal(output.record.events[2].t, output.record.events[1].t, "clock rollback clamps to the last edit time");
+    assert.equal(output.record.manifest.duration_ms, output.record.events[2].t);
+    assert.equal(verifyRecord(output.record).valid, true);
+    assert.equal(output.same_session, false, "successful publication starts the next session");
+    assert.equal(output.state_file_exists, false, "published draft state is cleared");
+    assert.equal(output.stale_file_exists, false);
+    assert.equal(JSON.stringify(output.record).includes("Long ago"), false);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

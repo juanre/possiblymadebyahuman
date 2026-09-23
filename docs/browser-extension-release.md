@@ -6,7 +6,7 @@ browser producer core (`default-aaaa.29`) and the extension behaviour
 listing URL are owned by `default-aaaa.26`. The reconciled store-facing
 listing prep lives in `docs/chrome-web-store-prep.md`.
 
-Do not publish install links until Chrome Web Store approval produces a real URL.
+Do not publish a Chrome Web Store install link until approval produces a real URL. Reviewed ZIP releases may be linked as developer-mode sideloads.
 Do not commit store credentials, OAuth tokens, refresh tokens, real publisher
 account details, `.env*` files, source maps, or local build outputs.
 
@@ -92,8 +92,13 @@ human-approved repository tag:
 - Chrome Web Store uploads must use a version greater than any previously
   uploaded package for the same extension ID.
 
-A future release-hardening step may add an explicit tag/version check before
-`ship-tag` if the extension begins versioning independently.
+Extension-only review candidates use tags such as `extension-0.2.0-rc.1`. These
+do not match the production image workflow’s `v*` trigger. After checks on the
+exact commit, rebuild with the production `EXT_BASE_URL`, verify the endpoint and
+ZIP checksum, push the candidate tag and attach the ZIP to a GitHub prerelease.
+This delivers a sideload candidate without promoting a server image or claiming
+Gmail acceptance. Coordinated production releases continue to use reviewed `v*`
+tags and the release-image workflow.
 
 ## Chrome Web Store manual publishing path
 
@@ -179,17 +184,25 @@ references are:
   and `apps/browser-extension/src/lib/{adapters,dispatcher,messages,policy,
   descriptor,codepoint}.ts`.
 - Manifest permissions and host permissions: see the permission justification
-  table in `docs/chrome-web-store-prep.md`. Shipped: `["storage",
-  "clipboardWrite", "alarms"]` + `host_permissions: ["<all_urls>"]`.
+  table in `docs/chrome-web-store-prep.md`. Extension 0.2.1: `["storage",
+  "clipboardWrite", "alarms", "contextMenus", "sidePanel", "webNavigation"]` + `host_permissions: ["<all_urls>"]`.
 - Zip contents and entry names: see the bullet list above and
   `tests/browser-extension-package.test.mjs`.
-- Local retention/TTL: 3 days from last edit, swept hourly by
-  `chrome.alarms`. Producer-core `DEFAULT_TTL_MS`.
+- Local retention: no automatic expiry for extension drafts or saved links.
+  Startup/registration/hourly cleanup removes redundant uploaded events and
+  checkpoint credentials while preserving saved links. Explicit Resume retains
+  the original session clock across months; no automatic field reattachment.
+  Shared producer-core defaults and `/write` behavior remain unchanged.
+- Long-session service support requires migration `003_long_session_times.sql`,
+  widened time validation and removal of checkpoint expiry. Deploy the service
+  update before relying on the candidate for records longer than 24.86 days.
+  Existing timestamps already use `timestamptz`; only elapsed-time columns become
+  `bigint`. Prior migrations and public hashes remain unchanged.
 - Source-attribution and capability claims: producer identity declares
   `["timing", "source_attribution"]` because the InputEvent → Source map in
   `apps/browser-extension/src/lib/codepoint.ts` returns `unknown` on any
   ambiguous inputType rather than guessing.
-- Support matrix: see `apps/browser-extension/README.md#support-matrix`.
+- Support matrix: see `apps/browser-extension/README.md#support-and-remaining-manual-acceptance`.
   Chrome required; Chromium-family best-effort; Firefox documented incompat;
   Safari out of scope for v0.
 - Privacy/data-use answers: see "Data observed locally / Data stored or

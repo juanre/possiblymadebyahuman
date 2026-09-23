@@ -50,9 +50,10 @@ export class BackgroundDispatcher {
     return this.#initPromise;
   }
 
-  /** Drops expired unsigned captures and uploaded sessions past their grace period. */
+  /** Clears uploaded event logs after their grace period; drafts and saved links never expire. */
   async sweepExpired(): Promise<void> {
-    this.registry.sweep({ retain_uploaded_anchors: true });
+    if (this.registry.list().length === 0) return;
+    this.registry.sweep({ ttl_ms: Infinity, retain_uploaded_anchors: true });
     await this.registry.persist();
   }
 
@@ -60,12 +61,16 @@ export class BackgroundDispatcher {
     await this.ensureInitialised();
     try {
       switch (message.kind) {
+        case "start_focused_editor":
+        case "prepare_finish":
+        case "stop_session":
+          return { kind: "error", reason: "browser_routing_required" };
         case "register_field":
           return await this.#handleRegister(message);
         case "append_mutation":
           return this.#handleAppend(message);
         case "list_sessions":
-          return { kind: "list_sessions_result", sessions: this.registry.list().filter((session) => !session.continuation_anchor) };
+          return { kind: "list_sessions_result", sessions: this.registry.list() };
         case "sign_session":
           return await this.#handleSign(message);
         case "retry_failed_upload":
@@ -86,11 +91,25 @@ export class BackgroundDispatcher {
       tab_id: message.tab_id,
       frame_id: message.frame_id,
     };
+    if (message.resume_session_id) {
+      const existing = this.registry.get(message.resume_session_id);
+      if (!existing || existing.state !== "active" || existing.origin.origin !== origin.origin) {
+        return { kind: "error", reason: "This draft cannot be resumed in that site." };
+      }
+      const resumed = this.registry.resume(existing.session_id, origin, message.descriptor, { field_is_empty: message.field_is_empty });
+      await this.registry.persist();
+      return { kind: "register_field_result", result: { kind: "registered", session_id: resumed.session_id, certainty: "resumed" } };
+    }
+    if (message.share_session_id) {
+      const shared = this.registry.get(message.share_session_id);
+      if (!shared || shared.state !== "active" || shared.origin.origin !== origin.origin) return { kind: "error", reason: "shared_session_unavailable" };
+      return { kind: "register_field_result", result: { kind: "registered", session_id: shared.session_id, certainty: "resumed" } };
+    }
     const eligibility = isFieldEligible({
       origin,
       descriptor: message.descriptor,
       field_is_empty: message.field_is_empty,
-      existing_sessions: this.registry.list(),
+      existing_sessions: message.activation_id ? [] : this.registry.list(),
     });
     if (!eligibility.eligible) {
       return {
@@ -108,7 +127,7 @@ export class BackgroundDispatcher {
     const resumable = message.field_is_empty ? null : findResumableSession(origin, message.descriptor, this.registry.list());
     const session = resumable?.state === "uploaded"
       ? this.registry.continueFrom(resumable.session_id, { origin, descriptor: message.descriptor })
-      : this.registry.findOrCreate(origin, message.descriptor, capture);
+      : this.registry.findOrCreate(origin, message.descriptor, capture, { fresh: !!message.activation_id });
     void this.registry.persist();
     return {
       kind: "register_field_result",
@@ -137,6 +156,9 @@ export class BackgroundDispatcher {
   }
 
   async #handleSign(message: Extract<ContentToBackground, { kind: "sign_session" }>): Promise<BackgroundResponse> {
+    if (message.text_binding && this.registry.get(message.session_id)?.pending_observation_gap) {
+      return { kind: "error", reason: "This draft has no captured edits since it was resumed. Make an edit before including the current text, or publish only its earlier editing activity." };
+    }
     if (message.capture_context_redactions) {
       this.registry.redactCaptureContext(message.session_id, message.capture_context_redactions);
     }
@@ -166,6 +188,10 @@ export class BackgroundDispatcher {
       const observation = this.registry.getObservationEnvelope(session_id);
       const diverged = this.registry.getObservationState(session_id) === "diverged";
       this.registry.markUploading(session_id);
+      // Save the frozen events and binding before a request can reach the
+      // server. A terminated worker must retry this exact record, never offer
+      // its already-submitted session for further editing.
+      await this.registry.persist();
       const response = await this.#upload.postRecord({
         manifest: draft.manifest,
         events: draft.events,

@@ -1,86 +1,56 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>possiblymadebyahuman</title>
-    <style>
-      body {
-        min-width: 22rem;
-        max-width: 26rem;
-        margin: 0;
-        padding: 1rem;
-        font: 13px/1.45 system-ui, sans-serif;
-        color: #221b17;
-        background: #fbf8f2;
-      }
-      h1 { font: 600 14px/1.2 system-ui; margin: 0 0 .25rem; }
-      .lede { color: #6e665d; margin: 0 0 1rem; font-size: 12px; }
-      .empty { color: #6e665d; font-style: italic; padding: 1rem 0; }
-      .group-origin { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b5e34; margin: 1rem 0 .25rem; text-transform: lowercase; letter-spacing: 0.04em; }
-      .session {
-        border: 1px solid #eadfce;
-        border-radius: 12px;
-        background: #fffaf2;
-        padding: .6rem .75rem;
-        margin-bottom: .55rem;
-      }
-      .session-head { display: flex; align-items: baseline; gap: .5rem; }
-      .session-title { font-weight: 600; flex: 1; }
-      .session-state { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 6px; border-radius: 999px; background: #efe5d6; }
-      .session-state.recording { background: #d1e7c8; color: #1b5e20; }
-      .session-state.signing,
-      .session-state.uploading { background: #fdebc4; color: #6e5631; }
-      .session-state.uploaded { background: #d0e4ff; color: #1f3a73; }
-      .session-state.failed_upload { background: #ffd9d4; color: #872626; }
-      .session-meta { font-size: 11px; color: #6e665d; margin-top: .15rem; }
-      .session-actions { display: flex; gap: .4rem; margin-top: .5rem; }
-      button {
-        font: inherit;
-        background: #202124;
-        border: 0;
-        color: #fbf8f2;
-        padding: 4px 10px;
-        border-radius: 999px;
-        cursor: pointer;
-      }
-      button.secondary { background: transparent; color: #8b5e34; border: 1px solid #d8c8a6; }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
-      .sign-confirm {
-        background: #fffaf2;
-        border: 1px solid #d9c8ad;
-        border-radius: 10px;
-        padding: 10px 12px;
-        margin-bottom: .6rem;
-        display: grid;
-        gap: .4rem;
-      }
-      .sign-affirm { font-weight: 700; color: #202124; margin: 0; }
-      .sign-confirm label { display: flex; align-items: flex-start; gap: .4rem; }
-      .sign-note { color: #756b60; margin: 0; font-size: .85em; }
-      .sign-context-value { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
-      .sign-label-row { align-items: center; }
-      .sign-label { flex: 1; font: inherit; padding: 2px 6px; border: 1px solid #d8c8a6; border-radius: 6px; background: #fff; }
-      .toast {
-        position: fixed;
-        left: 0; right: 0; bottom: 0;
-        background: #202124;
-        color: #fbf8f2;
-        padding: .6rem 1rem;
-        font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
-        text-align: center;
-      }
-      .toast.error { background: #872626; }
-      .footer { color: #6e665d; font-size: 11px; margin-top: 1rem; }
-      .footer a { color: #8b5e34; }
-    </style>
-  </head>
-  <body>
-    <h1>possiblymadebyahuman</h1>
-    <p class="lede">Content-blind writing record. Sign per-field; no text leaves your device.</p>
-    <section id="app" aria-live="polite"></section>
-    <div id="toast" role="status" aria-live="polite" hidden></div>
-    <p class="footer">Captures textareas, plain text inputs, and (with unknown positions) rich-text editors. A field that already had text when first seen is marked "not recording"; clear it, or keep editing a field you signed here before, to record.</p>
-    <script type="module" src="popup.js"></script>
-  </body>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PMBAH · Writing records</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 1rem; font: 14px/1.5 system-ui, sans-serif; color: #221b17; background: #fbf8f2; }
+    h1 { font-size: 18px; margin: 0; }
+    h2 { font-size: 16px; margin: 0 0 .6rem; }
+    p { margin: .5rem 0; }
+    .lede, .note, .session-meta, .footer { color: #62594e; font-size: 13px; }
+    .intro { border-bottom: 1px solid #d8c8a6; padding-bottom: 1rem; margin-bottom: 1rem; }
+    article, .sign-confirm, .saved-result { border: 1px solid #d8c8a6; border-radius: 10px; background: #fffdf8; padding: .8rem; margin: .8rem 0; }
+    article.selected { border: 2px solid #315b39; }
+    .session-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; }
+    .session-title { font-weight: 600; overflow-wrap: anywhere; }
+    .session-state { color: #315b39; }
+    .session-meta, .sign-context-value { overflow-wrap: anywhere; }
+    .session-actions { display: flex; gap: .5rem; flex-wrap: wrap; margin-top: .7rem; }
+    button, .button { font: inherit; border: 1px solid #202124; background: #202124; color: #fff; border-radius: 6px; padding: .45rem .65rem; cursor: pointer; text-decoration: none; }
+    button.secondary, .button.secondary { background: #fffdf8; color: #403526; border-color: #b8a787; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    :focus-visible { outline: 3px solid #386cb0; outline-offset: 3px; }
+    label { display: flex; align-items: flex-start; gap: .45rem; margin: .6rem 0; }
+    input[type=checkbox] { margin-top: .35rem; flex-shrink: 0; }
+    input[type=text], input[type=url] { width: 100%; min-width: 0; font: inherit; border: 1px solid #b8a787; border-radius: 5px; padding: .45rem; background: white; color: #221b17; }
+    .sign-label-row { display: block; }
+    .notice { border-left: 3px solid #315b39; padding: .7rem; margin: .8rem 0; background: #eaf0e7; overflow-wrap: anywhere; }
+    .notice.error { border-color: #872626; background: #fff0ed; color: #652424; }
+    .notice:empty { display: none; }
+    .sign-note { font-size: 13px; }
+    .saved-result { border-color: #315b39; }
+    a { color: #285c91; }
+    .footer { border-top: 1px solid #d8c8a6; margin-top: 1.5rem; padding-top: .8rem; }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <h1>PMBAH · Writing records</h1>
+  <p class="lede">Choose an editor before starting. The record contains editing measurements, not your words.</p>
+  <section class="intro" aria-labelledby="start-title">
+    <h2 id="start-title">Start in an editor</h2>
+    <p class="note">Right-click an empty editor and choose “Start writing record”. Or focus the editor, then use the button below. Opening this panel does not start anything.</p>
+    <button id="start">Start in focused editor</button>
+    <label id="share-option" hidden><input type="checkbox" id="share" /> This is the same document as the selected active draft. Share its writing record.</label>
+    <p class="note">Keyboard alternative: focus the editor, then press Alt+Shift+W to start its writing record and open this panel. You can change the shortcut in Chrome’s extension settings.</p>
+  </section>
+  <p id="toast" class="notice" role="status" aria-live="polite" hidden></p>
+  <section id="review" aria-label="Review before publishing"></section>
+  <section id="app" aria-label="Your writing records"></section>
+  <p class="footer">Checkpoints send edit measurements while a chosen draft is active. Finishing stops capture. A saved public record cannot be deleted here. <a href="https://possiblymadebyahuman.com/docs/privacy/" target="_blank" rel="noopener">Privacy details</a></p>
+  <script type="module" src="popup.js"></script>
+</body>
 </html>

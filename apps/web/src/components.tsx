@@ -1,7 +1,7 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDelayMs, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
+import { buildActivityBins, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDelayMs, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 export function DisclaimerBanner() {
@@ -23,8 +23,10 @@ function recordTimingWindow(record: RecordApiResponse): { began: string; ended: 
   const ingested = record.manifest.ingested_server_t;
   if (ingested) {
     const ended = new Date(ingested).getTime();
+    const began = new Date(ended - record.manifest.duration_ms);
+    if (!Number.isFinite(ended) || !Number.isFinite(began.getTime())) return null;
     return {
-      began: new Date(ended - record.manifest.duration_ms).toISOString(),
+      began: began.toISOString(),
       ended: new Date(ended).toISOString(),
       estimated: true,
     };
@@ -144,6 +146,8 @@ function sourceFill(source: string): string {
 }
 
 function formatTimelineTick(seconds: number): string {
+  if (seconds >= 86400) return `${Math.floor(seconds / 86400)}d ${Math.floor(seconds / 3600) % 24}h`;
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds / 60) % 60}m`;
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return s === 0 ? `${m}:00` : `${m}:${String(s).padStart(2, "0")}`;
@@ -159,12 +163,14 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const lengthKnown = knownPoints.length > 0;
   const lengthKnownThroughout = points.length > 0 && firstUnknown === -1;
   const maxLength = timelineLengthScale(points, record.stats.observed_final_length);
-  const observedDurationMs = record.manifest.duration_ms || (points.length > 0 ? points[points.length - 1]!.t : 0);
+  const observedDurationMs = Math.max(record.manifest.duration_ms, points.at(-1)?.t ?? 0);
   const duration = Math.max(1, observedDurationMs);
   const [chartRef, chartW] = useContentWidth<SVGSVGElement>(TIMELINE_FALLBACK_W);
   const plotW = Math.max(1, chartW - TIMELINE_PAD_L - TIMELINE_PAD_R);
   const plotH = TIMELINE_VB_H - TIMELINE_PAD_T - TIMELINE_PAD_B;
   const baseline = TIMELINE_PAD_T + plotH;
+  const activity = buildActivityBins(record.events, duration, Math.floor(plotW / 10));
+  const maxActivity = activity.reduce((max, bin) => Math.max(max, bin.count), 1);
   const tx = (t: number) => TIMELINE_PAD_L + (Math.min(duration, Math.max(0, t)) / duration) * plotW;
   const ly = (len: number) => baseline - (Math.min(maxLength, Math.max(0, len)) / maxLength) * plotH;
   // With no inferable length there is no curve; markers sit on a neutral mid line.
@@ -213,12 +219,14 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   return (
     <section className="card timeline-card">
       <h2>Edit timeline</h2>
-      {lengthKnownThroughout ? (
+      {points.length === 0 ? (
+        <p className="muted">No edit events were included in this record.</p>
+      ) : lengthKnownThroughout ? (
         <p className="muted">Document length over time. Pastes, cuts, and large inserts are marked on the curve; shaded bands are long pauses. Steady typing is the rising line itself.</p>
       ) : lengthKnown ? (
-        <p className="muted">Document length over time, up to edit {knownPoints.length} of {points.length}. From there the length is unknown: an edit with no recorded position (an undo, for example) means the events alone cannot say how long the document was. Pastes, cuts, and large inserts stay marked in time; shaded bands are long pauses.</p>
+        <p className="muted">Document length over time, up to edit {knownPoints.length} of {points.length}. Later events lack enough measurements to reconstruct length. Editing activity remains visible below; shaded bands mark long pauses.</p>
       ) : (
-        <p className="muted">Document length is unknown for this record: the capture started inside existing text, or an early edit had no recorded position, so the events alone cannot say how long the document was. Pastes, cuts, and large inserts are marked in time; shaded bands are long pauses.</p>
+        <p className="muted">Document length is unknown because this record lacks enough measurements to reconstruct it. The bars show when edits happened and how many were captured, not document length. Shaded bands mark long pauses.</p>
       )}
       <svg ref={chartRef} className="timeline-chart" viewBox={`0 0 ${chartW} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
         {pauseSpans.map((point) => {
@@ -227,9 +235,20 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
           const width = Math.max(2, tx(point.t) - x);
           return <rect key={`pause-${point.seq}`} x={x} y={TIMELINE_PAD_T} width={width} height={plotH} fill="#ead9b8" opacity={0.45} />;
         })}
+        {!lengthKnown && activity.filter(bin => bin.count > 0).map(bin => {
+          const height = Math.max(3, bin.count / maxActivity * plotH);
+          return <rect className="activity-bar" key={bin.start} x={tx(bin.start)} y={baseline - height}
+            width={Math.max(1, tx(bin.end) - tx(bin.start) - 1)} height={height} fill="#769bc7">
+            <title>{`${bin.count} edit${bin.count === 1 ? "" : "s"} · ${formatDuration(bin.start)}–${formatDuration(bin.end)}`}</title>
+          </rect>;
+        })}
+        {!lengthKnown && points.length > 0 && <text x={TIMELINE_PAD_L} y={TIMELINE_PAD_T - 10} fontSize={11} fill="#514a40">edits per interval · peak {maxActivity}</text>}
         <line x1={TIMELINE_PAD_L} y1={baseline} x2={chartW - TIMELINE_PAD_R} y2={baseline} stroke="#d8c8a6" strokeWidth={0.6} />
         {lengthKnown ? <path className="length-area" d={areaPath} fill="rgba(139, 94, 52, 0.18)" stroke="none" /> : null}
         {lengthKnown ? <path className="length-curve" d={linePath} fill="none" stroke="#8b5e34" strokeWidth={1.2} strokeLinejoin="round" strokeLinecap="round" /> : null}
+        {knownPoints.length === 1 && !notable.some(point => point.seq === knownPoints[0]!.seq) && <circle className="length-single" cx={tx(knownPoints[0]!.t)} cy={ly(knownPoints[0]!.documentLength ?? 0)} r={3} fill="#8b5e34">
+          <title>{`${knownPoints[0]!.documentLength} codepoints after the first edit`}</title>
+        </circle>}
         {notable.map((point) => {
           const x = tx(point.t);
           const y = markerY(point);
@@ -253,7 +272,20 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
         })}
         <text x={chartW - TIMELINE_PAD_R} y={baseline + 34} fontSize={10} fill="#a89a82" fontFamily="ui-monospace, monospace" textAnchor="end">time →</text>
       </svg>
+      {lengthKnown && !lengthKnownThroughout && <div className="activity-strip" aria-label="Editing activity for the complete record">
+        <p className="muted">All {points.length} edits over time — bar height is the number of edits per interval.</p>
+        <svg viewBox={`0 0 ${chartW} 56`} role="img" aria-label="Edit counts over time">
+          {activity.filter(bin => bin.count > 0).map(bin => {
+            const height = Math.max(3, bin.count / maxActivity * 48);
+            return <rect className="activity-bar" key={bin.start} x={tx(bin.start)} y={52 - height}
+              width={Math.max(1, tx(bin.end) - tx(bin.start) - 1)} height={height} fill="#769bc7">
+              <title>{`${bin.count} edits · ${formatDuration(bin.start)}–${formatDuration(bin.end)}`}</title>
+            </rect>;
+          })}
+        </svg>
+      </div>}
       <div className="legend">
+        {!lengthKnown && points.length > 0 && <span>bar height: edits per interval</span>}
         {lengthKnown && <><span className="dot curve" /> document length{" "}</>}
         {notableSources.has("paste") && <><span className="dot source-paste" /> paste </>}
         {notableSources.has("drop") && <><span className="dot source-drop" /> drop </>}
@@ -661,10 +693,10 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   );
 }
 
-export function RecordSignet({ record }: { record: RecordApiResponse }) {
-  const bound = !!record.manifest.text_binding;
+export function RecordSignet({ record }: { record?: RecordApiResponse }) {
+  const bound = !!record?.manifest.text_binding;
   return (
-    <header className="signet">
+    <header className={`signet${record ? "" : " signet-loading"}`}>
       <p className="eyebrow"><a className="eyebrow-home" href="/">← possiblymadebyahuman</a></p>
       <div className="signet-head">
         <span className="signet-seal" aria-hidden="true">
@@ -675,9 +707,9 @@ export function RecordSignet({ record }: { record: RecordApiResponse }) {
           </svg>
         </span>
         <div className="signet-titles">
-          <h1>Signed writing record</h1>
+          <h1 aria-label={record ? undefined : "Loading writing record"}><span aria-hidden={!record}>Signed writing record</span></h1>
           <p className="signet-scope">This shows the shape of a writing process. It is not a human/AI score or verdict.</p>
-          <p className="signet-statement">
+          <p className="signet-statement" aria-hidden={!record}>
             Signs the <strong>shape of the writing process</strong>
             {bound ? <> and a commitment to the <strong>wording the signer selected</strong></> : null}.
           </p>
@@ -706,10 +738,11 @@ export function RecordFooter() {
   );
 }
 
-export function RecordPage({ record }: { record: RecordApiResponse }) {
+export function RecordPage({ record }: { record?: RecordApiResponse }) {
   return (
     <main className="page-shell record-page">
       <RecordSignet record={record} />
+      {record ? <>
       <TimingFingerprint record={record} />
       <TextBindingSection record={record} />
       <CaptureContextSummary record={record} />
@@ -718,6 +751,11 @@ export function RecordPage({ record }: { record: RecordApiResponse }) {
       <SignalList signals={record.signals} />
       <VerificationPanel record={record} />
       <DisclaimerBanner />
+      </> : <div className="record-loading" aria-busy="true">
+        <p role="status">Loading writing record…</p>
+        <div className="card record-skeleton" aria-hidden="true" />
+        <div className="card record-skeleton" aria-hidden="true" />
+      </div>}
       <RecordFooter />
     </main>
   );

@@ -108,6 +108,8 @@ export type ObservationEnvelope = {
 };
 
 export type SessionRecord = {
+  /** First real edit after explicit reattachment cannot infer continuity across the uncaptured gap. */
+  pending_observation_gap?: boolean;
   session_id: SessionId;
   format_version: FormatVersion;
   base_wall_ms: number;

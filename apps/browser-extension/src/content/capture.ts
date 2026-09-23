@@ -1,10 +1,10 @@
+import { measureRichText, richMutation, type RichChange } from "../lib/richtext.ts";
 import {
   buildTextFieldMutation,
   codepointCount,
   codepointOffsetOf,
   collapsedDeletionMutation,
   compositionMutation,
-  contentEditableInsertedCodepoints,
   insertedCodepointsForInput,
   isDeletionInputType,
   isNetChangeInputType,
@@ -14,7 +14,6 @@ import {
 } from "../lib/codepoint.ts";
 import { extractDescriptor, isEligibleTag } from "../lib/descriptor.ts";
 import {
-  isComputeBindingRequest,
   type BackgroundResponse,
   type ComputeBindingResponse,
   type ContentToBackground,
@@ -42,13 +41,21 @@ type FieldEntry = {
   element: HTMLElement;
   session_id: string | null;
   state: "pending" | "recording" | "ineligible" | "signed" | "error";
+  sending: Promise<void>;
+  finish_binding?: ComputeBindingResponse;
 };
 
-const BADGE_ATTR = "data-pmbah-badge";
-const SESSION_ATTR = "data-pmbah-session";
-const STATE_ATTR = "data-pmbah-state";
-
+// Element/session references are private to this isolated world; nothing is
+// injected into the host page, including attributes or floating controls.
 const fields = new WeakMap<HTMLElement, FieldEntry>();
+const activeEntries = new Set<WeakRef<FieldEntry>>();
+function entries(): FieldEntry[] {
+  const result: FieldEntry[] = [];
+  for (const ref of activeEntries) { const entry = ref.deref(); if (entry) result.push(entry); else activeEntries.delete(ref); }
+  return result;
+}
+let contextTarget: WeakRef<HTMLElement> | null = null;
+let focusedTarget: WeakRef<HTMLElement> | null = null;
 
 // Numeric-only state that has to survive from one DOM event to the next: the
 // field's codepoint length before a change whose size is only measurable after
@@ -60,7 +67,11 @@ type MeasuredChangeKind = "deletion" | "net_change" | "replacement";
 type FieldTransient = {
   pending: PendingMutation | null;
   measuring: { length_before: number; ins_len: number | null; kind: MeasuredChangeKind; source: Source } | null;
-  composition: { pos: number | null; del_len: number | null } | null;
+  composition: { pos: number | null; del_len: number | null; rich?: RichChange } | null;
+  rich_before: RichChange | null;
+  rich_length: number | null;
+  rich_gap: boolean;
+  cycle: number;
   queue: PendingMutation[];
 };
 
@@ -70,10 +81,23 @@ const listening = new WeakSet<HTMLElement>();
 function transientFor(element: HTMLElement): FieldTransient {
   let transient = transients.get(element);
   if (!transient) {
-    transient = { pending: null, measuring: null, composition: null, queue: [] };
+    transient = { pending: null, measuring: null, composition: null, rich_before: null, rich_length: null, rich_gap: false, cycle: 0, queue: [] };
     transients.set(element, transient);
   }
   return transient;
+}
+
+// beforeinput may be canceled, or a no-op delete may never produce input.
+// Expire only numeric metadata after that browser task, so finish does not
+// mistake an abandoned cycle for an edit in progress. New cycles supersede it.
+function expireCaptureCycle(transient: FieldTransient): void {
+  const cycle = ++transient.cycle;
+  setTimeout(() => {
+    if (transient.cycle !== cycle) return;
+    transient.pending = null;
+    transient.measuring = null;
+    transient.rich_before = null;
+  }, 0);
 }
 
 function isTextField(element: Element): element is HTMLTextAreaElement | HTMLInputElement {
@@ -119,122 +143,47 @@ function parentSlice(element: HTMLElement | null): ParentSliceLike | null {
 // reference dies when this function returns; only the boolean leaves the call.
 function isFieldEmpty(element: HTMLElement): boolean {
   if (isTextField(element)) return element.value.length === 0;
-  if (isContentEditable(element)) return (element.textContent ?? "").trim().length === 0;
+  if (isContentEditable(element)) return measureRichText(element).length === 0;
   return true;
 }
 
-function ensureBadge(element: HTMLElement): HTMLElement {
-  const existing = element.getAttribute(BADGE_ATTR);
-  if (existing) {
-    const found = document.querySelector(`[id="${existing}"]`);
-    if (found) return found as HTMLElement;
-  }
-  const id = `pmbah-badge-${Math.random().toString(36).slice(2, 10)}`;
-  element.setAttribute(BADGE_ATTR, id);
-  const badge = document.createElement("div");
-  badge.id = id;
-  badge.setAttribute("role", "status");
-  badge.setAttribute("aria-live", "polite");
-  badge.style.cssText = [
-    "position:absolute",
-    "z-index:2147483647",
-    "padding:2px 8px",
-    "font:11px ui-monospace, SFMono-Regular, Menlo, monospace",
-    "background:#202124",
-    "color:#fbf8f2",
-    "border-radius:999px",
-    "pointer-events:none",
-    "opacity:0.92",
-  ].join(";");
-  badge.textContent = "pending";
-  document.body.appendChild(badge);
-  positionBadge(element, badge);
-  return badge;
-}
-
-function positionBadge(element: HTMLElement, badge: HTMLElement): void {
-  const rect = element.getBoundingClientRect();
-  const top = window.scrollY + rect.top - 16;
-  const left = window.scrollX + rect.right - badge.offsetWidth - 4;
-  badge.style.top = `${Math.max(0, top)}px`;
-  badge.style.left = `${Math.max(0, left)}px`;
-}
-
-function setBadge(element: HTMLElement, state: FieldEntry["state"], note?: string): void {
-  const badge = ensureBadge(element);
-  element.setAttribute(STATE_ATTR, state);
-  badge.textContent = stateLabel(state, note);
-  badge.style.background = badgeColor(state);
-  positionBadge(element, badge);
-}
-
-function stateLabel(state: FieldEntry["state"], note?: string): string {
-  switch (state) {
-    case "pending": return "pending";
-    case "recording": return note ?? "recording";
-    case "ineligible": return "not recording (existing content)";
-    case "signed": return "signed";
-    case "error": return note ?? "error";
-  }
-}
-
-function badgeColor(state: FieldEntry["state"]): string {
-  switch (state) {
-    case "recording": return "#1b5e20";
-    case "ineligible": return "#5a432a";
-    case "signed": return "#2f80ed";
-    case "error": return "#a12a2a";
-    default: return "#202124";
-  }
-}
-
-async function registerField(element: HTMLElement): Promise<void> {
+async function registerField(element: HTMLElement, activation_id: string, share_session_id?: string, resume_session_id?: string): Promise<BackgroundResponse> {
   const known = fields.get(element);
-  // A field that was ineligible (it had content) or errored is re-evaluated on
-  // focus: it may be empty now, or its uploaded session may be resumable.
-  if (known && known.state !== "ineligible" && known.state !== "error") return;
-  if (!isEligibleElement(element)) return;
+  if (known?.state === "recording" && resume_session_id && known.session_id !== resume_session_id) return { kind: "start_editor_result", reason: "This editor already has an active draft. Stop it first." };
+  if (known?.state === "recording") return { kind: "start_editor_result", session_id: known.session_id! };
+  if (known?.state === "pending") return { kind: "start_editor_result", reason: "Start is already in progress." };
+  if (!element.isConnected || !isEligibleElement(element)) return { kind: "start_editor_result", reason: "Choose an editable text field first." };
   const descriptor = extractDescriptor({
     tagName: element.tagName,
     getAttribute: (name) => element.getAttribute(name),
     closest: (selector) => element.closest(selector) as { getAttribute(name: string): string | null } | null,
     parentElement: parentSlice(element),
   });
-  const empty = isFieldEmpty(element);
-  setBadge(element, "pending");
-  const entry: FieldEntry = { element, session_id: null, state: "pending" };
+  for (const ref of activeEntries) if (ref.deref() === known) activeEntries.delete(ref);
+  const entry: FieldEntry = { element, session_id: null, state: "pending", sending: Promise.resolve() };
   fields.set(element, entry);
-
-  const response = await chrome.runtime.sendMessage({
-    kind: "register_field",
-    tab_id: -1,
-    frame_id: -1,
-    origin_url: window.location.origin,
-    page_path: window.location.pathname,
-    page_title: document.title,
-    descriptor,
-    field_is_empty: empty,
-  });
-
+  const entryRef = new WeakRef(entry);
+  activeEntries.add(entryRef);
+  transients.delete(element);
   const transient = transientFor(element);
-  if (response.kind !== "register_field_result") {
-    setBadge(element, "error", `register_failed:${response.kind === "error" ? response.reason : "unexpected"}`);
+  transient.rich_length = isContentEditable(element) ? measureRichText(element).length : null;
+  attachListeners(element);
+  const response = await chrome.runtime.sendMessage({
+    kind: "register_field", tab_id: -1, frame_id: -1,
+    origin_url: window.location.origin, page_path: window.location.pathname,
+    page_title: document.title, descriptor, field_is_empty: isFieldEmpty(element),
+    activation_id, ...(share_session_id ? { share_session_id } : {}), ...(resume_session_id ? { resume_session_id } : {}),
+  }).catch((error): BackgroundResponse => ({ kind: "error", reason: `The editor could not be started. ${String(error)}` }));
+  if (response.kind !== "register_field_result" || response.result.kind !== "registered") {
     entry.state = "error";
     transient.queue.length = 0;
-    return;
-  }
-  if (response.result.kind === "ineligible") {
-    setBadge(element, "ineligible");
-    entry.state = "ineligible";
-    transient.queue.length = 0;
-    return;
+    activeEntries.delete(entryRef);
+    return { kind: "start_editor_result", reason: response.kind === "error" ? response.reason : "Start in an empty editor. Existing text is not imported into a writing record." };
   }
   entry.session_id = response.result.session_id;
-  element.setAttribute(SESSION_ATTR, response.result.session_id);
-  setBadge(element, "recording", response.result.certainty === "fresh" ? "recording" : `recording (${response.result.certainty})`);
-  // Send the queued mutations before accepting live ones so order is kept.
   for (const mutation of transient.queue.splice(0)) void sendMutation(entry, mutation);
   entry.state = "recording";
+  return { kind: "start_editor_result", session_id: entry.session_id };
 }
 
 /**
@@ -260,6 +209,8 @@ function handleBeforeInput(event: InputEvent): void {
   // its stale measurement must not be applied to this change.
   transient.measuring = null;
   transient.pending = null;
+  transient.rich_before = null;
+  expireCaptureCycle(transient);
   // Composition keystrokes are recorded once, at compositionend.
   if (transient.composition) return;
   const inputType = event.inputType ?? null;
@@ -296,25 +247,14 @@ function handleBeforeInput(event: InputEvent): void {
     return;
   }
 
-  // ContentEditable: degraded. Positions are never fabricated. Deletions and
-  // undo/redo/formatting are sized from the editor's text length before and
-  // after; insertions from event.data or the transferred clipboard/drag text.
-  if (isDeletionInputType(inputType) || isNetChangeInputType(inputType)) {
-    transient.measuring = {
-      length_before: codepointCount(target.textContent ?? ""),
-      ins_len: null,
-      kind: isDeletionInputType(inputType) ? "deletion" : "net_change",
-      source: sourceFromInputType(inputType),
-    };
-    return;
-  }
-  const transferred = event.dataTransfer?.getData("text/plain") ?? null;
-  transient.pending = {
-    op: "insert",
-    pos: null,
-    del_len: null,
-    ins_len: contentEditableInsertedCodepoints(inputType, event.data, transferred),
+  const ranges = event.getTargetRanges?.() ?? [];
+  const before = measureRichText(target, ranges.length === 1 ? ranges[0] : undefined);
+  transient.rich_gap = transient.rich_length !== null && before.length !== transient.rich_length;
+  transient.rich_before = {
+    ...before,
     source: sourceFromInputType(inputType),
+    kind: inputType?.startsWith("format") ? "format" : inputType?.startsWith("history") ? "history"
+      : isDeletionInputType(inputType) ? "delete" : inputType?.startsWith("insert") ? "insert" : "unknown",
   };
 }
 
@@ -326,7 +266,18 @@ function handleInput(event: Event): void {
   if (!target || !(target instanceof HTMLElement)) return;
   const entry = fields.get(target);
   const transient = transients.get(target);
-  if (!entry || !transient || transient.composition) return;
+  if (!entry || !transient || transient.composition || (entry.state !== "recording" && entry.state !== "pending")) return;
+  if (!isTextField(target)) {
+    const after = measureRichText(target);
+    if (transient.rich_gap) queueOrSend(entry, { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
+    const mutation = transient.rich_before ? richMutation(transient.rich_before, after)
+      : { op: "replace" as const, pos: null, del_len: null, ins_len: null, source: "unknown" as const };
+    transient.rich_before = null;
+    transient.rich_gap = false;
+    transient.rich_length = after.length;
+    if (mutation) queueOrSend(entry, mutation);
+    return;
+  }
   if (transient.pending) {
     const mutation = transient.pending;
     transient.pending = null;
@@ -349,11 +300,6 @@ function handleInput(event: Event): void {
     return;
   }
 
-  const lengthAfter = codepointCount(target.textContent ?? "");
-  const mutation = netLengthChangeMutation({ lengthBefore: length_before, lengthAfter });
-  if (!mutation) return;
-  if (kind === "deletion") mutation.source = source;
-  queueOrSend(entry, mutation);
 }
 
 function handleCompositionStart(event: CompositionEvent): void {
@@ -371,7 +317,14 @@ function handleCompositionStart(event: CompositionEvent): void {
     };
     return;
   }
-  transient.composition = { pos: null, del_len: null };
+  const before = measureRichText(target);
+  transient.rich_gap = transient.rich_length !== null && before.length !== transient.rich_length;
+  transient.rich_before = null;
+  transient.composition = {
+    pos: before.start,
+    del_len: before.start !== null && before.end !== null ? before.end - before.start : null,
+    rich: { ...before, source: "ime", kind: "insert" },
+  };
 }
 
 function handleCompositionEnd(event: CompositionEvent): void {
@@ -379,10 +332,17 @@ function handleCompositionEnd(event: CompositionEvent): void {
   if (!target || !(target instanceof HTMLElement)) return;
   const entry = fields.get(target);
   const transient = transients.get(target);
-  if (!entry || !transient?.composition) return;
+  if (!entry || !transient?.composition || (entry.state !== "recording" && entry.state !== "pending")) return;
   const composition = transient.composition;
   transient.composition = null;
-  const mutation = compositionMutation({ ...composition, committedText: event.data ?? "" });
+  let mutation: PendingMutation | null;
+  if (composition.rich) {
+    const after = measureRichText(target);
+    if (transient.rich_gap) queueOrSend(entry, { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
+    mutation = richMutation(composition.rich, after);
+    transient.rich_length = after.length;
+    transient.rich_gap = false;
+  } else mutation = compositionMutation({ ...composition, committedText: event.data ?? "" });
   if (mutation) queueOrSend(entry, mutation);
 }
 
@@ -390,6 +350,7 @@ function handleCompositionEnd(event: CompositionEvent): void {
 // service worker may be cold-starting) are held as numeric shapes and flushed
 // once the session id arrives, so the first keystrokes are not lost.
 function queueOrSend(entry: FieldEntry, mutation: PendingMutation): void {
+  if (entry.state !== "recording" && entry.state !== "pending") return;
   if (entry.state === "pending") {
     transientFor(entry.element).queue.push(mutation);
     return;
@@ -408,54 +369,64 @@ function ambiguousMutation(insertedText: string, inputType: string | null): Pend
   };
 }
 
-async function sendMutation(entry: FieldEntry, mutation: PendingMutation): Promise<void> {
-  if (!entry.session_id) return;
-  const response = await chrome.runtime.sendMessage({
-    kind: "append_mutation",
-    session_id: entry.session_id,
-    mutation,
+function sendMutation(entry: FieldEntry, mutation: PendingMutation): Promise<void> {
+  entry.sending = entry.sending.then(async () => {
+    if (!entry.session_id) return;
+    const response = await chrome.runtime.sendMessage({ kind: "append_mutation", session_id: entry.session_id, mutation });
+    if (response.kind === "error") { entry.state = "error"; throw new Error(response.reason); }
   });
-  if (response.kind === "error") {
-    setBadge(entry.element, "error", response.reason);
-    entry.state = "error";
-    return;
-  }
-  if (response.kind === "append_mutation_result" && response.session_id && response.session_id !== entry.session_id) {
-    entry.session_id = response.session_id;
-    entry.element.setAttribute(SESSION_ATTR, response.session_id);
-    setBadge(entry.element, "recording", "recording (continues a signed record)");
-  }
+  // Retain the rejection for finish/flush, while handling it here to avoid an
+  // unhandled rejection when capture is sending without an open panel.
+  void entry.sending.catch(() => { entry.state = "error"; });
+  return entry.sending;
 }
 
 function attachListeners(element: HTMLElement): void {
-  // DOM re-parenting re-runs the scan; a field gets one set of listeners.
   if (listening.has(element)) return;
   listening.add(element);
-  element.addEventListener("focus", () => {
-    void registerField(element);
-  });
-  element.addEventListener("beforeinput", (event) => {
-    handleBeforeInput(event as InputEvent);
-  });
+  element.addEventListener("beforeinput", (event) => handleBeforeInput(event as InputEvent));
   element.addEventListener("input", handleInput);
-  element.addEventListener("blur", () => {
-    const transient = transients.get(element);
-    if (transient) { transient.measuring = null; transient.pending = null; }
-  });
-  element.addEventListener("compositionstart", (event) => {
-    handleCompositionStart(event as CompositionEvent);
-  });
-  element.addEventListener("compositionend", (event) => {
-    handleCompositionEnd(event as CompositionEvent);
-  });
+  element.addEventListener("compositionstart", (event) => handleCompositionStart(event as CompositionEvent));
+  element.addEventListener("compositionend", (event) => handleCompositionEnd(event as CompositionEvent));
 }
 
-function scan(root: ParentNode): void {
-  if (root instanceof HTMLElement && isEligibleElement(root)) attachListeners(root);
-  const fieldsList = root.querySelectorAll("textarea, input, [contenteditable]");
-  for (const el of Array.from(fieldsList) as HTMLElement[]) {
-    if (isEligibleElement(el)) attachListeners(el);
+function editorFor(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof HTMLElement)) return null;
+  if (isTextField(target)) return isEligibleElement(target) ? target : null;
+  if (!target.isContentEditable) return null;
+  let root = target;
+  while (root.parentElement?.isContentEditable) root = root.parentElement;
+  return root;
+}
+
+async function freezeSession(session_id: string, bind = false): Promise<ComputeBindingResponse> {
+  const entry = entries().find((candidate) => candidate.session_id === session_id);
+  if (!entry) return { kind: "binding_error", reason: "The selected editor is no longer available." };
+  if (entry.finish_binding) return entry.finish_binding;
+  const transient = transients.get(entry.element);
+  const wasError = entry.state === "error";
+  entry.state = "signed"; // Terminal locally: never pretend to capture edits after finish/stop.
+  let result: ComputeBindingResponse;
+  // A runtime message cannot interrupt the browser's synchronous
+  // beforeinput/default-action/input transaction. Leftover numeric metadata
+  // therefore describes an unconfirmed/canceled edit, not one in flight.
+  // A framework edit applied asynchronously after this finish is outside the
+  // stopped record. Only IME composition actually spans browser tasks.
+  if (wasError || transient?.composition) {
+    result = { kind: "binding_error", reason: "An edit was still incomplete. The record has stopped; a text binding is unavailable." };
+  } else if (!entry.element.isConnected) {
+    result = { kind: "binding_error", reason: "The selected editor was closed." };
+  } else if (!bind) {
+    result = { kind: "binding_result", text_binding: null };
+  } else {
+    try { result = computeBindingForSession(session_id); }
+    catch (error) { result = { kind: "binding_error", reason: String(error) }; }
   }
+  if (transient) { transient.pending = null; transient.measuring = null; transient.composition = null; transient.rich_before = null; transient.rich_gap = false; }
+  try { await entry.sending; }
+  catch { result = { kind: "binding_error", reason: "An edit could not be saved. Text binding is unavailable." }; }
+  entry.finish_binding = result;
+  return result;
 }
 
 // Read a field's text transiently to compute the content-blind binding. If the
@@ -464,7 +435,7 @@ function scan(root: ParentNode): void {
 // only in this function's scope and is discarded on return; only the sealed
 // {scheme, canonical_length, commitment} object leaves here.
 function computeBindingForSession(session_id: string): ComputeBindingResponse {
-  const element = document.querySelector(`[${SESSION_ATTR}="${session_id}"]`);
+  const element = entries().find((entry) => entry.session_id === session_id)?.element;
   if (!(element instanceof HTMLElement)) return { kind: "binding_result", text_binding: null };
   const text = bindingTextForElement(element);
   if (canonicalizeTextForBinding(text).length === 0) return { kind: "binding_result", text_binding: null };
@@ -503,24 +474,39 @@ function nodeIsInsideElement(node: Node | null, element: HTMLElement): boolean {
 
 function start(): void {
   if (typeof window === "undefined" || typeof document === "undefined") return;
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (!isComputeBindingRequest(message)) return false;
-    try {
-      sendResponse(computeBindingForSession(message.session_id));
-    } catch (error) {
-      sendResponse({ kind: "binding_error", reason: error instanceof Error ? error.message : String(error) });
+  // Dormant target tracking reads no text, registers no sessions and sends no
+  // messages. The browser menu supplies the frame; this remembers its exact
+  // DOM target, including keyboard-generated context menus.
+  document.addEventListener("contextmenu", (event) => { if (!event.isTrusted) return; const target = editorFor(event.composedPath()[0] ?? event.target); contextTarget = target ? new WeakRef(target) : null; }, true);
+  document.addEventListener("focusin", (event) => { const target = editorFor(event.composedPath()[0] ?? event.target); focusedTarget = target ? new WeakRef(target) : null; }, true);
+  chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
+    const message = raw as { kind?: string; target?: string; activation_id?: string; share_session_id?: string; resume_session_id?: string; session_id?: string; bind?: boolean };
+    // Only extension-owned contexts can drive capture or read a binding.
+    const source = sender as { id?: string; tab?: unknown; url?: string };
+    if (source.tab || (source.id && source.id !== chrome.runtime.id) || (source.url && !source.url.startsWith(`chrome-extension://${chrome.runtime.id}/`))) return false;
+    if (message.kind === "capture_status") {
+      const entry = entries().find((candidate) => candidate.session_id === message.session_id);
+      sendResponse({ active: entry?.state === "recording" && entry.element.isConnected });
+      return false;
+    }
+    if (message.kind === "probe_editor") {
+      const focused = focusedTarget?.deref();
+      sendResponse({ kind: "editor_probe", focused: !!focused?.isConnected && (document.activeElement === focused || focused.contains(document.activeElement)) });
+      return false;
+    }
+    if (message.kind === "start_editor" && message.activation_id) {
+      const target = (message.target === "context" ? contextTarget : focusedTarget)?.deref();
+      contextTarget = null;
+      if (!target) { sendResponse({ kind: "start_editor_result", reason: "Click inside the editor, then choose Start writing record." }); return false; }
+      void registerField(target, message.activation_id, message.share_session_id, message.resume_session_id).then(sendResponse).catch((error) => sendResponse({ kind: "start_editor_result", reason: String(error) }));
+      return true;
+    }
+    if (message.kind === "freeze_session" && message.session_id) {
+      void freezeSession(message.session_id, message.bind === true).then(sendResponse);
+      return true;
     }
     return false;
   });
-  scan(document);
-  const observer = new MutationObserver((records) => {
-    for (const record of records) {
-      for (const node of Array.from(record.addedNodes)) {
-        if (node instanceof Element) scan(node);
-      }
-    }
-  });
-  observer.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 start();

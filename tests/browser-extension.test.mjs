@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createTextBinding, verifyRecord, verifyTextBindingCandidate } from "../packages/format/src/index.ts";
+import { computeObservedLength, createTextBinding, verifyRecord, verifyTextBindingCandidate } from "../packages/format/src/index.ts";
 import {
   buildTextFieldMutation,
   codepointCount,
@@ -826,7 +826,8 @@ test("content script handles compositions, dedupes listeners, and finishes colla
   assert.match(source, /listening\.has\(element\)/);
   assert.match(source, /collapsedDeletionMutation/);
   assert.match(source, /netLengthChangeMutation/);
-  assert.match(source, /response\.session_id/, "content script switches to the continuation session id");
+  // The browser activation tests cover terminal finish/stop. Automatic
+  // continuation remains a kernel capability, not an extension capture path.
 });
 
 test("dispatcher: editing after upload starts a continuation session linked to the signed record", async () => {
@@ -893,7 +894,7 @@ test("dispatcher: a non-empty field whose session was uploaded registers a conti
   assert.equal(continuation.identity_certainty, "resumed");
 });
 
-test("dispatcher: expired sessions are swept when the worker initialises and when a field registers", async () => {
+test("dispatcher: old unsigned sessions survive worker initialisation", async () => {
   const clock = mutableClock(10 * 24 * 60 * 60 * 1000);
   const storage = inMemoryStorage();
   const stale = {
@@ -914,8 +915,8 @@ test("dispatcher: expired sessions are swept when the worker initialises and whe
   await storage.write([stale]);
   const dispatcher = new BackgroundDispatcher({ clock, uuid: deterministicUuid(), storage, upload: recordingUpload(), checkpoint: recordingCheckpoint(), producer: PRODUCER });
   await dispatcher.ensureInitialised();
-  assert.equal(dispatcher.registry.list().length, 0);
-  assert.equal((await storage.read()).length, 0, "the sweep is persisted");
+  assert.equal(dispatcher.registry.list().length, 1);
+  assert.equal((await storage.read()).length, 1, "draft history does not expire");
 });
 
 test("dispatcher: retrying a failed upload re-signs the same session and keeps its binding", async () => {
@@ -1024,14 +1025,23 @@ test("dispatcher: uploaded continuation survives grace sweep and worker restart"
   const sid = first.result.session_id;
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
   await dispatcher.registry.awaitObservationIdle(sid);
-  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  const binding = createTextBinding("abc", sid);
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: binding });
   const parent = signed.result.response.record_hash;
   clock.advance(61_000);
   await dispatcher.sweepExpired();
   assert.deepEqual(dispatcher.registry.get(sid).events, []);
   assert.equal(dispatcher.registry.get(sid).observation.last_observed_token, null);
-  assert.equal((await dispatcher.handle({ kind: "list_sessions" })).sessions.length, 0);
+  const saved = (await dispatcher.handle({ kind: "list_sessions" })).sessions;
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0].signed_text_binding, binding);
+  assert.equal(saved[0].uploaded_response.url, signed.result.response.url);
+  assert.equal(saved[0].continuation_anchor, true);
   const restarted = new BackgroundDispatcher({ storage, clock, uuid, upload, checkpoint, producer: PRODUCER });
+  const afterRestart = await restarted.handle({ kind: "list_sessions" });
+  assert.equal(afterRestart.sessions[0].uploaded_response.url, signed.result.response.url);
+  assert.deepEqual(afterRestart.sessions[0].signed_text_binding, binding);
+  assert.deepEqual(afterRestart.sessions[0].events, []);
   const resumed = await restarted.handle({ ...registration, tab_id: 2, field_is_empty: false });
   assert.equal(resumed.result.kind, "registered");
   assert.notEqual(resumed.result.session_id, sid);
@@ -1040,5 +1050,179 @@ test("dispatcher: uploaded continuation survives grace sweep and worker restart"
   assert.equal(otherTab.result.session_id, resumed.result.session_id, "same document across tabs continues sharing its session");
   clock.advance(3 * 24 * 60 * 60 * 1000 + 1);
   await restarted.sweepExpired();
-  assert.equal(restarted.registry.get(sid), undefined);
+  assert.equal(restarted.registry.get(sid).uploaded_response.url, signed.result.response.url, "saved links do not expire");
+});
+
+
+test("dispatcher: a two-month restart resumes the same history, marks only the next real edit uncertain, and retains saved links for years", async () => {
+  const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher();
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const sid = (await dispatcher.handle(registration)).result.session_id;
+  const mutation = { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" };
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.registry.persist();
+  const first = dispatcher.registry.get(sid);
+  const gap = 60 * 24 * 60 * 60 * 1000;
+  clock.advance(gap);
+  const restarted = new BackgroundDispatcher({ storage, clock, uuid, upload, checkpoint, producer: PRODUCER });
+  await restarted.ensureInitialised();
+  assert.equal(restarted.registry.get(sid).events.length, 1);
+  const resume = { ...registration, field_is_empty: false, tab_id: 20, frame_id: 2, resume_session_id: sid };
+  assert.equal((await restarted.handle({ ...resume, origin_url: "https://other.test" })).kind, "error");
+  const reply = await restarted.handle(resume);
+  assert.equal(reply.result.session_id, sid);
+  const reattached = restarted.registry.get(sid);
+  assert.equal(reattached.base_wall_ms, first.base_wall_ms);
+  assert.deepEqual(reattached.events, first.events, "reattachment does not invent an edit");
+  assert.equal(reattached.last_event_chain_tip, first.last_event_chain_tip);
+  assert.equal(reattached.observation.observed_session_id, first.observation.observed_session_id);
+  assert.equal(reattached.origin.frame_id, 2);
+  // Restart again before typing: the uncertainty marker must be durable.
+  const afterResumeRestart = new BackgroundDispatcher({ storage, clock, uuid, upload, checkpoint, producer: PRODUCER });
+  await afterResumeRestart.handle({ kind: "append_mutation", session_id: sid, mutation: { ...mutation, pos: 15, ins_len: 1 } });
+  let live = afterResumeRestart.registry.get(sid);
+  assert.equal(live.events.length, 2);
+  assert.equal(live.events[1].t, gap);
+  assert.equal(live.events[1].pos, null);
+  assert.equal(live.events[1].ins_len, 1);
+  assert.equal(live.events[1].source, "typing");
+  assert.equal(computeObservedLength(live.events), null, "offline field changes cannot be inferred from measurements alone");
+  clock.advance(-10_000);
+  await afterResumeRestart.handle({ kind: "append_mutation", session_id: sid, mutation: { ...mutation, pos: 16, ins_len: 1 } });
+  live = afterResumeRestart.registry.get(sid);
+  assert.equal(live.events[2].t, gap, "clock corrections cannot reorder the timeline");
+  assert.equal(live.events[2].pos, 16, "only the first real edit marks the gap");
+  const signed = await afterResumeRestart.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "uploaded");
+  const payload = upload.calls.at(-1);
+  assert.equal(payload.manifest.duration_ms, gap);
+  assert.equal(verifyRecord(payload).valid, true);
+  assert.equal(payload.observation.observed_session_id, first.observation.observed_session_id);
+  assert.equal((await afterResumeRestart.handle(resume)).kind, "error", "published records cannot be resumed or mutated");
+  clock.advance(10 * 365 * 24 * 60 * 60 * 1000);
+  await afterResumeRestart.sweepExpired();
+  const yearsLater = new BackgroundDispatcher({ storage, clock, uuid, upload, checkpoint, producer: PRODUCER });
+  const saved = (await yearsLater.handle({ kind: "list_sessions" })).sessions[0];
+  assert.equal(saved.uploaded_response.url, signed.result.response.url);
+  assert.deepEqual(saved.events, []);
+  assert.equal(saved.observation.last_observed_token, null);
+});
+
+
+test("dispatcher: an empty draft resumed in an empty field keeps exact first-edit measurements", async () => {
+  const { dispatcher } = makeDispatcher();
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const sid = (await dispatcher.handle(registration)).result.session_id;
+  await dispatcher.handle({ ...registration, resume_session_id: sid });
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } });
+  assert.equal(computeObservedLength(dispatcher.registry.get(sid).events), 1);
+});
+
+
+test("dispatcher: failed uploaded-log cleanup cannot erase the durable saved link", async () => {
+  const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher();
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const sid = (await dispatcher.handle(registration)).result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } });
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "uploaded");
+  const durable = await storage.read();
+  assert.equal(durable[0].uploaded_response.url, signed.result.response.url, "upload result is persisted before log cleanup");
+  const write = storage.write;
+  storage.write = async () => { throw new Error("storage unavailable"); };
+  clock.advance(61_000);
+  await assert.rejects(dispatcher.sweepExpired(), /storage unavailable/);
+  assert.deepEqual(await storage.read(), durable, "failed cleanup leaves the durable record intact");
+  storage.write = write;
+  const restarted = new BackgroundDispatcher({ storage, clock, uuid, upload, checkpoint, producer: PRODUCER });
+  const after = (await restarted.handle({ kind: "list_sessions" })).sessions[0];
+  assert.equal(after.uploaded_response.url, signed.result.response.url);
+  assert.deepEqual(after.events, []);
+});
+
+
+test("dispatcher: resume without a new edit can publish earlier activity but cannot bind current text", async () => {
+  const { dispatcher, clock, upload } = makeDispatcher();
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const sid = (await dispatcher.handle(registration)).result.session_id;
+  clock.advance(1000);
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } });
+  clock.advance(60 * 24 * 60 * 60 * 1000);
+  await dispatcher.handle({ ...registration, field_is_empty: false, resume_session_id: sid });
+  const refused = await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: createTextBinding("offline text", sid) });
+  assert.equal(refused.kind, "error");
+  assert.match(refused.reason, /no captured edits since it was resumed/);
+  assert.equal(upload.calls.length, 0);
+  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "uploaded");
+  assert.equal(upload.calls[0].events.length, 1, "resume and finish do not invent mutations");
+  assert.equal(upload.calls[0].manifest.duration_ms, 1000, "duration remains time through the last observed edit, not trailing idle");
+  assert.equal(upload.calls[0].manifest.text_binding, undefined);
+});
+
+test("dispatcher: interrupted upload restarts frozen and retries the identical durable record", async () => {
+  const clock = mutableClock(1000);
+  const uuid = deterministicUuid();
+  const storage = inMemoryStorage();
+  const checkpoint = recordingCheckpoint();
+  let requestStarted;
+  const started = new Promise(resolve => { requestStarted = resolve; });
+  let firstPayload;
+  const interruptedUpload = { async postRecord(payload) {
+    firstPayload = structuredClone(payload);
+    const persisted = (await storage.read())[0];
+    assert.equal(persisted.state, "uploading", "upload intent must be durable before sending HTTP");
+    assert.deepEqual(persisted.events, payload.events);
+    assert.deepEqual(persisted.signed_text_binding, payload.manifest.text_binding);
+    requestStarted();
+    // Simulate a process lost after the server may have received its request.
+    return new Promise(() => {});
+  } };
+  const dispatcher = new BackgroundDispatcher({ storage, clock, uuid, checkpoint, upload: interruptedUpload, producer: PRODUCER });
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const sid = (await dispatcher.handle(registration)).result.session_id;
+  const mutation = { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" };
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  const binding = createTextBinding("abc", sid);
+  void dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: binding, capture_context_redactions: { drop_url: true } });
+  await started;
+  clock.advance(60 * 24 * 60 * 60 * 1000);
+  const upload = recordingUpload();
+  const restarted = new BackgroundDispatcher({ storage, clock, uuid, checkpoint, upload, producer: PRODUCER });
+  await restarted.ensureInitialised();
+  const recovered = restarted.registry.get(sid);
+  assert.equal(recovered.state, "failed_upload");
+  assert.match(recovered.last_failure_reason, /interrupted/);
+  assert.equal((await restarted.handle({ kind: "append_mutation", session_id: sid, mutation })).kind, "error");
+  assert.equal((await restarted.handle({ ...registration, resume_session_id: sid })).kind, "error");
+  const result = await restarted.handle({ kind: "retry_failed_upload", session_id: sid });
+  assert.equal(result.result.kind, "uploaded");
+  assert.deepEqual(upload.calls[0], firstPayload, "retry preserves hash, binding, context, events, clock and observation credentials");
+  assert.equal(verifyRecord(upload.calls[0]).valid, true);
+  assert.equal((await storage.read())[0].uploaded_response.url, result.result.response.url);
+});
+
+test("dispatcher: failed upload-intent persistence prevents the HTTP request", async () => {
+  const { dispatcher, storage, upload } = makeDispatcher();
+  const sid = (await dispatcher.handle({ kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true })).result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  await dispatcher.registry.awaitObservationIdle(sid);
+  await dispatcher.registry.persist();
+  const write = storage.write;
+  let refused = false;
+  storage.write = async snapshot => {
+    if (!refused && snapshot.some(record => record.state === "uploading")) {
+      refused = true;
+      throw new Error("Local storage unavailable");
+    }
+    return write(snapshot);
+  };
+  const result = await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: createTextBinding("abc", sid) });
+  assert.equal(result.result.kind, "failed");
+  assert.match(result.result.reason, /Local storage unavailable/);
+  assert.equal(upload.calls.length, 0);
+  assert.equal((await storage.read())[0].state, "failed_upload");
+  assert.equal((await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid })).result.kind, "uploaded");
 });

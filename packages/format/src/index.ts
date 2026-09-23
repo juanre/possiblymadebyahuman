@@ -9,7 +9,9 @@ export const FORMAT_VERSION = FORMAT_VERSION_0_2;
 export const FORMAT_VERSIONS = [FORMAT_VERSION_0_1, FORMAT_VERSION_0_2] as const;
 export const HASH_PREFIX = "b3:";
 export const BLAKE3_HEX_LENGTH = 64;
-// Integer fields are stored in 32-bit Postgres columns and summed into 32-bit stats.
+// Counts and codepoint offsets retain their existing 32-bit storage bounds.
+// Elapsed milliseconds use BIGINT storage and must remain exact JSON/JS integers.
+export const MAX_TIME_FIELD_VALUE = Number.MAX_SAFE_INTEGER;
 export const MAX_INTEGER_FIELD_VALUE = 2_147_483_647;
 export const MAX_CAPTURE_CONTEXT_STRING_LENGTH = 512;
 export const MAX_CAPTURE_CONTEXT_URL_LENGTH = 2_048;
@@ -461,7 +463,7 @@ export function validateEvent(event: unknown, expectedSeq?: number): string[] {
 
   const candidate = event as Partial<BufferMutation>;
   validateNonNegativeInteger(candidate.seq, "seq", errors);
-  validateNonNegativeInteger(candidate.t, "t", errors);
+  validateElapsedMilliseconds(candidate.t, "t", errors);
   validateNullableNonNegativeInteger(candidate.pos, "pos", errors);
   validateNullableNonNegativeInteger(candidate.del_len, "del_len", errors);
   validateNullableNonNegativeInteger(candidate.ins_len, "ins_len", errors);
@@ -562,7 +564,7 @@ export function validateManifest(manifest: unknown): string[] {
     errors.push(...validateTextBinding(candidate.text_binding));
   }
   validateNonNegativeInteger(candidate.event_count, "event_count", errors);
-  validateNonNegativeInteger(candidate.duration_ms, "duration_ms", errors);
+  validateElapsedMilliseconds(candidate.duration_ms, "duration_ms", errors);
   if ("final_text_hash" in candidate) errors.push("final_text_hash is not a content-blind public manifest field");
   if ("final_text_length" in candidate) errors.push("final_text_length is not a content-blind public manifest field");
   validateNullableTimestamp(candidate.created_client_t, "created_client_t", errors);
@@ -708,6 +710,12 @@ function compareStringsByCodePoint(left: string, right: string): number {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateElapsedMilliseconds(value: unknown, name: string, errors: string[]): void {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    errors.push(`${name} must be a non-negative safe integer (at most ${MAX_TIME_FIELD_VALUE})`);
+  }
 }
 
 function validateNonNegativeInteger(value: unknown, name: string, errors: string[]): void {

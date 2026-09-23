@@ -10,6 +10,7 @@ import {
 } from "../../../packages/analyzers/src/index.ts";
 import {
   MAX_INTEGER_FIELD_VALUE,
+  MAX_TIME_FIELD_VALUE,
   b3HashToBytes,
   computeEventHashChain,
   computeObservedLength,
@@ -187,8 +188,9 @@ export function createIngestApi(options: IngestApiOptions) {
       initialShortSignatureLength,
     );
     const stats = computeRecordStats(stampedRecord, idleThresholdMs);
-    const overflow = Object.entries(stats).filter(([, value]) =>
-      typeof value === "number" && (!Number.isInteger(value) || value < 0 || value > MAX_INTEGER_FIELD_VALUE));
+    const timeFields = new Set(["duration_ms", "inter_event_delay_min_ms", "inter_event_delay_p50_ms", "inter_event_delay_p90_ms", "inter_event_delay_p95_ms", "inter_event_delay_p99_ms", "inter_event_delay_max_ms", "active_time_ms", "idle_time_ms"]);
+    const overflow = Object.entries(stats).filter(([key, value]) =>
+      typeof value === "number" && (!Number.isSafeInteger(value) || value < 0 || value > (timeFields.has(key) ? MAX_TIME_FIELD_VALUE : MAX_INTEGER_FIELD_VALUE)));
     if (overflow.length) return failure(400, "invalid_record", overflow.map(([key]) => `${key} exceeds the supported storage range`));
     const analyzerInput = { events: stampedRecord.events, manifest: stampedRecord.manifest };
     const publicSignals = options.analyzers

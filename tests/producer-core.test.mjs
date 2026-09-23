@@ -324,6 +324,21 @@ test("10. failed upload retains events and reason; retry clears the reason on su
   assert.equal(registry.get(session.session_id).state, "uploaded");
 });
 
+test("loading an interrupted signing operation preserves a frozen, exactly retryable record", () => {
+  const { registry } = makeRegistry();
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" });
+  const signed = registry.sign(session.session_id);
+  const snapshot = registry.snapshot();
+  assert.equal(snapshot[0].state, "signing");
+  const { registry: restarted } = makeRegistry();
+  restarted.load(snapshot);
+  assert.equal(restarted.get(session.session_id).state, "failed_upload");
+  assert.throws(() => restarted.appendMutation(session.session_id, { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" }), SessionFrozenError);
+  assert.deepEqual(restarted.sign(session.session_id), signed);
+});
+
 test("reopen resumes an uploaded session so editing and re-signing continue the same record", () => {
   const { registry, clock } = makeRegistry();
   clock.set(0);

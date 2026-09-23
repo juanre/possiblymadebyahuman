@@ -67,6 +67,28 @@ function recordRow(record, shortSignature = "abc123def4") {
   };
 }
 
+test("Postgres bigint timing fields decode exactly and reject unsafe values", async () => {
+  const record = await fixtureRecord();
+  const row = recordRow(record);
+  const fields = ["duration_ms", "active_time_ms", "idle_time_ms", ...["min", "p50", "p90", "p95", "p99", "max"].map((percentile) => `inter_event_delay_${percentile}_ms`)];
+  for (const field of fields) row[field] = String(Number.MAX_SAFE_INTEGER);
+  const store = new PostgresRecordStore({
+    async query(sql) { return { rows: /where r\.record_hash = \$1/.test(sql) ? [row] : [] }; },
+  });
+  const stored = await store.findByRecordHash(record.manifest.record_hash);
+  assert.equal(stored.manifest.duration_ms, Number.MAX_SAFE_INTEGER);
+  for (const field of fields) assert.equal(stored.stats[field], Number.MAX_SAFE_INTEGER);
+  assert.equal(stored.manifest.event_count, record.manifest.event_count);
+  assert.deepEqual(stored.events, record.events);
+  for (const field of fields) {
+    row[field] = "9007199254740993";
+    await assert.rejects(store.findByRecordHash(record.manifest.record_hash), /safe integer range/, field);
+    row[field] = String(Number.MAX_SAFE_INTEGER);
+  }
+  row.inter_event_delay_min_ms = null;
+  assert.equal((await store.findByRecordHash(record.manifest.record_hash)).stats.inter_event_delay_min_ms, null);
+});
+
 test("PostgresRecordStore save uses one checked-out client for transaction and releases it", async () => {
   const record = await fixtureRecord();
   let selectCount = 0;

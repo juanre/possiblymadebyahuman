@@ -406,11 +406,11 @@ const EXTENSION_HARNESS_HTML = `<!doctype html>
 <textarea id="plain" aria-label="plain field"></textarea>
 <div id="rich" contenteditable="true" aria-label="rich field" style="min-height:2em;border:1px solid #999"></div>
 <script>
-  window.__pmbah = { messages: [] };
+  window.__pmbah = { messages: [], listeners: [], activate(target = "focused") { return new Promise(resolve => this.listeners.forEach(listener => listener({ kind: "start_editor", target, activation_id: "test-explicit-start" }, {}, resolve))); } };
   window.chrome = {
     runtime: {
       id: "harness",
-      onMessage: { addListener() {} },
+      onMessage: { addListener(listener) { window.__pmbah.listeners.push(listener); } },
       async sendMessage(message) {
         window.__pmbah.messages.push(message);
         if (message.kind === "register_field") {

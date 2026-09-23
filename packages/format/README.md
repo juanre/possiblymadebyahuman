@@ -27,6 +27,8 @@ checks stay client-side. Unknown public mutation
 measurements use explicit JSON `null` for `pos`, `del_len`, and `ins_len`; those
 fields are not omitted.
 
+Event `t` and manifest `duration_ms` accept non-negative safe integers through `Number.MAX_SAFE_INTEGER` (9,007,199,254,740,991 milliseconds). Counts, codepoint positions and lengths keep their signed 32-bit bounds. PostgreSQL time statistics use `bigint`; dates use `timestamptz`. This widened validation does not change format versions, canonical bytes or existing record hashes.
+
 The public manifest field for multi-session linkage is `parent_record`.
 `parent_record_hash` is reserved for future storage/database internals and is
 rejected in public manifest validation.

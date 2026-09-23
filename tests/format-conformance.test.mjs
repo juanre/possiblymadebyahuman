@@ -248,3 +248,21 @@ test("manifest validation requires UUIDv4 session ids", async () => {
   });
   assert.ok(uppercase.some((error) => error.includes("session_id must be a lowercase UUIDv4 string")));
 });
+
+test("time fields accept exact long durations while counts retain their existing bounds", async () => {
+  const [golden] = await readJson("packages/conformance/vectors/golden-records.json");
+  const event = golden.record.events[0];
+  const manifest = golden.record.manifest;
+  for (const elapsed of [2 ** 31, 60 * 86400000, 5 * 365 * 86400000, Number.MAX_SAFE_INTEGER]) {
+    assert.deepEqual(validateEvent({...event, t: elapsed}), []);
+    assert.deepEqual(validateManifest({...manifest, duration_ms: elapsed}), []);
+  }
+  for (const elapsed of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1, Infinity, "5184000000"]) {
+    assert.match(validateEvent({...event, t: elapsed}).join(" "), /safe integer/);
+    assert.match(validateManifest({...manifest, duration_ms: elapsed}).join(" "), /safe integer/);
+  }
+  for (const field of ["seq", "pos", "ins_len", "del_len"]) {
+    assert.notDeepEqual(validateEvent({...event, [field]: 2 ** 31}), []);
+  }
+  assert.notDeepEqual(validateManifest({...manifest, event_count: 2 ** 31}), []);
+});

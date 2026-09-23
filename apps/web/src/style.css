@@ -532,3 +532,11 @@ section.card[aria-label="Check a document"] {
 }
 
 .write-notice { margin: 0.5rem 1rem; font-size: 0.8rem; color: #756b60; }
+
+/* The header keeps its geometry while data loads, without claiming a result. */
+.signet-loading .signet-seal { visibility: hidden; }
+.signet-loading h1 { background: #eadfce; border-radius: 8px; }
+.signet-loading h1 span, .signet-loading .signet-statement { visibility: hidden; }
+.signet-statement { min-height: 2.6em; }
+.record-skeleton { min-height: 200px; background: #f0e7d9; }
+.activity-strip svg { display: block; width: 100%; }

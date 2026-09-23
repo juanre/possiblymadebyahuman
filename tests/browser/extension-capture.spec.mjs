@@ -18,16 +18,26 @@ test.describe("extension content script in a real page", () => {
     await page.goto("/extension-harness");
   });
 
-  test("loads as a classic script and registers a focused textarea", async ({ page }) => {
-    await page.getByLabel("plain field").focus();
-    await expect.poll(() => page.evaluate(() => window.__pmbah.messages.some((m) => m.kind === "register_field"))).toBe(true);
-    await expect(page.locator("[data-pmbah-state='recording']")).toHaveCount(1);
+  test("focus and typing are dormant until the person chooses an editor, with no page overlays", async ({ page }) => {
+    const plain = page.getByLabel("plain field");
+    await plain.fill("private draft");
+    await page.getByLabel("rich field").fill("unrelated draft");
+    expect(await page.evaluate(() => window.__pmbah.messages)).toEqual([]);
+    await plain.fill("");
+    await plain.focus();
+    await page.evaluate(() => window.__pmbah.activate());
+    await expect.poll(() => page.evaluate(() => window.__pmbah.messages.filter((m) => m.kind === "register_field").length)).toBe(1);
+    await expect(page.locator("[data-pmbah-badge], [data-pmbah-state], [data-pmbah-session]")).toHaveCount(0);
+    await page.keyboard.type("a");
+    expect((await mutations(page)).length).toBe(1);
+    await page.getByLabel("rich field").fill("still unrelated");
+    expect((await mutations(page)).length).toBe(1);
   });
 
   test("typing, Backspace, selection and Enter produce consistent events, including after a no-op Backspace", async ({ page }) => {
     const field = page.getByLabel("plain field");
     await field.focus();
-    await expect(page.locator("[data-pmbah-state='recording']")).toHaveCount(1);
+    await page.evaluate(() => window.__pmbah.activate());
 
     await page.keyboard.type("abc");
     await page.keyboard.press("Backspace");
@@ -59,7 +69,7 @@ test.describe("extension content script in a real page", () => {
   test("undo records a net change with unknown position and leaves later typing exact", async ({ page }) => {
     const field = page.getByLabel("plain field");
     await field.focus();
-    await expect(page.locator("[data-pmbah-state='recording']")).toHaveCount(1);
+    await page.evaluate(() => window.__pmbah.activate());
     await page.keyboard.type("ab");
     await page.keyboard.press("ControlOrMeta+z");
     await expect.poll(async () => (await field.inputValue()).length < 2).toBe(true);
@@ -74,18 +84,18 @@ test.describe("extension content script in a real page", () => {
     expect(validateEventLog(events.map((event, seq) => ({ seq, t: seq * 10, ...event })))).toEqual([]);
   });
 
-  test("contenteditable records sizes only, and a no-op Backspace does not double the next insert", async ({ page }) => {
+  test("contenteditable records exact positions and lengths, and a no-op Backspace does not double the next insert", async ({ page }) => {
     const rich = page.getByLabel("rich field");
     await rich.focus();
-    await expect(page.locator("[data-pmbah-state='recording']")).toHaveCount(1);
+    await page.evaluate(() => window.__pmbah.activate());
     await page.keyboard.press("Backspace"); // empty editor: nothing happens
     await page.keyboard.type("ab");
     await page.keyboard.press("Backspace");
     await expect.poll(async () => (await mutations(page)).length).toBe(3);
     expect(shapes(await mutations(page))).toEqual([
-      { op: "insert", pos: null, del_len: null, ins_len: 1, source: "typing" },
-      { op: "insert", pos: null, del_len: null, ins_len: 1, source: "typing" },
-      { op: "delete", pos: null, del_len: 1, ins_len: 0, source: "typing" },
+      { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" },
+      { op: "insert", pos: 1, del_len: 0, ins_len: 1, source: "typing" },
+      { op: "delete", pos: 1, del_len: 1, ins_len: 0, source: "typing" },
     ]);
   });
 });
@@ -99,7 +109,7 @@ test("directly appended textarea is captured, and cancelled edits emit no mutati
   });
   const field = page.getByLabel("dynamic field");
   await field.focus();
-  await expect(page.locator("[data-pmbah-state='recording']")).toHaveCount(1);
+  await page.evaluate(() => window.__pmbah.activate());
   await field.evaluate((element) => {
     element.addEventListener("beforeinput", (event) => event.preventDefault(), { once: true });
   });
@@ -109,4 +119,33 @@ test("directly appended textarea is captured, and cancelled edits emit no mutati
   await page.keyboard.type("y");
   await expect.poll(async () => (await mutations(page)).length).toBe(1);
   expect((await mutations(page))[0]).toMatchObject({ op: "insert", pos: 0, ins_len: 1 });
+});
+
+
+test("trusted right-click chooses the exact editor despite later focus or synthetic retargeting", async ({ page }) => {
+  await page.goto("/extension-harness");
+  const plain = page.getByLabel("plain field");
+  const rich = page.getByLabel("rich field");
+  await plain.focus();
+  await rich.click({ button: "right" });
+  // A page script or intervening focus change must not replace the editor
+  // chosen by the actual user gesture while its browser menu is open.
+  await plain.evaluate(element => {
+    element.focus();
+    element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+  });
+  expect(await page.evaluate(() => window.__pmbah.messages)).toEqual([]);
+  const result = await page.evaluate(() => window.__pmbah.activate("context"));
+  expect(result.kind).toBe("start_editor_result");
+  expect(result.session_id).toBeTruthy();
+  const registrations = await page.evaluate(() => window.__pmbah.messages.filter(message => message.kind === "register_field"));
+  expect(registrations).toHaveLength(1);
+  expect(registrations[0].descriptor.aria_label).toBe("rich field");
+  await plain.fill("unselected private text");
+  expect(await mutations(page)).toEqual([]);
+  await rich.focus();
+  await page.keyboard.type("a");
+  expect(shapes(await mutations(page))).toEqual([{ op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" }]);
+  expect((await page.evaluate(() => window.__pmbah.activate("context"))).reason).toBeTruthy();
+  expect(await page.evaluate(() => window.__pmbah.messages.filter(message => message.kind === "register_field").length)).toBe(1);
 });

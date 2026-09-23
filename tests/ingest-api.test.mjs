@@ -19,9 +19,7 @@ async function textBindingRecord() {
   return clone(golden.record);
 }
 
-// The store expires observed sessions against the wall clock, so the API clock
-// used in these tests must be the current time, not a pinned date.
-const TEST_NOW = new Date();
+const TEST_NOW = new Date("2026-05-28T10:00:00.000Z");
 
 function makeApi(options = {}) {
   const store = new InMemoryRecordStore();
@@ -360,28 +358,37 @@ test("observed-session boundary rejects malformed ids and hides lookup/token fai
   assert.deepEqual(badBinding.body, { error: "observation_unavailable" });
 });
 
-test("unfinalized observed sessions expire after seven days without leaking token state", async () => {
-  let wallClock = new Date("2026-05-28T10:00:00.000Z");
+test("unfinished observation evidence survives a two-month pause without leaking token state", async () => {
+  const firstAt = new Date("2026-05-28T10:00:00.000Z");
+  let wallClock = firstAt;
   const { api } = makeApi({ now: () => wallClock });
   const record = await fixtureRecord();
   const chain = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version);
   const observedSessionId = "123e4567-e89b-42d3-a456-426614174666";
-
   const first = await api.postObservedCheckpoint(observedSessionId, { event_count: 1, chain_tip: chain[0] });
   assert.equal(first.status, 201);
 
-  wallClock = new Date("2026-06-05T10:00:00.001Z");
-  const expired = await api.postObservedCheckpoint(observedSessionId, {
-    event_count: 2,
-    chain_tip: chain[1],
+  wallClock = new Date(firstAt.getTime() + 60 * 24 * 60 * 60 * 1000);
+  const unauthorized = await api.postObservedCheckpoint(observedSessionId, { event_count: 2, chain_tip: chain[1] });
+  assert.equal(unauthorized.status, 404);
+  assert.deepEqual(unauthorized.body, { error: "observation_unavailable" });
+  const resumed = await api.postObservedCheckpoint(observedSessionId, {
+    event_count: record.events.length,
+    chain_tip: chain.at(-1),
     token: first.body.token,
   });
-  assert.equal(expired.status, 404);
-  assert.deepEqual(expired.body, { error: "observation_unavailable" });
-
-  const recreated = await api.postObservedCheckpoint(observedSessionId, { event_count: 2, chain_tip: chain[1] });
-  assert.equal(recreated.status, 201);
-  assert.notEqual(recreated.body.token, first.body.token);
+  assert.equal(resumed.status, 201);
+  const finalized = await api.postRecord({
+    ...record,
+    observation: { observed_session_id: observedSessionId, token: first.body.token },
+  });
+  assert.equal(finalized.status, 201);
+  const fetched = await api.getRecord(finalized.body.short_signature);
+  assert.equal(fetched.body.observation.first_observed_at, firstAt.toISOString());
+  assert.equal(fetched.body.observation.last_observed_at, wallClock.toISOString());
+  assert.equal(fetched.body.observation.server_observed_span_ms, 60 * 24 * 60 * 60 * 1000);
+  assert.equal(fetched.body.observation.checkpoint_count, 2);
+  assert.equal(JSON.stringify(fetched.body).includes(first.body.token), false);
 });
 
 test("finalization revalidates checkpoints appended after observation preflight", async () => {
@@ -757,10 +764,10 @@ test("session_id must be lowercase so the hashed bytes match what Postgres store
   assert.match(result.body.details.join("\n"), /session_id/);
 });
 
-test("integer fields beyond the 32-bit storage range are rejected instead of failing in Postgres", async () => {
+test("unsafe time values and oversized counts are rejected before storage", async () => {
   const { api } = makeApi();
   const record = await fixtureRecord();
-  record.manifest.duration_ms = 2 ** 31;
+  record.manifest.duration_ms = Number.MAX_SAFE_INTEGER + 1;
   const result = await api.postRecord(record);
   assert.equal(result.status, 400);
   assert.match(result.body.details.join("\n"), /duration_ms/);
@@ -895,3 +902,22 @@ test("legacy active-time views exclude endpoints without changing cached data or
   assert.deepEqual(response.manifest, stored.manifest);
   assert.deepEqual(response.observation, stored.observation);
 });
+
+for (const elapsed of [2 ** 31, 60 * 86400000, 5 * 365 * 86400000, Number.MAX_SAFE_INTEGER]) {
+  test(`long elapsed time ${elapsed} survives API ingestion as exact numeric statistics`, async () => {
+    const { api } = makeApi();
+    const record = await fixtureRecord();
+    record.events = [0, elapsed].map((t, seq) => ({seq, t, op: "insert", pos: seq, del_len: 0, ins_len: 1, source: "typing"}));
+    record.manifest.event_count = 2;
+    record.manifest.duration_ms = elapsed;
+    record.manifest.record_hash = computeEventHashChain(record.events, record.manifest.session_id, record.manifest.format_version).at(-1);
+    const saved = await api.postRecord(record);
+    assert.equal(saved.status, 201, JSON.stringify(saved.body));
+    const fetched = await api.getRecord(saved.body.short_signature);
+    assert.equal(fetched.status, 200);
+    assert.equal(fetched.body.manifest.duration_ms, elapsed);
+    assert.equal(fetched.body.stats.inter_event_delay_max_ms, elapsed);
+    assert.equal(fetched.body.stats.idle_time_ms, elapsed);
+    assert.equal(fetched.body.events[1].t, elapsed);
+  });
+}

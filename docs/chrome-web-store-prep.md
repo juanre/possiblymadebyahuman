@@ -1,6 +1,6 @@
 # Chrome Web Store prep for v0 browser extension
 
-Status: release-readiness reference for `default-aaaa.26`. The browser extension
+Status: draft listing updated for extension 0.2.1; authenticated Gmail acceptance and store submission remain pending. Historical evidence below describes earlier packages. Release-readiness reference for `default-aaaa.26`. The browser extension
 (`default-aaaa.7`) and the deterministic packaging pipeline (`default-aaaa.17`)
 have landed; what remains is human-owned: developer account, listing visibility
 choice, screenshots, listing copy approval, and submission to the Chrome Web
@@ -117,19 +117,23 @@ share a short URL. Not a human/AI detector.
 possiblymadebyahuman records the shape of a writing process without uploading the
 words you wrote.
 
-When you focus an empty textarea or plain text input on any page, the extension
-starts recording the shape of your editing as a content-blind event log:
-insert/delete/replace positions and lengths in Unicode codepoints, timing, and
-source attribution (typing, paste, drop, cut, IME, autocomplete) when the browser
-reports it. Existing non-empty fields are not recorded — the badge labels them
-"not recording (existing content)" so the extension never silently snapshots a
-draft you started elsewhere. A matching saved session can resume in a non-empty field. While you write, the extension sends event counts and hash-chain tips for server-timed checkpoints; it never sends your document text.
+Choose an empty editor yourself: right-click and choose Start writing record,
+use the keyboard shortcut, or start from the extension side panel. Visiting a
+page, focusing a field, and typing do not activate capture. Other fields remain
+inactive. No controls cover the webpage.
 
-When you click Sign & upload in the popup, the extension builds a public
-content-blind writing record from the events: codepoint-anchored process
-metadata plus a BLAKE3 hash chain over the event sequence. The public service
-stores that record and returns a short URL you can share. The returned URL is
-copied to your clipboard.
+The extension measures edit positions and lengths in Unicode codepoints, timing,
+and sources such as typing, paste, and IME when the browser reports them. Plain
+inputs and supported rich-text editors are measured locally. Unknown values stay
+unknown. While a chosen draft is active, the extension sends event counts and
+hash-chain tips for server-timed checkpoints, never document text.
+
+Choose Finish & get link in the side panel, review capture context and binding,
+and confirm to stop capture and publish a content-blind writing record. The
+result shows a complete URL with Open record and Copy link controls. Copying is
+an explicit action; the visible URL remains available if clipboard access fails.
+A binding failure stops publication. Cancel or separately choose a process-only
+record; a stopped editor is not read again to create a different commitment. Further edits do not automatically start another record.
 
 Public records contain neither your document plaintext nor per-event inserted text. By default, signing includes a salted commitment to selected wording (or the whole field with no selection). You can turn this binding off. The public commitment allows candidate text to be checked, so short or predictable wording may be guessed. The capture context (page URL stripped of query and
 fragment, page title, field kind) is shown for review before upload and can be
@@ -153,7 +157,7 @@ and final extension behavior.
 
 ### Data observed locally
 
-- Textarea or plain text input contents are inspected transiently inside the
+- Only explicitly activated textarea, plain input, or supported rich-text editor contents are inspected transiently inside the
   input handler scope, to compute numeric process metadata
   (codepoint offsets, insertion length, deletion length, source attribution).
   The text reference is discarded when the handler returns. No text crosses
@@ -178,16 +182,19 @@ and final extension behavior.
   current bearer `token` for the server-observed session. The bearer token
   lives only inside `SessionRecord.observation.last_observed_token` and is
   never logged, never sent to content scripts, never published.
-- Local retention/TTL: **3 days from the last edit** (producer-core
-  `DEFAULT_TTL_MS`). The service worker runs an hourly `chrome.alarms` job
-  that sweeps expired sessions. Users can also discard a specific draft from
-  the popup at any time; discard is immediate. Uploaded event logs are cleared after a short grace period; a continuation reference remains until the three-day TTL so later edits can link to the uploaded record.
+- Local retention: **no automatic expiry for unfinished drafts or saved links**.
+  The service worker cleans redundant uploaded event logs and checkpoint credentials
+  after a short grace period on startup/registration and an hourly alarm; the saved
+  link remains until explicit removal. Uninstall/browser-data clearing can remove
+  local data. Users can discard drafts explicitly. Capture resumes only through
+  **Resume in chosen field**, retaining the original clock and history; the site
+  supplies the text. Server checkpoint metadata also has no automatic expiry.
 
 ### Data transmitted during capture and on explicit sign/upload
 
 - Content-blind PMBAH record manifest and event log:
   - `manifest`: format version, BLAKE3 record hash, session id, producer
-    identity (`browser-extension` v0.1.1 with capabilities `timing` and
+    identity (`browser-extension` v0.2.1 with capabilities `timing` and
     `source_attribution`), capture context, event count, duration,
     optional `text_binding` (scheme, canonical length, salted commitment), and a server-applied ingestion timestamp.
   - `events`: the ordered list of `BufferMutation` records described above.
@@ -225,27 +232,27 @@ and final extension behavior.
 
 ## Permission-justification template (final, reconciled with the shipped manifest)
 
-The final shipped manifest declares exactly three API permissions plus the
-`<all_urls>` host match for the content-script-based capture-all behaviour.
-Other Chrome extension APIs (`activeTab`, `scripting`, `tabs`, `cookies`,
-`webRequest`, `downloads`) are deliberately not requested. Paste these
-justifications into the Chrome Web Store privacy form verbatim.
+Extension 0.2.1 declares six API permissions and broad host access. Review
+these disclosures against the actual submitted ZIP. Host permission is not user
+activation: dormant content scripts do not measure editor text, create sessions,
+or send checkpoints before an explicit start.
 
-| Permission / host access | Manifest field | Justification |
-| --- | --- | --- |
-| `storage` | `permissions: ["storage", ...]` | The service worker stores unsigned per-field session event logs in `chrome.storage.local` (`pmbah:sessions:v1`) until the user signs and uploads them, discards them, or the 3-day TTL sweeps them. Storage holds only content-blind numeric event records and observation state (`observed_session_id`, bearer `token`, commitments — never text). |
-| `clipboardWrite` | `permissions: [..., "clipboardWrite", ...]` | After a successful sign+upload, the popup copies the returned short record URL to the user's clipboard so they can paste it where they want to share it. No other clipboard write occurs. |
-| `alarms` | `permissions: [..., "alarms"]` | The service worker registers a single repeating alarm (`pmbah-ttl-sweep`, every 60 minutes) that runs the local 3-day TTL sweep over unsigned sessions. No other alarm is registered. |
-| `host_permissions: ["<all_urls>"]` | top-level | Required for the content script to attach to textarea and plain text input fields on any page the user visits. This is the capture-all writer producer scope. The content script reads only what is needed transiently during input handling to compute codepoint-anchored numeric metadata, and at signing to compute the optional text binding and never retains text across event boundaries. Non-empty pre-existing fields are marked "not recording (existing content)" and produce no events. |
-| `content_scripts.matches: ["<all_urls>"]`, `all_frames: true` | top-level | Same rationale as `host_permissions`. `all_frames: true` is required because composition surfaces (forum reply boxes, embedded editors) are frequently iframed; the content script must run inside the writer's actual frame. |
-| Network access to the ingest service | implied by upload URL | Outbound HTTPS only to the configured `EXT_BASE_URL` (default `https://possiblymadebyahuman.com`), and only for two endpoints: `POST /api/records` at sign-time and `POST /api/observed-sessions/<id>/checkpoints` during a session. No other network access occurs. The extension does not request `webRequest`. |
+| Permission / host access | Purpose |
+| --- | --- |
+| `storage` | Persist numeric event logs, descriptors/context, checkpoint credentials, frozen upload state and saved result URLs locally. No document text. Drafts and saved links remain until explicit local removal, without automatic expiry. |
+| `clipboardWrite` | Copy a saved record URL only when the user chooses Copy link. Never read the clipboard. Manual selection remains available on failure. |
+| `alarms` | Hourly cleanup of redundant uploaded event logs and checkpoint credentials; saved links and unfinished drafts remain. |
+| `contextMenus` | Offer Start writing record for the editor the user right-clicked. |
+| `sidePanel` | Keep draft controls and results in browser-owned UI, outside webpage content. |
+| `webNavigation` | Enumerate frames to locate the explicitly focused editor and retire routes on navigation. No browsing-history database is kept. |
+| `host_permissions: ["<all_urls>"]` and matching content scripts with `all_frames: true` | Install dormant targeting listeners in pages and embedded frames, including cross-origin editors. Exact right-click targeting requires the listener before the menu action. The implementation does not claim an activeTab-only permission model. |
+| Network to configured `EXT_BASE_URL` | Checkpoints during explicitly activated drafts and record upload after confirmation. Default origin is `https://possiblymadebyahuman.com`. No document text is transmitted. |
 
-Permissions intentionally **not** requested: `activeTab`, `scripting`, `tabs`,
-`cookies`, `webRequest`, `downloads`, `notifications`, `nativeMessaging`,
-`management`, `identity`, `bookmarks`, `history`. If a Chrome Web Store review
-asks why broader access is not needed, the answer is that the capture-all
-producer reads only what the content script needs during input handling (and optional binding at signing) and posts the resulting numeric event records over
-`fetch` to one fixed origin.
+Not requested: `activeTab`, `scripting`, `tabs`, `cookies`, `webRequest`,
+`downloads`, `notifications`, `nativeMessaging`, `management`, `identity`,
+`bookmarks`, or `history`. Do not describe broad access as permission limited to
+the chosen tab; the limitation to a chosen editor is enforced by activation and
+routing logic, not by the host-permission declaration.
 
 ## Draft store review notes
 
@@ -287,7 +294,7 @@ listing / screenshot / submission actions.
   `host_permissions: ["<all_urls>"]`, content scripts at `document_idle`
   with `all_frames: true`.
 
-**Historical artifact metrics** (v0.1.0, default `EXT_BASE_URL`, `extension-package`; the manifest is now v0.1.1, so rebuild and record fresh metrics before submission):
+**Historical artifact metrics** (v0.1.0, default `EXT_BASE_URL`, `extension-package`; the manifest is now v0.2.1, so rebuild and record fresh metrics before submission):
 
 | Field | Value |
 | --- | --- |
@@ -301,7 +308,7 @@ listing / screenshot / submission actions.
 | Determinism | confirmed by `tests/browser-extension-package.test.mjs` and by manual hash comparison across two rebuilds |
 
 The agent producing this gate cannot submit to the Chrome Web Store. The manual
-checklist in `apps/browser-extension/README.md#manual-testing` remains the
+checklist in `apps/browser-extension/README.md#support-and-remaining-manual-acceptance` remains the
 authoritative walk-through for the human or reviewer before submission.
 
 ## Human-input blocker packet for `.26`
@@ -343,12 +350,10 @@ each unlocks the next.
    - Chrome Web Store currently requires at least one 1280×800 or 640×400
      screenshot. Recommended: three or four.
    - Suggested set (all using real extension UI, no mockups):
-     - The per-field `recording` badge on a textarea on a familiar site.
-     - The popup with two sessions across two origins (multi-session shot).
-     - The popup right after a successful sign+upload, showing the
-       `short_signature` link.
-     - The badge reading `not recording (existing content)` on a textarea
-       that already had a draft, to illustrate the eligibility rule.
+     - The side panel beside an explicitly started editor on a familiar site.
+     - The side panel with two explicitly started drafts.
+     - The side panel after saving, showing the complete URL and Open/Copy controls.
+     - The explanation shown when trying to start in an existing draft.
    - Record the screenshot bundle location here once captured:
      > Screenshots: **TBD by Juan**.
 
@@ -387,11 +392,10 @@ each unlocks the next.
 8. **Sideload manual walkthrough (Juan or human reviewer).**
    - Load `apps/browser-extension/dist/` as an unpacked extension in Chrome
      (Developer mode → Load unpacked), then walk through every item in the
-     "Manual testing" section of `apps/browser-extension/README.md`. The
-     checklist is enumerated there: textarea capture, contenteditable
-     degraded capture, multi-field multi-site session isolation, INELIGIBLE
-     pre-existing content, idle-gap preservation, failed-upload Discard
-     path, and content-blind network-payload inspection in DevTools.
+     "Support and remaining manual acceptance" section of `apps/browser-extension/README.md`. The
+     checklist is enumerated there: explicit activation, rich-text measurement, inactive recipient/subject fields,
+     same-document sharing, stop/navigation, selected-text binding, saved links,
+     upload/clipboard failures, and content-blind network-payload inspection.
    - Record sideload evidence (screenshots, brief notes per item) and any
      blockers found before submission. Sideload outcome:
      > Sideload checklist outcome: **TBD by Juan / human reviewer**.
@@ -422,7 +426,7 @@ each unlocks the next.
 - It is not a script or automation that can be run by a tool. Every item
   above either requires a Google account session or human judgement.
 - It is not a substitute for reading
-  `apps/browser-extension/README.md#manual-testing`. The README is the
+  `apps/browser-extension/README.md#support-and-remaining-manual-acceptance`. The README is the
   authoritative sideload walkthrough.
 - It does not record any Chrome Web Store credentials, OAuth tokens, or
   publisher account secrets. None should ever be committed to this
@@ -430,7 +434,7 @@ each unlocks the next.
   `docs/browser-extension-release.md` policy on token rotation and
   upload-only credentials.
 
-## Dependencies already resolved
+## Historical dependencies before the 0.2.0 UX reset
 
 - `default-aaaa.7` browser extension behaviour, permissions, manifest, local
   retention/TTL, capture UI, sign+upload flow — landed and reviewed.

@@ -169,11 +169,12 @@ export class SessionRegistry {
     origin: FieldOrigin,
     descriptor: FieldDescriptor,
     capture: CaptureContext,
+    options: { fresh?: boolean } = {},
   ): SessionRecord {
     const resolution = resolveSession(
       origin,
       descriptor,
-      Array.from(this.#sessions.values()),
+      options.fresh ? [] : Array.from(this.#sessions.values()),
       () => this.#uuid.uuid(),
     );
 
@@ -206,10 +207,22 @@ export class SessionRegistry {
     return cloneSession(record);
   }
 
+  /** Explicitly reattach an unsigned draft; its original clock and hash chain survive. */
+  resume(session_id: SessionId, origin: FieldOrigin, descriptor: FieldDescriptor, options: { field_is_empty?: boolean } = {}): SessionRecord {
+    const record = this.#requireMutable(session_id);
+    record.origin = { ...origin };
+    record.descriptor = { ...descriptor };
+    record.identity_certainty = "resumed";
+    record.pending_observation_gap = record.events.length > 0 || options.field_is_empty !== true;
+    return cloneSession(record);
+  }
+
   appendMutation(session_id: SessionId, mutation: PendingMutation, _options: AppendOptions = {}): SessionRecord {
     const record = this.#requireMutable(session_id);
     const now = this.#clock.now();
-    const event = appendBufferMutation(record.events, mutation, now, record.base_wall_ms);
+    const observedMutation = record.pending_observation_gap ? { ...mutation, pos: null } : mutation;
+    const event = appendBufferMutation(record.events, observedMutation, now, record.base_wall_ms);
+    delete record.pending_observation_gap;
     record.last_event_chain_tip = advanceChain(
       record.last_event_chain_tip,
       event,
@@ -393,11 +406,9 @@ export class SessionRegistry {
    *
    * In-flight checkpoint caveat: if a checkpoint POST was in flight at the
    * moment of discard, the request continues on the server side and may
-   * succeed — creating an unfinalized observed-session that will be reclaimed
-   * by the ingest service's TTL sweep. The local registry's state stays
-   * consistent (the session is gone and no further checkpoints will fire) but
-   * the orphan checkpoint count on the server is non-zero until TTL. This is
-   * expected behaviour and not a leak: the orphan record contains only
+   * succeed, leaving server-side checkpoint metadata after local discard.
+   * The local registry stays consistent: no further checkpoints will fire.
+   * Local discard does not delete server data. The retained metadata contains only
    * (observed_session_id, event_count, chain_tip) — no text or text-derived
    * hashes are involved.
    */
@@ -421,13 +432,13 @@ export class SessionRegistry {
     for (const removed of result.removed) {
       if (options?.retain_uploaded_anchors && removed.state === "uploaded"
         && now - removed.last_edit_wall_ms < (options.ttl_ms ?? DEFAULT_TTL_MS)) {
-        // Keep only the identity/link needed by a live field to continue.
+        // Keep identity, public link and binding outcome for the browser
+        // result view. Event logs and private observation tokens are purged.
         this.#sessions.set(removed.session_id, {
           ...removed,
           events: [],
           continuation_anchor: true,
           last_event_chain_tip: null,
-          signed_text_binding: undefined,
           observation: emptyObservation(this.#checkpoint !== null),
         });
         continue;
@@ -492,6 +503,13 @@ export class SessionRegistry {
 
   #normaliseLoadedRecord(record: SessionRecord): SessionRecord {
     const cloned = cloneSession(record);
+    // These states describe work owned by the previous process. Its outcome
+    // may be unknown, so keep the signed events/binding frozen for an exact
+    // idempotent retry rather than leave the draft permanently busy or reopen it.
+    if (cloned.state === "signing" || cloned.state === "uploading") {
+      cloned.state = "failed_upload";
+      cloned.last_failure_reason = "Saving was interrupted. Retry to recover the same signed record.";
+    }
     if (!cloned.observation) {
       cloned.observation = emptyObservation(this.#checkpoint !== null);
     } else {
