@@ -59,6 +59,6 @@ To start an independent record, use an empty editor. If two editors show the sam
 
 **Saved records** is last and collapsed by default. Expand it to search by private name, site, date or link, and page through older entries. Each row has Open/Copy actions and expandable details. **Export all links** downloads the complete saved-link list as JSON, including private names and site information; it does not export document text or unfinished drafts.
 
-Drafts and saved links have no automatic expiry or age-based eviction. **Discard local draft**, **Remove saved link** and **Remove all saved links** are explicit local removals. Removing a saved link does not delete the public record. Export a backup before uninstalling or clearing browser data; history belongs to this browser and is not account-synced. Previously expired links cannot be restored from missing local data.
+Drafts and saved links have no automatic expiry or age-based eviction. **Discard draft**, **Remove saved link** and **Remove all saved links** are explicit local removals. Removing a saved link does not delete the public record. Export a backup before uninstalling or clearing browser data; history belongs to this browser and is not account-synced. Previously expired links cannot be restored from missing local data.
 
 Authenticated Gmail and other complex sites still need acceptance testing with this candidate. Report a problem through [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues), including the extension version and the action that failed; do not post private writing.
