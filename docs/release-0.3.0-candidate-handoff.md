@@ -19,7 +19,7 @@ The pgdbm-backed Node suite and the production-container gate passed locally; th
 
 Deploy the compatible candidate API/viewer before installing extension 0.3.0. This candidate adds no SQL migration; it relies on migration 003 already deployed with 0.2.1. Old 0.1/0.2 clients and records remain supported by the new server. An old API/viewer cannot verify the new 0.3 records, so do not revert to it after accepting new-format records.
 
-The release candidate tag is v0.3.0-rc.1. Its container version and commit tags are separate from stable latest/minor tags. The extension package reports 0.3.0 (Chrome's numeric version requirement), while the GitHub release is explicitly a prerelease. Creating the image does not deploy it. The owner deploys through their existing Render workflow.
+The release candidate tag is v0.3.0-rc.1. The reviewed candidate also supplies the `latest` tag used by this deployment. Future tag releases update `latest`; prereleases do not move stable minor-version tags. The extension package reports 0.3.0 (Chrome's numeric version requirement), while the GitHub release is explicitly a prerelease. Creating the image does not deploy it. The owner deploys through their existing Render workflow.
 
 ## Authenticated Gmail acceptance
 
