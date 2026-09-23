@@ -1,4 +1,4 @@
-// Disposable release-image gate. Never reuses the developer's local stack.
+// Disposable release-image gate; pgdbm's pytest fixture owns its database.
 import { spawn, execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
@@ -6,15 +6,29 @@ import { promisify } from 'node:util';
 const exec = promisify(execFile);
 const suffix = `${process.pid}-${randomUUID().slice(0, 8)}`;
 const network = `pmbah-gate-${suffix}`;
-const database = `${network}-db`;
 const application = `${network}-app`;
 const image = process.env.PMBAH_TEST_IMAGE ?? `pmbah-release-check:${suffix}`;
 const revision = process.env.BUILD_REVISION ?? (await exec('git', ['rev-parse', 'HEAD'])).stdout.trim();
-const password = randomUUID();
+if (!process.env.PMBAH_TEST_DATABASE_URL) throw new Error('PMBAH_TEST_DATABASE_URL is required; run npm run test:release-container to use pgdbm fixtures');
+const databaseUrl = new URL(process.env.PMBAH_TEST_DATABASE_URL);
+const hostNetworking = process.platform === 'linux';
+// The host-side pgdbm fixture keeps ownership of this exact database. Only
+// its network address changes when PostgreSQL is accessed from the app image.
+const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(databaseUrl.hostname);
+if (process.env.PMBAH_TEST_CONTAINER_DB_HOST) databaseUrl.hostname = process.env.PMBAH_TEST_CONTAINER_DB_HOST;
+else if (loopback && !hostNetworking) databaseUrl.hostname = 'host.docker.internal';
+if (process.env.PMBAH_TEST_CONTAINER_DB_PORT) databaseUrl.port = process.env.PMBAH_TEST_CONTAINER_DB_PORT;
+const hostAccess = databaseUrl.hostname === 'host.docker.internal' ? ['--add-host', 'host.docker.internal:host-gateway'] : [];
+const interrupted = new AbortController();
+// pytest terminates this child before releasing its database fixture. Exit
+// through finally so the app container cannot outlive the database it uses.
+process.once('SIGTERM', () => interrupted.abort(new Error('Release image test interrupted')));
+process.once('SIGINT', () => interrupted.abort(new Error('Release image test interrupted')));
 const run = (command, args, env = {}) => new Promise((resolve, reject) => {
-  const child = spawn(command, args, { stdio: 'inherit', env: { ...process.env, ...env } });
-  child.on('error', reject);
-  child.on('exit', (code) => code === 0 ? resolve() : reject(new Error(`${command} exited ${code}`)));
+  const child = spawn(command, args, { stdio: 'inherit', env: { ...process.env, ...env }, signal: interrupted.signal });
+  let failure;
+  child.on('error', (error) => { failure = error; });
+  child.on('close', (code) => failure ? reject(failure) : code === 0 ? resolve() : reject(new Error(`${command} exited ${code}`)));
 });
 const port = await new Promise((resolve, reject) => {
   const socket = createServer();
@@ -29,20 +43,19 @@ try {
   if (!process.env.PMBAH_TEST_IMAGE) {
     await run('docker', ['build', '--build-arg', `BUILD_REVISION=${revision}`, '-t', image, '.']);
   }
-  await exec('docker', ['network', 'create', network]);
-  await exec('docker', ['run', '--rm', '-d', '--name', database, '--network', network,
-    '-e', 'POSTGRES_USER=pmbah', '-e', `POSTGRES_PASSWORD=${password}`, '-e', 'POSTGRES_DB=pmbah', 'postgres:16-alpine']);
-  let databaseReady = false;
-  for (let attempt = 0; attempt < 60; attempt++) {
-    try { await exec('docker', ['exec', database, 'pg_isready', '-U', 'pmbah']); databaseReady = true; break; }
-    catch { await new Promise((resolve) => setTimeout(resolve, 500)); }
-  }
-  if (!databaseReady) throw new Error('test database did not become ready');
-  await exec('docker', ['run', '--rm', '-d', '--name', application, '--network', network,
-    '-p', `127.0.0.1:${port}:8000`, '-e', `DATABASE_URL=postgresql://pmbah:${password}@${database}:5432/pmbah`,
-    '-e', `PUBLIC_BASE_URL=${baseUrl}`, image]);
+  interrupted.signal.throwIfAborted();
+  if (!hostNetworking) await exec('docker', ['network', 'create', network]);
+  interrupted.signal.throwIfAborted();
+  // Native Linux uses the host network to reach a localhost-only PostgreSQL
+  // service; Docker Desktop instead forwards through host.docker.internal.
+  const networkArgs = hostNetworking ? ['--network', 'host', '-e', `PORT=${port}`]
+    : ['--network', network, '-p', `127.0.0.1:${port}:8000`];
+  await exec('docker', ['run', '-d', '--name', application, ...networkArgs,
+    ...hostAccess, '-e', 'DATABASE_URL',
+    '-e', `PUBLIC_BASE_URL=${baseUrl}`, image], { env: { ...process.env, DATABASE_URL: databaseUrl.href } });
   let ready = false;
   for (let attempt = 0; attempt < 60; attempt++) {
+    interrupted.signal.throwIfAborted();
     try { const result = await fetch(`${baseUrl}/ready`, { signal: AbortSignal.timeout(2000) }); if (result.ok) { ready = true; break; } }
     catch { /* wait for the container's startup migrations */ }
     await new Promise((resolve) => setTimeout(resolve, 500));
@@ -58,7 +71,7 @@ try {
   if (logs) process.stderr.write(logs.stdout + logs.stderr);
   throw error;
 } finally {
-  for (const name of [application, database]) await exec('docker', ['rm', '-f', name]).catch(() => undefined);
-  await exec('docker', ['network', 'rm', network]).catch(() => undefined);
+  await exec('docker', ['rm', '-f', application]).catch(() => undefined);
+  if (!hostNetworking) await exec('docker', ['network', 'rm', network]).catch(() => undefined);
   if (!process.env.PMBAH_TEST_IMAGE) await exec('docker', ['image', 'rm', image]).catch(() => undefined);
 }

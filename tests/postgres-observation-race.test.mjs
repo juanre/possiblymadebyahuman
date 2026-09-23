@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { promisify } from "node:util";
 import test from "node:test";
 
 import pg from "pg";
@@ -12,7 +10,6 @@ import { computeEventHashChain, computeRecordHash } from "../packages/format/src
 import { PostgresRecordStore } from "../packages/storage/src/index.ts";
 import { applyMigrations, loadSqlMigrations } from "../packages/storage/src/migrations.ts";
 
-const execFileAsync = promisify(execFile);
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const BAD_TIP = "b3:0000000000000000000000000000000000000000000000000000000000000000";
@@ -28,8 +25,7 @@ async function textBindingFixtureRecord() {
 }
 
 test("Postgres observed-session finalization validates the exact public checkpoint set", async (t) => {
-  const harness = await startPostgresHarness(t);
-  if (!harness) return;
+  const harness = await connectFixtureDatabase(t, "PMBAH_TEST_DATABASE_URL");
   const { api, pool } = harness;
 
   await t.test("invalid containers and integer overflows are client errors before persistence", async () => {
@@ -192,8 +188,7 @@ test("Postgres observed-session finalization validates the exact public checkpoi
 });
 
 test("Postgres forward migration preserves old records and observations, then stores month-long sessions", async (t) => {
-  const harness = await startPostgresHarness(t, ["001", "002"]);
-  if (!harness) return;
+  const harness = await connectFixtureDatabase(t, "PMBAH_TEST_UPGRADE_DATABASE_URL", ["001", "002"]);
   const { pool, store } = harness;
   const firstAt = new Date("2026-01-01T00:00:00.000Z");
   const pauseMs = 60 * 24 * 60 * 60 * 1000;
@@ -288,59 +283,14 @@ async function freshRecord() {
   return record;
 }
 
-async function startPostgresHarness(t, migrationVersions) {
-  if (process.env.PMBAH_SKIP_POSTGRES_RACE_TEST === "1") {
-    t.skip("PMBAH_SKIP_POSTGRES_RACE_TEST=1");
-    return null;
-  }
-
-  const name = `pmbah-race-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const password = `pmbah-race-${randomUUID()}`;
-  try {
-    await execFileAsync("docker", [
-      "run", "--rm", "-d",
-      "--name", name,
-      "-e", "POSTGRES_USER=pmbah",
-      "-e", `POSTGRES_PASSWORD=${password}`,
-      "-e", "POSTGRES_DB=pmbah",
-      "-p", "127.0.0.1::5432",
-      "postgres:16-alpine",
-    ], { timeout: 120_000 });
-  } catch (error) {
-    if (process.env.CI) throw error;
-    t.skip(`docker postgres unavailable: ${error.message}`);
-    return null;
-  }
-
-  const { stdout } = await execFileAsync("docker", ["port", name, "5432/tcp"], { timeout: 30_000 });
-  const port = Number(stdout.trim().match(/:(\d+)$/)?.[1]);
-  if (!port) throw new Error(`could not determine postgres port from: ${stdout}`);
-
-  const connectionString = `postgresql://pmbah:${encodeURIComponent(password)}@127.0.0.1:${port}/pmbah`;
+async function connectFixtureDatabase(t, variable, migrationVersions) {
+  const connectionString = process.env[variable];
+  assert.ok(connectionString, `${variable} is required; run npm test so pgdbm supplies isolated databases`);
   const pool = new pg.Pool({ connectionString, max: 10, connectionTimeoutMillis: 1_000 });
-  t.after(async () => {
-    await pool.end().catch(() => undefined);
-    await execFileAsync("docker", ["rm", "-f", name], { timeout: 30_000 }).catch(() => undefined);
-  });
-
-  await waitForPostgres(pool);
+  // The pgdbm fixture owns creation/readiness/drop. This process owns only its pool.
+  t.after(() => pool.end());
   const migrations = await loadSqlMigrations();
   await applyMigrations(pool, migrationVersions ? migrations.filter((migration) => migrationVersions.includes(migration.version)) : migrations);
   const store = new PostgresRecordStore(pool);
   return { pool, store, api: createIngestApi({ store, baseUrl: "https://possiblymadebyahuman.test" }) };
-}
-
-async function waitForPostgres(pool) {
-  const deadline = Date.now() + 60_000;
-  let lastError;
-  while (Date.now() < deadline) {
-    try {
-      await pool.query("select 1");
-      return;
-    } catch (error) {
-      lastError = error;
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-  }
-  throw lastError ?? new Error("postgres did not become ready");
 }

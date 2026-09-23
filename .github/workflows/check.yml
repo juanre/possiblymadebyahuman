@@ -13,17 +13,39 @@ jobs:
   check:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres -d postgres"
+          --health-interval 1s --health-timeout 5s --health-retries 30
+    env:
+      TEST_DB_HOST: 127.0.0.1
+      TEST_DB_PORT: 5432
+      TEST_DB_USER: postgres
+      TEST_DB_PASSWORD: postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
       - name: Install test dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y emacs-nox hugo
           npm ci
+          uv sync --locked
           npx playwright install --with-deps chromium
       - name: Typecheck and test, including Emacs and real Postgres
         run: |
@@ -38,7 +60,7 @@ jobs:
       - name: Test the release container and installed extension
         env:
           BUILD_REVISION: ${{ github.sha }}
-        run: node scripts/test-release-container.mjs
+        run: npm run test:release-container
       - name: Upload failure evidence
         if: failure()
         uses: actions/upload-artifact@v4

@@ -1,4 +1,4 @@
-.PHONY: help install check test typecheck dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container-build local-container local-container-down local-container-reset local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser test-extension-e2e build-site test-release-container release-ready ship-tag
+.PHONY: help install check test test-db test-db-down typecheck dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container-build local-container local-container-down local-container-reset local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser test-extension-e2e build-site test-release-container release-ready ship-tag
 
 ENV_FILE ?= .env.local-container
 PROD_ENV_FILE ?= .env.localprod
@@ -18,6 +18,8 @@ PROD_COMPOSE = IMAGE=$(PROD_IMAGE) ENV_FILE=$(PROD_ENV_FILE) docker compose --en
 help:
 	@echo "possiblymadebyahuman targets:"
 	@echo "  make install               Install npm workspace dependencies"
+	@echo "  make test-db               Start PostgreSQL for pgdbm test fixtures"
+	@echo "  make test-db-down          Stop the dedicated test PostgreSQL service"
 	@echo "  make check                 Run typecheck + tests"
 	@echo "  make test                  Run tests only"
 	@echo "  make typecheck             Run TypeScript typecheck"
@@ -50,9 +52,16 @@ help:
 
 install:
 	npm install
+	uv sync --locked
 
 check:
 	npm run check
+
+test-db:
+	docker compose -f docker-compose.test.yml -p pmbah-test up -d --wait
+
+test-db-down:
+	docker compose -f docker-compose.test.yml -p pmbah-test down
 
 test:
 	npm test
@@ -164,7 +173,7 @@ build-site:
 test-release-container:
 	npm run build:web
 	$(MAKE) extension-build
-	BUILD_REVISION=$(BUILD_REVISION) node scripts/test-release-container.mjs
+	BUILD_REVISION=$(BUILD_REVISION) npm run test:release-container
 
 release-ready:
 	git diff --quiet
