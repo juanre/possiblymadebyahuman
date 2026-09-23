@@ -1,6 +1,22 @@
 # Extension panel: current work, text checks and saved history
 
-Status: **design with duration/retention foundation implemented on the review branch**, following authenticated Gmail feedback and owner direction on 23 September 2026. Generic field wording, editable card names, non-expiring saved links and long-lived resumable drafts are requirements. The 0.2.1 source adds long-duration storage, non-expiring browser drafts/links and explicit unsigned-draft resumption. The text-check checkbox also has simpler generic wording. Editable names, focus following, separately displayed text-check scope and compact searchable history remain pending. This document does not imply a production deployment.
+Status: **implemented in the 0.3.0 candidate; release and authenticated-site acceptance remain separate**. Extension 0.2.1 is the currently deployed release. It supplied long-duration storage, non-expiring drafts/links and explicit unsigned-draft resumption. The current candidate adds private editable names, focus following, explicit text-check scope, compact searchable/exportable history, signed finish and linked continuations. Deploy the compatible API/viewer before distributing the candidate. This document does not assert production deployment or authenticated Gmail acceptance.
+
+## Candidate implementation
+
+- **This editor** follows exact editor identity in the panel's browser window and active tab. Focus alone never starts capture. Other drafts remain separately accessible; visiting saved history does not retarget an editor. Rename uses a private local name, distinct from the public label reviewed at finish. Defaults use site, field metadata and a stable distinguishing number, never document contents.
+- **Finish & get link** pins the target draft. **Selected text** or **Whole field** appears separately from the optional text-check checkbox; changed scope requires another confirmation. Public context and an expandable explanation of the check remain available before publication. A text-check failure offers cancellation or explicit publication of editing activity only.
+- **Saved records** is last and collapsed by default. It has lightweight paged rows, search by name/site/date/link, Open/Copy, expandable details, Rename, explicit Continue and explicit removal. One recent publication result remains until Done. **Export all links** includes the whole saved-link list and its private names/site metadata, without document text or checkpoint credentials. No time/count eviction was added.
+- **Stop** retains an unfinished draft. Resume is explicit, may use a non-empty field on the same site origin, and keeps session identity, checkpoints and clock. Missing edits are not reconstructed; unknown positions prevent an invented document-length curve.
+- **Continue in chosen field** starts a distinct session linked to an immutable saved record. It captures only new mutations. Its clock starts at the parent's signed finish, or a retained local upload-time approximation for a legacy parent. The prior saved link remains; no document identity is inferred.
+- The extension opts into **format 0.3 signed finish**. Confirmed publication freezes and persists elapsed duration before network work; retries keep the same sealed record. Returning only to publish includes the pause without creating an edit. Duration is a client claim, distinct from the server's received-checkpoint span. Old 0.1 drafts retain last-edit timing; failed legacy uploads keep their original frozen version. `/write` and Emacs have not opted in.
+- Viewer length curves hold their measured value between edits and jump at the next edit. They stop at unknown measurements and do not extend over the interval after the last edit. The viewer marks leading/trailing no-edit intervals and distinguishes signed duration, editing span and active/idle time between edits. Rhythm bins count pauses above 100 seconds explicitly.
+
+The [signed-finish contract](signed-finish-and-continuations.md) and [canonicalization specification](spec/canonicalization.md#format-03-finalization) define format compatibility. Historical handoff documents describe their own release state and are not rewritten by this amendment.
+
+## Original feedback and design rationale
+
+The following observations describe the earlier 0.2.0 screenshots and the resulting requirements, not unresolved behavior in 0.3.0.
 
 ## What the screenshots reveal
 
@@ -13,7 +29,7 @@ Evidence from the 0.2.0 screenshots and implementation:
 - Uploaded links remain in session anchors only until the three-day expiry. Upload resets the timestamp, so the anchor normally expires about three days after publication, at the next sweep. Removing the anchor does not remove the public record.
 - Session lists include full event arrays and the panel compares them during polling. A history with hundreds of entries needs lightweight summaries and bounded rendering, not just collapsed markup around the same data.
 
-## Proposed panel organisation
+## Panel organisation
 
 1. **This editor**: the editor the writer is actually using, with its current state and relevant actions. Focus moves between enrolled editors should update this immediately, without another Start or Select click.
 2. **Other drafts**: compact rows with stable order, not a reshuffling wall of cards. Failures that need action remain visible here, never filed away as successfully saved.
@@ -37,7 +53,7 @@ The permanent introduction can shrink after first use, leaving a Help entry. Int
 
 ## Text-check language
 
-Lead with what the option lets a reader do. Proposed copy for user evaluation:
+Lead with what the option lets a reader do. The candidate uses:
 
 > **Let readers check a copy of this text**
 >
@@ -51,7 +67,7 @@ Saved-state copy can say "Text check included" and link to the explanation. Avoi
 
 ## History after 200 write-ups
 
-Required policy, replacing today's expiry model:
+Required policy, replacing the earlier expiry model:
 
 - Saved links and unfinished writing sessions must not expire automatically. Separate the live session, its preserved editing history, and any immutable published records. Clean up redundant/transient state without deleting the information required to continue the session or retrieve its published links.
 - Keep lightweight saved history locally until the user removes it. Retain only what retrieval needs: record link/identifier, saved time, site, a non-content-derived display label and minimal status. Never retain document text, excerpts, event arrays or private checkpoint credentials in history.
@@ -68,17 +84,17 @@ A writer can explicitly start a session in a field, leave, and return two months
 - New fields still require explicit activation. Reattach a previously authorized session automatically only with reliable document/field identity. Generic URL, field label, or DOM position alone is not enough when a site reuses an editor for many documents. For ambiguous cases, let the writer choose the existing named session; never silently attach someone else's draft or start a replacement session.
 - Resuming an existing session may target a non-empty field. The empty-field requirement applies to new independent sessions, not to returning to an existing one. The website supplies the text; PMBAH does not store or restore the words.
 - Numeric length checks cannot prove that restored text is unchanged. If edits may have been missed, preserve the gap and represent measurement uncertainty honestly rather than claiming an uninterrupted exact length curve. Do not introduce background plaintext snapshots or per-edit content hashes to solve reattachment.
-- An existing published signature remains immutable. Further publication must create another immutable record/link, with the relationship to prior records explicit. Retaining a working session and retaining a published snapshot are different responsibilities. Define whether later snapshots cover full accumulated history or a linked continuation before implementation; unfinished-session resumption must not be blocked on that separate decision.
-- Clarify lifecycle controls: leaving an editor is detachment, pausing is resumable, publishing creates a snapshot, and deletion is explicit. The existing terminal Stop/Finish implementation cannot be relabelled as resumable without changing its behavior.
+- An existing published signature remains immutable. Further publication must create another immutable record/link, with the relationship to prior records explicit. Retaining a working session and retaining a published snapshot are different responsibilities. The candidate uses linked continuation sessions containing only new mutations, as defined above.
+- Clarify lifecycle controls: leaving an editor is detachment, pausing is resumable, publishing creates a snapshot, and deletion is explicit. Stop retains an unfinished draft; finishing freezes a published segment, and Continue creates a new linked session.
 
-### Technical blockers identified before implementation
+### Historical blockers and their resolution
 
-1. Producer-core currently sweeps drafts and saved anchors after three days. Durable storage and migration must run before that sweep can lose any further sessions or links.
-2. Format numeric validation and PostgreSQL duration/delay/active-time/idle-time columns currently use a signed 32-bit millisecond bound: 2,147,483,647 ms, approximately 24.86 days. Two months exceeds it. Widen time fields through format validation, database migrations, API decoding, analyzer statistics and viewer rendering. Do not indiscriminately widen counts/offsets or change historical hashes.
-3. Unsigned server observation sessions currently expire after seven days. Decide and implement how commitments remain useful across long absences; do not claim the server witnessed the full pause if its earlier commitments were lost. Preserve or honestly account for earlier evidence.
-4. Current browser route identity is tied to a live tab/frame/document. It supports exact routing while open, not reliable cross-month document identity. Design durable attachment separately and reject ambiguous descriptor matches.
-5. Current duration ends at the last edit, not the publish action. Resuming with a later edit naturally includes the intervening pause once the time limit is widened. Returning only to publish requires an explicit end-time/idle-time representation; do not invent a mutation or change an unsigned manifest duration without accounting for signature coverage.
-6. Finalization currently freezes the session and event cleanup removes uploaded histories. Separate resumable working state from immutable publication before supporting later revisions.
+1. The earlier three-day expiry is disabled for extension drafts and saved anchors. Cleanup removes uploaded event logs/tokens only after retaining the link; failed durable writes must preserve recoverable state.
+2. Migration 003 widened duration/delay/active/idle columns to PostgreSQL `bigint`. Safe-integer JSON decoding supports months without rounding. Counts and positions retain their existing limits; historical hashes remain unchanged.
+3. Unsigned server observation metadata no longer expires after seven days. Old checkpoints remain useful across long absences, without fake idle heartbeats or claims of continuous observation.
+4. Durable attachment remains an explicit user choice. Exact live tab/frame/document routing does not become a cross-month identity guess based on URL or labels.
+5. Format 0.3 adds a final seal over elapsed finish time, optional parent hash and optional text binding. The 0.2 event-chain domain is reused to preserve draft checkpoints. Existing 0.1/0.2 records retain their original hash semantics.
+6. Publication remains immutable. Continued writing uses a new linked session and new mutations, preserving the prior saved link without retaining its full event log indefinitely.
 
 ## Implementation slices and acceptance
 
@@ -88,8 +104,8 @@ A writer can explicitly start a session in a field, leave, and return two months
 4. Long-session format/storage/observation support and safe reattachment. Simulate at least 60 days away, close/restart the browser, resume a non-empty field, add edits, sign and verify the full pause survives upload and visualization. Test ambiguous same-site editors and off-device changes without inventing coverage.
 5. Compact panel layout and scale. Test 0, 1, 20 and 200 saved records; narrow panel, keyboard/screen-reader use, stable focus, search/older entries and no interference with current writing. Opening/copying an old record must never alter which draft will finish.
 
-Each implementation slice needs review by an agent that did not implement it. Validate the assembled experience in authenticated Gmail before publishing a replacement candidate. See `docs/long-sessions-handoff-2026-09-23.md` for the implemented foundation and remaining work.
+Each implementation slice needs review by an agent that did not implement it. Automated fixtures cover the generic editor/panel behavior; they are not authenticated Gmail acceptance. Validate the assembled experience on authenticated target sites before claiming those sites are accepted. See `docs/long-sessions-handoff-2026-09-23.md` for the historical 0.2.1 foundation, and the current release handoff for final test/deployment evidence.
 
 ## Independent design review
 
-An independent UX reviewer agreed with the current-work/history separation and requested window/tab scoping, migration-before-cleanup and sufficient history metadata. The owner subsequently overrode the proposed main-flow comparison sentence and mail-specific scope wording, and required editable names and non-expiring resumable sessions. A separate architecture reviewer confirmed the 24.86-day time limit, seven-day observation expiry, currently disabled non-empty resumption, and the distinction between last-edit duration and publication time. These are included in the implementation requirements. The subsequent authorized implementation addresses duration/storage/retention and explicit unsigned-draft resumption; it does not complete the broader panel design.
+An independent UX reviewer agreed with the current-work/history separation and requested window/tab scoping, migration-before-cleanup and sufficient history metadata. The owner subsequently overrode the proposed main-flow comparison sentence and mail-specific scope wording, and required editable names and non-expiring resumable sessions. A separate architecture reviewer confirmed the 24.86-day time limit, seven-day observation expiry, currently disabled non-empty resumption, and the distinction between last-edit duration and publication time. These are included in the implementation requirements. The 0.2.1 foundation addressed duration/storage/retention and explicit unsigned-draft resumption. The 0.3.0 candidate implements the broader panel and signed-finish design described at the top; independent review and release evidence must refer to that candidate rather than the earlier screenshots.

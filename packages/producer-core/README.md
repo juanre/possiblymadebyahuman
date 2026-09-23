@@ -144,7 +144,11 @@ When in doubt, prefer creating a new session with `degraded` certainty over sile
 
 ## What you can verify without text
 
-`registry.sign()` runs `verifyEventHashChain({manifest, events})` before returning. That check validates the manifest fields, the canonical event log, and `manifest.record_hash === BLAKE3(format_version || session_id || events…)`.
+`registry.sign()` runs `verifyEventHashChain({manifest, events})` before returning. It validates the manifest, canonical events and the version-specific record seal.
+
+With `signedFinishTime: true`, the registry creates format `0.3` records. Finish duration includes the elapsed wait after the last edit and is frozen for exact retries; finishing creates no event. Active `0.2` drafts upgrade without changing their checkpoint tips. Legacy failed uploads and `0.1` drafts retain their original version/hash. Consumers must sign and persist the frozen state before awaiting checkpoint flush or HTTP upload.
+
+Explicit `continueFrom()` creates a linked segment from an uploaded record, preserves its saved anchor, and starts the new clock at the prior signed finish. The first real edit has unknown position unless the consumer explicitly reattaches an empty field. Old anchors without a signed finish use their local upload time as a legacy boundary. `discardPersisted(ids)` removes local records with awaited storage and restores the removed records on failure without overwriting other sessions. See [signed finish and continuations](../../docs/signed-finish-and-continuations.md).
 
 It does not verify document content, because PMBAH v0 does not inspect, hash, replay, or store document content.
 

@@ -635,7 +635,7 @@ test("dispatcher: sign with a content-blind text binding seals it and stays veri
   await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: textBinding });
 
   const payload = upload.calls[0];
-  assert.equal(payload.manifest.format_version, "0.2");
+  assert.equal(payload.manifest.format_version, "0.3");
   assert.deepEqual(payload.manifest.text_binding, textBinding);
   // record_hash is sealed over the binding — the chain still verifies.
   assert.equal(verifyRecord({ manifest: payload.manifest, events: payload.events }).valid, true);
@@ -1157,7 +1157,8 @@ test("dispatcher: resume without a new edit can publish earlier activity but can
   const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
   assert.equal(signed.result.kind, "uploaded");
   assert.equal(upload.calls[0].events.length, 1, "resume and finish do not invent mutations");
-  assert.equal(upload.calls[0].manifest.duration_ms, 1000, "duration remains time through the last observed edit, not trailing idle");
+  assert.equal(upload.calls[0].manifest.duration_ms, 60 * 86400000 + 1000, "signed finish includes the pause without inventing an edit");
+  assert.equal(verifyRecord(upload.calls[0]).valid, true);
   assert.equal(upload.calls[0].manifest.text_binding, undefined);
 });
 
@@ -1225,4 +1226,62 @@ test("dispatcher: failed upload-intent persistence prevents the HTTP request", a
   assert.equal(upload.calls.length, 0);
   assert.equal((await storage.read())[0].state, "failed_upload");
   assert.equal((await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid })).result.kind, "uploaded");
+});
+
+test("dispatcher: confirmed finish survives restart during a stalled checkpoint flush", async () => {
+  const { dispatcher, storage, clock } = makeDispatcher();
+  const registration = { kind: 'register_field', activation_id: 'explicit', tab_id: 1, frame_id: 0, origin_url: 'https://a.test', page_path: '/post', page_title: 'Reply', descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const sid = (await dispatcher.handle(registration)).result.session_id;
+  clock.advance(1000);
+  await dispatcher.handle({kind:'append_mutation',session_id:sid,mutation:{op:'insert',pos:0,del_len:0,ins_len:3,source:'typing'}});
+  await dispatcher.registry.awaitObservationIdle(sid);
+  clock.advance(60 * 86400000);
+  let flushStarted;
+  const started = new Promise(resolve=>flushStarted=resolve);
+  dispatcher.registry.flushObservation = async () => { flushStarted(); return new Promise(()=>{}); };
+  void dispatcher.handle({kind:'sign_session',session_id:sid});
+  await started;
+  const persisted = (await storage.read())[0];
+  assert.equal(persisted.state,'signing');
+  assert.equal(persisted.signed_duration_ms,60 * 86400000 + 1000);
+  clock.advance(2 * 86400000);
+  const upload=recordingUpload();
+  const recovered = new BackgroundDispatcher({storage,clock,uuid:deterministicUuid(),checkpoint:recordingCheckpoint(),upload,producer:PRODUCER});
+  await recovered.ensureInitialised();
+  assert.equal(recovered.registry.get(sid).state,'failed_upload');
+  assert.equal((await recovered.handle({kind:'retry_failed_upload',session_id:sid})).result.kind,'uploaded');
+  assert.equal(upload.calls[0].manifest.duration_ms,persisted.signed_duration_ms,'restart does not extend confirmed finish');
+  assert.equal(verifyRecord(upload.calls[0]).valid,true);
+});
+
+test('dispatcher: explicit continuation preserves the prior link and cannot silently share an unfinished child', async () => {
+  const {dispatcher,clock} = makeDispatcher();
+  const registration={kind:'register_field',activation_id:'explicit',tab_id:1,frame_id:0,origin_url:'https://a.test',page_path:'/post',page_title:'Reply',descriptor:SAMPLE_DESCRIPTOR,field_is_empty:true};
+  const parent=(await dispatcher.handle(registration)).result.session_id;
+  await dispatcher.handle({kind:'append_mutation',session_id:parent,mutation:{op:'insert',pos:0,del_len:0,ins_len:3,source:'typing'}});
+  await dispatcher.handle({kind:'sign_session',session_id:parent});
+  const saved=dispatcher.registry.get(parent).uploaded_response;
+  clock.advance(60 * 86400000);
+  const wrongSite=await dispatcher.handle({...registration,origin_url:'https://b.test',field_is_empty:false,continue_session_id:parent});
+  assert.equal(wrongSite.kind,'error');
+  const continued=await dispatcher.handle({...registration,field_is_empty:false,continue_session_id:parent});
+  const child=continued.result.session_id;
+  assert.notEqual(child,parent);
+  assert.equal(dispatcher.registry.get(child).parent_record,saved.record_hash);
+  const duplicate=await dispatcher.handle({...registration,tab_id:2,field_is_empty:false,continue_session_id:parent});
+  assert.equal(duplicate.kind,'error');
+  assert.match(duplicate.reason,/unfinished draft/);
+  assert.equal(dispatcher.registry.get(child).origin.tab_id,1);
+  assert.deepEqual(dispatcher.registry.get(parent).uploaded_response,saved);
+});
+
+test('dispatcher: a failed event-storage write is reported before acknowledging capture', async () => {
+  const {dispatcher,storage}=makeDispatcher();
+  const sid=(await dispatcher.handle({kind:'register_field',activation_id:'explicit',tab_id:1,frame_id:0,origin_url:'https://a.test',page_path:'/post',page_title:'Reply',descriptor:SAMPLE_DESCRIPTOR,field_is_empty:true})).result.session_id;
+  storage.write=async()=>{throw new Error('Storage is full');};
+  const result=await dispatcher.handle({kind:'append_mutation',session_id:sid,mutation:{op:'insert',pos:0,del_len:0,ins_len:3,source:'typing'}});
+  assert.equal(result.kind,'error');
+  assert.match(result.reason,/Storage is full/);
+  assert.equal(dispatcher.registry.get(sid).events.length,1,'the in-memory event remains available for recovery');
+  await dispatcher.registry.awaitObservationIdle(sid);
 });

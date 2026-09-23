@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { buildActivityBins, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDuration, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "../apps/web/src/record-utils.ts";
+import { buildActivityBins, buildDelayHistogram, buildLengthStepPoints, recordTimingDetails, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDuration, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "../apps/web/src/record-utils.ts";
 import { createTextBinding } from "../packages/format/src/index.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
@@ -270,4 +270,67 @@ test("long session durations and observation spans use days without losing the p
   assert.equal(formatDuration(duration), "60d 2h");
   assert.equal(formatDuration(3 * 3600000 + 5 * 60000), "3h 5m");
   assert.equal(formatServerObservedSpan(duration), "60 days 2 hours");
+});
+
+
+test("length steps do not draw growth during a sixty-day pause or extrapolate into unknown history", () => {
+  const pause = 60 * 86400000;
+  const events = [
+    { seq: 0, t: 1000, op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" },
+    { seq: 1, t: pause, op: "insert", pos: 3, del_len: 0, ins_len: 2, source: "typing" },
+    { seq: 2, t: pause + 1000, op: "delete", pos: null, del_len: null, ins_len: 0, source: "unknown" },
+  ];
+  assert.deepEqual(buildLengthStepPoints(buildTimelinePoints(events)), [
+    { t: 1000, length: 3 }, { t: pause, length: 3 }, { t: pause, length: 5 },
+  ]);
+  assert.deepEqual(buildLengthStepPoints(buildTimelinePoints(events.slice(2))), []);
+  const simultaneous = events.slice(0, 2).map(event => ({ ...event, t: 0 }));
+  assert.deepEqual(buildLengthStepPoints(buildTimelinePoints(simultaneous)).map(point => point.length), [3, 3, 5]);
+});
+
+test("dense length geometry has no sloping segments and preserves the final length", () => {
+  const events = Array.from({ length: 200_000 }, (_, seq) => ({ seq, t: seq * 10, op: "insert", pos: seq, del_len: 0, ins_len: 1, source: "typing" }));
+  const steps = buildLengthStepPoints(buildTimelinePoints(events));
+  assert.deepEqual(steps.at(-1), { t: 1_999_990, length: 200_000 });
+  for (let index = 1; index < steps.length; index++) {
+    assert.ok(steps[index].t === steps[index - 1].t || steps[index].length === steps[index - 1].length, "each segment must be vertical or horizontal");
+  }
+});
+
+test("rhythm buckets conserve every gap and separate exact thresholds from overflow", () => {
+  const delays = [0, 15, 16, 100, 99_999, 100_000, 100_001, 60 * 86400000];
+  let elapsed = 0;
+  const events = [0, ...delays].map((delay, seq) => ({ seq, t: elapsed += delay, op: "insert", pos: seq, del_len: 0, ins_len: 1, source: "typing" }));
+  const histogram = buildDelayHistogram(events);
+  assert.equal(histogram.underflow, 2, "zero and sub-16ms gaps are explicitly counted");
+  assert.equal(histogram.overflow, 2, "100001ms and sixty days do not masquerade as 100s");
+  assert.equal(histogram.bins[0].count, 1, "16ms belongs on the log axis");
+  assert.equal(histogram.bins.at(-1).count, 2, "100s is included in the final finite bucket");
+  assert.equal(histogram.total, 8);
+  assert.equal(histogram.bins.reduce((sum, bin) => sum + bin.count, histogram.underflow + histogram.overflow), histogram.total);
+  assert.equal(buildDelayHistogram([]).total, 0);
+  assert.equal(buildDelayHistogram(events.slice(0, 1)).total, 0);
+});
+
+test("delay summaries use readable units for long gaps and retain null semantics", async () => {
+  const { formatDelayMs } = await import("../apps/web/src/record-utils.ts");
+  assert.equal(formatDelayMs(60 * 86400000), "60d 0h");
+  assert.equal(formatDelayMs(90_000), "1m 30s");
+  assert.equal(formatDelayMs(1_500), "1.5s");
+  assert.equal(formatDelayMs(0), "0ms");
+  assert.equal(formatDelayMs(null), "n/a");
+});
+
+
+test("signed finish separates endpoint waits from the measured editing span", async () => {
+  const record = await recordFixture();
+  record.manifest.format_version = "0.3";
+  record.manifest.duration_ms = 60 * 86400000;
+  record.events = record.events.map(event => ({ ...event, t: event.t + 1000 }));
+  assert.deepEqual(recordTimingDetails(record), {
+    signedFinish: true, editingSpanMs: 240, beforeFirstEditMs: 1000,
+    afterLastEditMs: 60 * 86400000 - 1240,
+  });
+  record.manifest.format_version = "0.2";
+  assert.equal(recordTimingDetails(record).signedFinish, false, "legacy duration is not described as hash-sealed finish");
 });

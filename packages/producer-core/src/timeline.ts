@@ -2,6 +2,7 @@ import {
   b3HashBytes,
   b3HashToBytes,
   canonicalizeEventBytes,
+  eventChainFormatVersion,
   type B3Hash,
   type BufferMutation,
   type FormatVersion,
@@ -60,7 +61,7 @@ export function advanceChain(
 ): B3Hash {
   const event_bytes = canonicalizeEventBytes(next_event);
   if (previous_chain_tip === null) {
-    return b3HashBytes(concatBytes(utf8(format_version), utf8(session_id), event_bytes));
+    return b3HashBytes(concatBytes(utf8(eventChainFormatVersion(format_version)), utf8(session_id), event_bytes));
   }
   return b3HashBytes(concatBytes(b3HashToBytes(previous_chain_tip), event_bytes));
 }

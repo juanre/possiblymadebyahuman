@@ -1,6 +1,8 @@
 import {
   computeRecordHash,
   FORMAT_VERSION,
+  FORMAT_VERSION_0_2,
+  FORMAT_VERSION_0_3,
   verifyEventHashChain,
 } from "../../format/src/index.ts";
 import type {
@@ -8,6 +10,7 @@ import type {
   B3Hash,
   BufferMutation,
   CaptureContext,
+  FormatVersion,
   RecordManifest,
   TextBinding,
 } from "../../format/src/index.ts";
@@ -81,6 +84,8 @@ export type SessionRegistryOptions = {
   producer: ProducerIdentity;
   checkpoint?: CheckpointAdapter;
   cadence?: CadenceOptions;
+  /** Produce 0.3 records with a sealed finish time; legacy clients keep 0.2. */
+  signedFinishTime?: boolean;
 };
 
 export type AppendOptions = {
@@ -99,6 +104,7 @@ export class SessionRegistry {
   readonly #backoff_max_ms: number;
   readonly #commitment_retention: number;
   readonly #checkpoint_timeout_ms: number;
+  readonly #signedFinishTime: boolean;
   #persistTail: Promise<void> = Promise.resolve();
   #flushing = new Set<SessionId>();
   #sessions = new Map<SessionId, SessionRecord>();
@@ -116,6 +122,7 @@ export class SessionRegistry {
     this.#backoff_max_ms = options.cadence?.backoff_max_ms ?? DEFAULT_CHECKPOINT_BACKOFF_MAX_MS;
     this.#commitment_retention = options.cadence?.commitment_retention ?? DEFAULT_COMMITMENT_RETENTION;
     this.#checkpoint_timeout_ms = options.cadence?.checkpoint_timeout_ms ?? 30_000;
+    this.#signedFinishTime = options.signedFinishTime ?? false;
   }
 
   async init(): Promise<void> {
@@ -190,7 +197,7 @@ export class SessionRegistry {
     const now = this.#clock.now();
     const record: SessionRecord = {
       session_id: resolution.session_id,
-      format_version: FORMAT_VERSION,
+      format_version: this.#signedFinishTime ? FORMAT_VERSION_0_3 : FORMAT_VERSION,
       base_wall_ms: now,
       last_edit_wall_ms: now,
       origin,
@@ -257,22 +264,30 @@ export class SessionRegistry {
       throw new Error(`cannot sign session ${session_id} with no events`);
     }
     const events: BufferMutation[] = record.events.map((event) => ({ ...event }));
-    const textBinding = record.state === "failed_upload" ? options.textBinding ?? record.signed_text_binding : options.textBinding;
+    const retry = record.state === "failed_upload";
+    const textBinding = retry ? record.signed_text_binding : options.textBinding;
+    // Upgrade unsigned 0.2 drafts without replacing their event-chain or any
+    // server checkpoints. Legacy failed uploads must retry their original hash.
+    const formatVersion = this.#signedFinishTime && !retry && record.format_version === FORMAT_VERSION_0_2
+      ? FORMAT_VERSION_0_3 : record.format_version;
+    const duration = retry && record.signed_duration_ms !== undefined ? record.signed_duration_ms
+      : formatVersion === FORMAT_VERSION_0_3 ? Math.max(durationMs(events), this.#clock.now() - record.base_wall_ms)
+      : durationMs(events);
     // When a binding is present the record hash is sealed over it; otherwise
     // it is the plain event-chain tip (the cached tip when available).
-    const record_hash = textBinding
-      ? computeRecordHash(events, record.session_id, record.format_version, textBinding)
-      : record.last_event_chain_tip ?? this.#chainHeadFromEvents(events, record.session_id);
+    const record_hash = textBinding || formatVersion === FORMAT_VERSION_0_3
+      ? computeRecordHash(events, record.session_id, formatVersion, textBinding, { duration_ms: duration, parent_record: record.parent_record })
+      : record.last_event_chain_tip ?? this.#chainHeadFromEvents(events, record.session_id, formatVersion);
     const attestations: Attestation[] = [];
     const manifest: RecordManifest = {
-      format_version: record.format_version,
+      format_version: formatVersion,
       record_hash,
       session_id: record.session_id,
       producer: { ...record.producer, capabilities: [...record.producer.capabilities] },
       capture_context: record.capture_context,
       ...(textBinding ? { text_binding: textBinding } : {}),
       event_count: events.length,
-      duration_ms: durationMs(events),
+      duration_ms: duration,
       created_client_t: new Date(record.base_wall_ms).toISOString(),
       ingested_server_t: null,
       parent_record: record.parent_record ?? null,
@@ -285,7 +300,9 @@ export class SessionRegistry {
     }
 
     record.state = "signing";
+    record.format_version = formatVersion;
     record.signed_text_binding = textBinding;
+    record.signed_duration_ms = duration;
     return { manifest, events };
   }
 
@@ -361,10 +378,15 @@ export class SessionRegistry {
       return cloneSession(existing);
     }
     const now = this.#clock.now();
+    // A new explicit segment starts at the previous finish, preserving the
+    // pause before the next real edit. Old anchors have no sealed finish;
+    // their retained local upload time is the only available legacy boundary.
+    const priorFinish = previous.format_version === FORMAT_VERSION_0_3 && previous.signed_duration_ms !== undefined
+      ? previous.base_wall_ms + previous.signed_duration_ms : previous.last_edit_wall_ms;
     const record: SessionRecord = {
       session_id: this.#uuid.uuid(),
-      format_version: FORMAT_VERSION,
-      base_wall_ms: now,
+      format_version: this.#signedFinishTime ? FORMAT_VERSION_0_3 : FORMAT_VERSION,
+      base_wall_ms: this.#signedFinishTime ? priorFinish : now,
       last_edit_wall_ms: now,
       origin: { ...(location.origin ?? previous.origin) },
       descriptor: { ...(location.descriptor ?? previous.descriptor) },
@@ -375,6 +397,7 @@ export class SessionRegistry {
       last_event_chain_tip: null,
       state: "active",
       parent_record: parentHash,
+      ...(this.#signedFinishTime ? { pending_observation_gap: true } : {}),
       observation: emptyObservation(this.#checkpoint !== null),
     };
     this.#sessions.set(record.session_id, record);
@@ -393,6 +416,7 @@ export class SessionRegistry {
     record.uploaded_response = undefined;
     record.last_failure_reason = undefined;
     record.signed_text_binding = undefined;
+    record.signed_duration_ms = undefined;
     record.observation = emptyObservation(this.#checkpoint !== null);
     record.last_edit_wall_ms = this.#clock.now();
     return cloneSession(record);
@@ -419,6 +443,24 @@ export class SessionRegistry {
     this.#sessions.delete(session_id);
     this.#inFlight.delete(session_id);
     return cloned;
+  }
+
+  /** Remove local records only after storage accepts the change; retain links on failure. */
+  async discardPersisted(session_ids: SessionId[]): Promise<void> {
+    const removed = session_ids.map((id) => this.discard(id)).filter((record): record is SessionRecord => record !== null);
+    try {
+      await this.persist();
+    } catch (error) {
+      // Restore only the removed records. Edits to other sessions that arrived
+      // while storage was pending must not be overwritten by an old snapshot.
+      for (const record of removed) {
+        if (!this.#sessions.has(record.session_id)) this.#sessions.set(record.session_id, record);
+      }
+      // A concurrent checkpoint may have queued a snapshot while the records
+      // were absent. Queue the restored view after it before surfacing failure.
+      await this.persist().catch(() => undefined);
+      throw error;
+    }
   }
 
   sweep(options?: { ttl_ms?: number; uploaded_grace_ms?: number; retain_uploaded_anchors?: boolean }): SessionRecord[] {
@@ -522,10 +564,10 @@ export class SessionRegistry {
     return cloned;
   }
 
-  #chainHeadFromEvents(events: BufferMutation[], session_id: SessionId): B3Hash {
+  #chainHeadFromEvents(events: BufferMutation[], session_id: SessionId, formatVersion: FormatVersion): B3Hash {
     let tip: B3Hash | null = null;
     for (const event of events) {
-      tip = advanceChain(tip, event, session_id, FORMAT_VERSION);
+      tip = advanceChain(tip, event, session_id, formatVersion);
     }
     return tip as B3Hash;
   }

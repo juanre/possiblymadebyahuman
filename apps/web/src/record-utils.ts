@@ -80,13 +80,68 @@ export function buildTimelinePoints(events: BufferMutation[]): TimelinePoint[] {
   });
 }
 
+export type LengthStepPoint = { t: number; length: number };
+
+/** Hold each observed length until the next edit, then change it at that edit. */
+export function buildLengthStepPoints(points: TimelinePoint[]): LengthStepPoint[] {
+  const steps: LengthStepPoint[] = [];
+  for (const point of points) {
+    // A missing measurement can include edits during an unobserved absence.
+    // End at the last known edit instead of extending into that unknown gap.
+    if (point.documentLength === null) break;
+    const previous = steps.at(-1);
+    if (previous) steps.push({ t: point.t, length: previous.length });
+    steps.push({ t: point.t, length: point.documentLength });
+  }
+  return steps;
+}
+
+export const RHYTHM_MIN_MS = 16;
+export const RHYTHM_MAX_MS = 100_000;
+export const RHYTHM_BIN_COUNT = 40;
+
+/** Separate out-of-range gaps instead of clamping them onto the log axis. */
+export function buildDelayHistogram(events: BufferMutation[]): {
+  bins: ActivityBin[]; underflow: number; overflow: number; total: number;
+} {
+  const logMin = Math.log10(RHYTHM_MIN_MS);
+  const span = Math.log10(RHYTHM_MAX_MS) - logMin;
+  const bins = Array.from({ length: RHYTHM_BIN_COUNT }, (_, index) => ({
+    start: 10 ** (logMin + span * index / RHYTHM_BIN_COUNT),
+    end: 10 ** (logMin + span * (index + 1) / RHYTHM_BIN_COUNT),
+    count: 0,
+  }));
+  let underflow = 0, overflow = 0;
+  for (let index = 1; index < events.length; index++) {
+    const delay = events[index]!.t - events[index - 1]!.t;
+    if (delay < RHYTHM_MIN_MS) underflow++;
+    else if (delay > RHYTHM_MAX_MS) overflow++;
+    else bins[Math.min(RHYTHM_BIN_COUNT - 1, Math.floor((Math.log10(delay) - logMin) / span * RHYTHM_BIN_COUNT))]!.count++;
+  }
+  return { bins, underflow, overflow, total: Math.max(0, events.length - 1) };
+}
+
+/** Endpoint waits are distinct from intervals between captured edits. */
+export function recordTimingDetails(record: Pick<RecordApiResponse, "manifest" | "events">): {
+  signedFinish: boolean; editingSpanMs: number; beforeFirstEditMs: number; afterLastEditMs: number;
+} {
+  const first = record.events[0]?.t ?? 0;
+  const last = record.events.at(-1)?.t ?? 0;
+  return {
+    signedFinish: record.manifest.format_version === "0.3",
+    editingSpanMs: Math.max(0, last - first),
+    beforeFirstEditMs: first,
+    afterLastEditMs: Math.max(0, record.manifest.duration_ms - last),
+  };
+}
+
 export function timelineLengthScale(points: TimelinePoint[], observedFinalLength: number | null): number {
   const largestKnown = points.reduce((largest, point) => Math.max(largest, point.documentLength ?? 0), 0);
   return Math.max(1, largestKnown, observedFinalLength ?? 0);
 }
 
 export function formatDelayMs(ms: number | null): string {
-  return ms === null ? "n/a" : `${ms}ms`;
+  return ms === null ? "n/a" : formatDuration(ms);
 }
 
 export function formatDuration(ms: number): string {

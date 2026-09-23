@@ -5,8 +5,10 @@ import { unicodeFullCasefold } from "./casefold.ts";
 export const FORMAT_PACKAGE = "@possiblymadebyahuman/format";
 export const FORMAT_VERSION_0_1 = "0.1";
 export const FORMAT_VERSION_0_2 = "0.2";
+export const FORMAT_VERSION_0_3 = "0.3";
+// Legacy producers opt into the new finalization contract explicitly.
 export const FORMAT_VERSION = FORMAT_VERSION_0_2;
-export const FORMAT_VERSIONS = [FORMAT_VERSION_0_1, FORMAT_VERSION_0_2] as const;
+export const FORMAT_VERSIONS = [FORMAT_VERSION_0_1, FORMAT_VERSION_0_2, FORMAT_VERSION_0_3] as const;
 export const HASH_PREFIX = "b3:";
 export const BLAKE3_HEX_LENGTH = 64;
 // Counts and codepoint offsets retain their existing 32-bit storage bounds.
@@ -326,6 +328,11 @@ export function b3HashToBytes(hash: B3Hash): Uint8Array {
   return hexToBytes(hash.slice(HASH_PREFIX.length));
 }
 
+/** 0.3 preserves 0.2 event commitments and adds a separate finalization seal. */
+export function eventChainFormatVersion(formatVersion: FormatVersion): FormatVersion {
+  return formatVersion === FORMAT_VERSION_0_3 ? FORMAT_VERSION_0_2 : formatVersion;
+}
+
 export function computeEventHashChain(
   events: EventLog,
   sessionId: string,
@@ -339,7 +346,7 @@ export function computeEventHashChain(
     const eventBytes = canonicalizeEventBytes(event);
     const input =
       event.seq === 0
-        ? concatBytes(utf8ToBytes(formatVersion), utf8ToBytes(sessionId), eventBytes)
+        ? concatBytes(utf8ToBytes(eventChainFormatVersion(formatVersion)), utf8ToBytes(sessionId), eventBytes)
         : concatBytes(b3HashToBytes(chain[event.seq - 1] as B3Hash), eventBytes);
     chain.push(b3HashBytes(input));
   }
@@ -351,8 +358,23 @@ export function computeRecordHash(
   sessionId: string,
   formatVersion: FormatVersion = FORMAT_VERSION,
   textBinding?: TextBinding,
+  finalization?: Pick<RecordManifest, "duration_ms" | "parent_record">,
 ): B3Hash {
   const eventTip = last(computeEventHashChain(events, sessionId, formatVersion));
+  if (formatVersion === FORMAT_VERSION_0_3) {
+    const errors: string[] = [];
+    validateElapsedMilliseconds(finalization?.duration_ms, "duration_ms", errors);
+    if (finalization?.parent_record != null && !isB3Hash(finalization.parent_record)) errors.push("parent_record must be a b3: hash or null");
+    if (textBinding !== undefined) errors.push(...validateTextBinding(textBinding));
+    if (errors.length) throw new TypeError(errors.join("; "));
+    const seal = canonicalizeJson({
+      format_version: FORMAT_VERSION_0_3,
+      duration_ms: finalization!.duration_ms,
+      parent_record: finalization!.parent_record ?? null,
+      text_binding: textBinding ?? null,
+    });
+    return b3HashBytes(concatBytes(b3HashToBytes(eventTip), utf8ToBytes(seal)));
+  }
   if (formatVersion === FORMAT_VERSION_0_1 || textBinding === undefined) return eventTip;
   return b3HashBytes(concatBytes(b3HashToBytes(eventTip), utf8ToBytes(canonicalizeTextBinding(textBinding))));
 }
@@ -377,6 +399,7 @@ export function verifyEventHashChain(record: WritingRecord): VerificationResult 
       record.manifest.session_id,
       record.manifest.format_version,
       record.manifest.text_binding,
+      record.manifest,
     );
     if (record.manifest.record_hash !== computedRecordHash) {
       errors.push(`record_hash mismatch: expected ${record.manifest.record_hash}, computed ${computedRecordHash}`);
@@ -433,6 +456,7 @@ export function verifyRecord(record: WritingRecord): VerificationResult {
       record.manifest.session_id,
       record.manifest.format_version,
       record.manifest.text_binding,
+      record.manifest,
     );
     if (record.manifest.record_hash !== computedRecordHash) {
       errors.push(`record_hash mismatch: expected ${record.manifest.record_hash}, computed ${computedRecordHash}`);
@@ -560,7 +584,7 @@ export function validateManifest(manifest: unknown): string[] {
   if (candidate.format_version === FORMAT_VERSION_0_1 && "text_binding" in candidate) {
     errors.push("text_binding is not valid for format_version 0.1");
   }
-  if (candidate.format_version === FORMAT_VERSION_0_2 && candidate.text_binding !== undefined) {
+  if ((candidate.format_version === FORMAT_VERSION_0_2 || candidate.format_version === FORMAT_VERSION_0_3) && candidate.text_binding !== undefined) {
     errors.push(...validateTextBinding(candidate.text_binding));
   }
   validateNonNegativeInteger(candidate.event_count, "event_count", errors);
