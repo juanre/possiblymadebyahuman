@@ -49,7 +49,7 @@ test("browser extension package command creates deterministic Chrome zip without
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.version, packageVersion);
   assert.equal(manifest.description, "Content-blind writing records for text fields.");
-  assert.deepEqual(manifest.permissions, ["storage", "clipboardWrite", "alarms"]);
+  assert.deepEqual(manifest.permissions, ["storage", "clipboardWrite", "alarms", "contextMenus", "sidePanel", "webNavigation"]);
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);
   assert.equal(manifest.background.service_worker, "service-worker.js");
 

@@ -51,7 +51,7 @@ test.describe("browser extension against the local service", () => {
     }
   });
 
-  test("records a real page, signs from the popup, uploads a content-blind record, and continues after signing", async ({ baseURL }) => {
+  test("explicitly captures only the chosen rich editor, publishes and restores its result, and stops after finishing", async ({ baseURL }, testInfo) => {
     const typed = "Quill pen ravens";
     const canaries = [typed, "Quill", "raven", "pen ravens"];
     const pageErrors = [];
@@ -59,32 +59,44 @@ test.describe("browser extension against the local service", () => {
     const page = await context.newPage();
     page.on("pageerror", (error) => pageErrors.push(error.message));
     await page.goto(`${baseURL}/extension-page`);
-    const field = page.getByLabel("plain field");
+    const field = page.getByLabel("rich field");
+    // Merely visiting or typing elsewhere must create no writing session.
+    await page.getByLabel("plain field").fill("unselected field");
+    await expect(page.locator("[data-pmbah-state]")).toHaveCount(0);
+
+    const popup = await context.newPage();
+    await popup.setViewportSize({ width: 380, height: 900 });
+    popup.on("pageerror", (error) => pageErrors.push(error.message));
+    await popup.goto(`chrome-extension://${extensionId}/popup.html`);
+    await expect(popup.locator("article.session")).toHaveCount(0);
+    await page.bringToFront();
     await field.focus();
-    await expect(page.locator("[data-pmbah-state='recording']")).toHaveCount(1);
+    // The side-panel document is opened in a test tab because headless Chrome
+    // does not expose its chrome UI. Keep the editor tab active while invoking
+    // the same panel button handler; the installed worker chooses its frame.
+    await popup.evaluate(() => document.getElementById("start").click());
+    await expect(popup.locator("#toast")).toContainText("Writing record started");
     await page.keyboard.type(typed);
     await page.keyboard.press("Backspace");
     const expectedEventCount = typed.length + 1;
-
-    const popup = await context.newPage();
-    popup.on("pageerror", (error) => pageErrors.push(error.message));
-    await popup.goto(`chrome-extension://${extensionId}/popup.html`);
-    const session = popup.locator("article.session", { hasText: "plain field" });
+    await popup.reload();
+    const session = popup.locator("article.session", { hasText: "rich field" });
     await expect(session).toHaveCount(1);
-    await expect(session.locator(".session-state")).toHaveText("active");
-    await expect(session).toContainText(`${expectedEventCount} events`);
+    await expect(session.locator(".session-state")).toHaveText("Active draft");
+    await expect(session).toContainText(`${expectedEventCount} editing events`);
 
-    await session.getByRole("button", { name: "Sign & upload" }).click();
+    await session.getByRole("button", { name: "Finish & get link" }).click();
     const confirm = popup.locator(".sign-confirm");
     await expect(confirm).toBeVisible();
     await expect(confirm.locator(".sign-bind")).toBeChecked();
     await confirm.locator(".sign-confirm-go").click();
 
     const toast = popup.locator("#toast");
-    await expect(toast).toContainText("record saved", { timeout: 30_000 });
+    await expect(toast).toContainText("Record saved", { timeout: 30_000 });
     await expect(toast).not.toHaveClass(/error/);
-    await expect(session.locator(".session-state")).toHaveText("uploaded");
-    const shortSignature = (await session.locator("a").innerText()).trim();
+    await expect(session.locator(".session-state")).toHaveText("Saved");
+    const recordUrl = await session.getByLabel("Complete record link").inputValue();
+    const shortSignature = new URL(recordUrl).pathname.slice(1);
     expect(shortSignature).toMatch(/^[A-Za-z0-9_-]{6,}$/);
 
     const response = await fetch(`${localBaseUrl}/api/records/${shortSignature}`);
@@ -109,21 +121,100 @@ test.describe("browser extension against the local service", () => {
     await expect(recordPage.getByRole("heading", { name: "Signed writing record" })).toBeVisible();
     await expect(recordPage.locator("section.card", { hasText: "Signature & details" })).toContainText(record.manifest.record_hash);
 
-    // Editing the signed field must not error; it starts a continuation session
-    // linked to the uploaded record.
+    // Finishing revokes capture; later edits cannot silently continue or be
+    // included in the saved record. Reopening controls restores a usable URL.
     await field.focus();
     await page.keyboard.type(" x");
-    await expect(page.locator("[data-pmbah-state='error']")).toHaveCount(0);
-    await expect(page.getByRole("status")).toHaveText("recording (continues a signed record)");
+    await expect(page.locator("[data-pmbah-state]")).toHaveCount(0);
     await popup.reload();
-    const sessions = popup.locator("article.session", { hasText: "plain field" });
-    await expect(sessions).toHaveCount(2);
-    const continuation = sessions.filter({ hasText: "continues a record you already signed in this field" });
-    await expect(continuation).toHaveCount(1);
-    await expect(continuation.locator(".session-state")).toHaveText("active");
-    await expect(continuation).toContainText("2 events");
-    await expect(sessions.filter({ hasText: shortSignature }).locator(".session-state")).toHaveText("uploaded");
+    await expect(popup.locator("article.session")).toHaveCount(1);
+    await expect(session.getByLabel("Complete record link")).toHaveValue(recordUrl);
+    await expect(session.getByRole("link", { name: "Open record" })).toHaveAttribute("href", recordUrl);
+    await expect(session.getByRole("button", { name: "Copy link" })).toBeEnabled();
 
+    expect(await popup.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await popup.screenshot({ path: testInfo.outputPath("extension-panel-saved.png"), fullPage: true });
+    await recordPage.screenshot({ path: testInfo.outputPath("record-viewer.png"), fullPage: true });
     expect(pageErrors).toEqual([]);
   });
+
+  for (const crossOrigin of [false, true]) {
+  test(`freezes selected wording in the chosen ${crossOrigin ? "cross-origin" : "same-origin"} iframe, without binding the parent editor`, async ({ baseURL }) => {
+    const page = await context.newPage();
+    await page.goto(`${baseURL}/extension-page`);
+    await page.getByLabel("rich field").fill("UNSELECTED PARENT WORDS");
+    const frameUrl = new URL("/extension-page", baseURL);
+    if (crossOrigin) frameUrl.hostname = "localhost";
+    expect(frameUrl.origin === new URL(baseURL).origin).toBe(!crossOrigin);
+    await page.evaluate(src => {
+      const frame = document.createElement("iframe");
+      frame.src = src;
+      frame.title = "Chosen document frame";
+      frame.style.height = "500px";
+      document.body.append(frame);
+    }, frameUrl.href);
+    const field = page.frameLocator("iframe").getByLabel("rich field");
+    await field.waitFor();
+    const panel = await context.newPage();
+    await panel.goto(`chrome-extension://${extensionId}/popup.html`);
+    await page.bringToFront();
+    await field.focus();
+    await panel.evaluate(() => document.getElementById("start").click());
+    await expect(panel.locator("#toast")).toContainText("Writing record started");
+    await page.keyboard.type("hello chosen wording");
+    await field.evaluate(element => {
+      const range = element.ownerDocument.createRange();
+      range.setStart(element.firstChild, 6);
+      range.setEnd(element.firstChild, 12);
+      const selection = element.ownerDocument.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    await panel.reload();
+    await panel.locator("article.selected").getByRole("button", { name: "Finish & get link" }).click();
+    await panel.locator(".sign-confirm-go").click();
+    const saved = panel.locator("article.selected");
+    await expect(saved.getByRole("heading", { name: "Record saved" })).toBeVisible();
+    const url = await saved.getByLabel("Complete record link").inputValue();
+    const record = await (await fetch(`${localBaseUrl}/api/records/${new URL(url).pathname.slice(1)}`)).json();
+    expect(record.manifest.text_binding.canonical_length).toBe(6);
+    expect(record.manifest.event_count).toBe(20);
+    expect(record.stats.observed_final_length).toBe(20);
+    expect(JSON.stringify(record)).not.toContain("UNSELECTED PARENT WORDS");
+    await page.close();
+    await panel.close();
+  });
+
+  }
+
+  test("empty canonical wording cannot silently downgrade, and clipboard denial keeps a saved link", async ({ baseURL }) => {
+    const page = await context.newPage();
+    await page.goto(`${baseURL}/extension-page`);
+    const panel = await context.newPage();
+    await panel.goto(`chrome-extension://${extensionId}/popup.html`);
+    await page.bringToFront();
+    await page.getByLabel("rich field").focus();
+    await panel.evaluate(() => document.getElementById("start").click());
+    await expect(panel.locator("#toast")).toContainText("Writing record started");
+    await page.keyboard.type("!!!");
+    await panel.reload();
+    await panel.locator("article.selected").getByRole("button", { name: "Finish & get link" }).click();
+    await panel.locator(".sign-confirm-go").click();
+    await expect(panel.getByRole("alert")).toContainText("No record was published");
+    await expect(panel.locator("article.selected .saved-result")).toHaveCount(0);
+    await panel.getByRole("button", { name: "Publish process only" }).click();
+    const saved = panel.locator("article.selected");
+    await expect(saved.getByRole("heading", { name: "Record saved" })).toBeVisible();
+    await panel.evaluate(() => Object.defineProperty(navigator, "clipboard", { value: { writeText: async () => { throw new Error("permission denied"); } } }));
+    await saved.getByRole("button", { name: "Copy link" }).click();
+    await expect(saved.getByRole("status")).toContainText("your record is saved");
+    const url = await saved.getByLabel("Complete record link").inputValue();
+    await panel.reload();
+    await expect(panel.locator("article.selected").getByLabel("Complete record link")).toHaveValue(url);
+    const record = await (await fetch(`${localBaseUrl}/api/records/${new URL(url).pathname.slice(1)}`)).json();
+    expect(record.manifest.text_binding).toBeUndefined();
+    await page.close();
+    await panel.close();
+  });
+
 });

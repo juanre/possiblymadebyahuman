@@ -19,6 +19,8 @@ export type ContentToBackground =
       page_title: string;
       descriptor: FieldDescriptor;
       field_is_empty: boolean;
+      activation_id?: string;
+      share_session_id?: string;
     }
   | {
       kind: "append_mutation";
@@ -26,6 +28,9 @@ export type ContentToBackground =
       mutation: PendingMutation;
     }
   | { kind: "list_sessions" }
+  | { kind: "start_focused_editor"; share_session_id?: string }
+  | { kind: "prepare_finish"; session_id: string; bind: boolean }
+  | { kind: "stop_session"; session_id: string }
   | {
       kind: "sign_session";
       session_id: SessionId;
@@ -74,7 +79,10 @@ export type BackgroundResponse =
   // session_id is present when the edit started a continuation session and the
   // content script must record further edits under that id.
   | { kind: "append_mutation_result"; session_id?: SessionId }
-  | { kind: "list_sessions_result"; sessions: SessionRecord[] }
+  | { kind: "list_sessions_result"; sessions: SessionRecord[]; capture_status?: Record<string, "active" | "stopped" | "legacy">; selected_session_id?: string; last_start_error?: string }
+  | { kind: "start_editor_result"; session_id?: string; reason?: string }
+  | { kind: "prepare_finish_result"; text_binding: TextBinding | null; reason?: string }
+  | { kind: "stop_session_result"; ok: true }
   | { kind: "sign_session_result"; result: SignSessionResult }
   | { kind: "retry_result"; result: SignSessionResult }
   | { kind: "discard_result"; ok: true }
@@ -99,6 +107,9 @@ export const CONTENT_SCRIPT_REACHABLE_RESPONSE_KINDS = [
 export const MESSAGE_KINDS = [
   "register_field",
   "append_mutation",
+  "start_focused_editor",
+  "prepare_finish",
+  "stop_session",
   "list_sessions",
   "sign_session",
   "retry_failed_upload",

@@ -33,7 +33,7 @@ apps/
   ingest-api/           # Layer 2 HTTP service
   web/                  # Vite React record pages and /write
   site/                 # Hugo landing and docs site
-  browser-extension/    # capture-all browser producer
+  browser-extension/    # explicit-start browser producer
 
 producers/
   emacs/         # Emacs minor-mode producer

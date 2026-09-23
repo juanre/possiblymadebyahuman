@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "../apps/web/src/record-utils.ts";
+import { buildActivityBins, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "../apps/web/src/record-utils.ts";
 import { createTextBinding } from "../packages/format/src/index.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
@@ -242,4 +242,25 @@ test("delay values render as n/a without a unit when unknown", async () => {
   const { formatDelayMs } = await import("../apps/web/src/record-utils.ts");
   assert.equal(formatDelayMs(null), "n/a");
   assert.equal(formatDelayMs(60), "60ms");
+});
+
+
+test("activity preserves ordinary unknown-position edits without inventing document lengths", () => {
+  const events = Array.from({length: 5}, (_, seq) => ({seq, t: seq * 100, op: "insert", pos: null, del_len: null, ins_len: 1, source: "typing"}));
+  const bins = buildActivityBins(events, 400, 4);
+  assert.equal(bins.reduce((sum, bin) => sum + bin.count, 0), 5);
+  assert.equal(bins[0].count, 1);
+  assert.equal(bins.at(-1).count, 2);
+  assert.ok(buildTimelinePoints(events).every(point => point.documentLength === null));
+});
+
+test("activity distinguishes empty logs and zero-time edits and bounds dense charts", () => {
+  assert.deepEqual(buildActivityBins([], 0), []);
+  const event = {seq: 0, t: 0, op: "insert", pos: null, del_len: null, ins_len: 1, source: "typing"};
+  assert.equal(buildActivityBins([event], 0).reduce((sum, bin) => sum + bin.count, 0), 1);
+  const dense = Array.from({length: 200_000}, (_, seq) => ({...event, seq, t: seq}));
+  const bins = buildActivityBins(dense, 0, 1000);
+  assert.ok(bins.length <= 200);
+  assert.equal(bins.reduce((sum, bin) => sum + bin.count, 0), dense.length);
+  assert.ok(bins.at(-1).end >= dense.at(-1).t);
 });

@@ -1,244 +1,312 @@
 import type { CaptureContextRedactions, SessionRecord } from "../../../../packages/producer-core/src/index.ts";
-import type { TextBinding } from "../../../../packages/format/src/index.ts";
-import type { BackgroundResponse, ComputeBindingRequest, ComputeBindingResponse, ContentToBackground } from "../lib/messages.ts";
+import type { BackgroundResponse, ContentToBackground } from "../lib/messages.ts";
+import { copyRecordLink, finishRecord, OperationGuard } from "./finish.ts";
 
 declare const chrome: {
   runtime: { sendMessage(message: ContentToBackground): Promise<BackgroundResponse> };
-  tabs: { sendMessage(tabId: number, message: ComputeBindingRequest): Promise<unknown> };
 };
 
 const APP = document.getElementById("app")!;
-const TOAST = document.getElementById("toast")!;
+const REVIEW = document.getElementById("review")!;
+const NOTICE = document.getElementById("toast")!;
+const START = document.getElementById("start") as HTMLButtonElement;
+const SHARE = document.getElementById("share") as HTMLInputElement;
+const guard = new OperationGuard();
+let selectedId: string | undefined;
+let lastWorkerSelectedId: string | undefined;
+let sessions: SessionRecord[] = [];
+let captureStatus: Record<string, "active" | "stopped" | "legacy"> = {};
+let reviewing = false;
+let renderPending = false;
+let lastStartError: string | undefined;
+const copyNotices = new Map<string, string>();
+const send = (message: ContentToBackground) => chrome.runtime.sendMessage(message);
 
 function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (ch) => {
-    switch (ch) {
-      case "&": return "&amp;";
-      case "<": return "&lt;";
-      case ">": return "&gt;";
-      case "\"": return "&quot;";
-      case "'": return "&#39;";
-      default: return ch;
+  return value.replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]!);
+}
+function fieldLabel(session: SessionRecord): string {
+  return session.descriptor.aria_label ?? session.descriptor.name ?? session.descriptor.id ?? session.descriptor.field_kind;
+}
+function isActive(session: SessionRecord): boolean {
+  return session.state === "active" && captureStatus[session.session_id] === "active";
+}
+function stateLabel(session: SessionRecord): string {
+  if (session.state === "uploaded") return "Saved";
+  if (session.state === "failed_upload") return "Upload needs retry";
+  if (session.state === "signing" || session.state === "uploading") return "Saving…";
+  if (captureStatus[session.session_id] === "legacy") return "Earlier local draft · stopped";
+  return isActive(session) ? "Active draft" : "Stopped draft";
+}
+function notify(message: string, error = false): void {
+  NOTICE.textContent = message;
+  NOTICE.className = `notice${error ? " error" : ""}`;
+  NOTICE.hidden = !message;
+}
+function updateAvailability(): void {
+  START.disabled = guard.busy || reviewing;
+  document.getElementById("share-option")!.hidden = !sessions.some(s => s.session_id === selectedId && isActive(s));
+  if (document.getElementById("share-option")!.hidden) SHARE.checked = false;
+}
+async function operation(action: () => Promise<void>): Promise<void> {
+  await guard.run(async () => {
+    // Keep the form in place and lock all actions until the worker answers.
+    const buttons = [...document.querySelectorAll<HTMLButtonElement>("button")];
+    const disabled = buttons.map(button => button.disabled);
+    buttons.forEach(button => { button.disabled = true; });
+    APP.setAttribute("aria-busy", "true");
+    try { await action(); }
+    catch (error) { notify(`Could not complete that action. ${error instanceof Error ? error.message : "Try again."}`, true); }
+    finally {
+      buttons.forEach((button, i) => { if (button.isConnected) button.disabled = disabled[i]; });
+      APP.removeAttribute("aria-busy");
     }
   });
+  if (!guard.busy) render();
 }
-
-function groupByOrigin(sessions: SessionRecord[]): Record<string, SessionRecord[]> {
-  const groups: Record<string, SessionRecord[]> = {};
-  for (const session of sessions) {
-    const key = session.origin.origin;
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(session);
+function button(label: string, action: () => void, secondary = false): HTMLButtonElement {
+  const element = document.createElement("button");
+  element.textContent = label;
+  if (secondary) element.className = "secondary";
+  element.addEventListener("click", action);
+  return element;
+}
+function render(): void {
+  renderPending = false;
+  APP.replaceChildren();
+  const title = document.createElement("h2");
+  title.textContent = "Your drafts and saved records";
+  APP.append(title);
+  if (!sessions.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "No writing records yet. Choose the editor you want to use, then start explicitly.";
+    APP.append(empty);
   }
-  return groups;
+  for (const session of sessions) APP.append(renderSession(session));
+  updateAvailability();
 }
-
-function fieldLabel(session: SessionRecord): string {
-  return (
-    session.descriptor.aria_label
-    ?? session.descriptor.name
-    ?? session.descriptor.id
-    ?? session.descriptor.field_kind
-  );
-}
-
-function summary(session: SessionRecord): string {
-  const events = session.events.length;
-  const observation = session.observation;
-  const obsPiece = observation.state === "disabled"
-    ? ""
-    : observation.last_committed_event_count > 0
-    ? ` · ${observation.last_committed_event_count}/${events} committed`
-    : ` · ${observation.state}`;
-  return `${events} event${events === 1 ? "" : "s"}${obsPiece}`;
-}
-
-function render(sessions: SessionRecord[]): void {
-  APP.innerHTML = "";
-  if (sessions.length === 0) {
-    APP.innerHTML = `<p class="empty">No sessions yet. Focus a textarea or plain text input on any page to start recording.</p>`;
-    return;
-  }
-  const groups = groupByOrigin(sessions);
-  for (const origin of Object.keys(groups).sort()) {
-    const heading = document.createElement("p");
-    heading.className = "group-origin";
-    heading.textContent = origin;
-    APP.appendChild(heading);
-    for (const session of groups[origin]) {
-      APP.appendChild(renderSession(session));
-    }
-  }
-}
-
 function renderSession(session: SessionRecord): HTMLElement {
+  const selected = session.session_id === selectedId;
   const wrap = document.createElement("article");
-  wrap.className = "session";
-  const head = document.createElement("div");
-  head.className = "session-head";
-  head.innerHTML = `<span class="session-title">${escapeHtml(fieldLabel(session))}</span><span class="session-state ${session.state}">${session.state}</span>`;
-  wrap.appendChild(head);
-
-  const meta = document.createElement("div");
+  wrap.className = `session${selected ? " selected" : ""}`;
+  wrap.dataset.sessionId = session.session_id;
+  const heading = document.createElement("div");
+  heading.className = "session-head";
+  heading.innerHTML = `<span class="session-title">${escapeHtml(fieldLabel(session))}</span><span class="session-state">${stateLabel(session)}</span>`;
+  wrap.append(heading);
+  const meta = document.createElement("p");
   meta.className = "session-meta";
-  meta.textContent = `${session.origin.path} · ${summary(session)}`;
-  wrap.appendChild(meta);
+  meta.textContent = `${session.origin.origin}${session.origin.path} · ${session.continuation_anchor ? "Saved record link; local event log cleared" : `${session.events.length} editing events`}`;
+  wrap.append(meta);
   if (session.parent_record) {
-    const parent = document.createElement("p");
-    parent.className = "session-meta";
-    parent.textContent = "continues a record you already signed in this field";
-    wrap.appendChild(parent);
+    const continuation = document.createElement("p");
+    continuation.className = "session-meta";
+    continuation.textContent = "Continues an earlier saved writing record.";
+    wrap.append(continuation);
   }
-
+  if (session.observation.state !== "disabled" && session.events.length) {
+    const observation = document.createElement("p");
+    observation.className = "session-meta";
+    const count = session.observation.last_committed_event_count;
+    observation.textContent = count > 0
+      ? `Server checkpoints cover ${count} of ${session.events.length} events. This describes receipt timing, not authorship.`
+      : "No server checkpoint has been confirmed yet. Your edits remain in this local draft.";
+    wrap.append(observation);
+  }
   const actions = document.createElement("div");
   actions.className = "session-actions";
-  const canSign = session.state === "active" && session.events.length > 0;
-  const signBtn = document.createElement("button");
-  signBtn.textContent = session.state === "uploaded" ? "uploaded" : session.state === "failed_upload" ? "Retry upload" : "Sign & upload";
-  signBtn.disabled = !(canSign || session.state === "failed_upload");
-  signBtn.addEventListener("click", () => {
-    if (session.state === "failed_upload") void performRetry(session);
-    else onSign(session);
-  });
-  actions.appendChild(signBtn);
-  const discardBtn = document.createElement("button");
-  discardBtn.className = "secondary";
-  discardBtn.textContent = "Discard";
-  discardBtn.addEventListener("click", () => void onDiscard(session));
-  actions.appendChild(discardBtn);
-  wrap.appendChild(actions);
-
-  if (session.uploaded_response) {
-    const link = document.createElement("p");
-    link.className = "session-meta";
-    link.innerHTML = `<a href="${escapeHtml(session.uploaded_response.url)}" target="_blank" rel="noopener">${escapeHtml(session.uploaded_response.short_signature)}</a>`;
-    wrap.appendChild(link);
+  if (!selected) {
+    actions.append(button("Select this record", () => {
+      if (reviewing || guard.busy) return;
+      selectedId = session.session_id;
+      SHARE.checked = false;
+      render();
+    }, true));
+  } else if (session.state === "active") {
+    const finish = button("Finish & get link", () => openReview(session));
+    finish.disabled = !session.events.length;
+    actions.append(finish);
+    if (isActive(session)) actions.append(button("Stop", () => void operation(async () => {
+      const response = await send({ kind: "stop_session", session_id: session.session_id });
+      if (response.kind === "error") notify(response.reason, true);
+      else notify("Capture stopped. Further edits are not included. You can publish its editing activity without a wording commitment, or clear the editor before starting a new record.");
+      await refresh();
+    }), true));
+  } else if (selected && session.state === "failed_upload") {
+    actions.append(button("Retry upload", () => void operation(async () => {
+      notify("Retrying the same signed record…");
+      await reportOutcome(await send({ kind: "retry_failed_upload", session_id: session.session_id }));
+    })));
   }
-  if (session.state === "failed_upload" && session.last_failure_reason) {
-    const fail = document.createElement("p");
-    fail.className = "session-meta";
-    fail.textContent = `upload failed: ${session.last_failure_reason}. Retry uploads the same signed record; Discard drops it.`;
-    wrap.appendChild(fail);
+  if (selected && !["signing", "uploading"].includes(session.state)) {
+    actions.append(button(session.state === "uploaded" ? "Remove local reference" : "Discard local draft", () => {
+      if (!window.confirm(session.state === "uploaded" ? "Remove this local reference? The public record remains available at its link." : "Discard this local draft? Capture will stop and these local events cannot be recovered.")) return;
+      void operation(async () => {
+        const response = await send({ kind: "discard_session", session_id: session.session_id });
+        if (response.kind === "error") notify(response.reason, true);
+        else notify("Local draft or reference removed.");
+        await refresh();
+      });
+    }, true));
   }
+  if (actions.childElementCount) wrap.append(actions);
+  if (session.uploaded_response) wrap.append(savedResult(session));
+  if (session.state === "failed_upload") {
+    const failure = document.createElement("p");
+    failure.className = "notice error";
+    failure.textContent = `Upload did not finish. ${session.last_failure_reason ?? "The server could not be reached."} Retry sends the same signed record.`;
+    wrap.append(failure);
+  }
+  if (reviewing || guard.busy) wrap.querySelectorAll("button").forEach(element => { element.disabled = true; });
   return wrap;
 }
-
-function onSign(session: SessionRecord): void {
-  openSignConfirm(session);
+function savedResult(session: SessionRecord): HTMLElement {
+  const saved = document.createElement("section");
+  saved.className = "saved-result";
+  saved.setAttribute("aria-label", "Saved writing record");
+  const url = session.uploaded_response!.url;
+  saved.innerHTML = `<h2>Record saved</h2><label class="sign-label-row">Complete record link<input type="url" readonly value="${escapeHtml(url)}" /></label><p class="note">${session.signed_text_binding ? "Includes a wording commitment. Readers can check candidate wording against it." : "Process-only record. No wording commitment is included."}</p>`;
+  const actions = document.createElement("div");
+  actions.className = "session-actions";
+  const open = document.createElement("a");
+  open.className = "button secondary";
+  open.textContent = "Open record";
+  open.href = url;
+  open.target = "_blank";
+  open.rel = "noopener";
+  const copyStatus = document.createElement("p");
+  copyStatus.className = "note";
+  copyStatus.setAttribute("role", "status");
+  copyStatus.textContent = copyNotices.get(session.session_id) ?? "";
+  const copy = button("Copy link", () => {
+    copy.disabled = true;
+    void copyRecordLink(url, navigator.clipboard).then(message => { copyStatus.textContent = message; copyNotices.set(session.session_id, message); }).finally(() => { copy.disabled = false; });
+  }, true);
+  actions.append(open, copy);
+  saved.append(actions, copyStatus);
+  return saved;
 }
-
-// Sign confirmation: the signer reviews the capture context that will be
-// published (page URL, page title, label) and can drop or rename it, and
-// chooses whether to bind the text. The binding is computed in the field's
-// content script (the only context with the text); the popup receives only
-// the commitment object.
-function openSignConfirm(session: SessionRecord): void {
+function closeReview(): void {
+  REVIEW.replaceChildren();
+  reviewing = false;
+  render();
+}
+function openReview(session: SessionRecord): void {
+  if (guard.busy || reviewing) return;
+  selectedId = session.session_id;
+  reviewing = true;
   const context = session.capture_context;
   const url = context.browser?.url ?? "";
   const title = context.browser?.title ?? "";
   const label = context.label ?? "";
-  const panel = document.createElement("div");
+  const panel = document.createElement("section");
   panel.className = "sign-confirm";
-  panel.innerHTML = `
-    <p class="sign-affirm">What the record will say about where this was written</p>
+  panel.innerHTML = `<h2 tabindex="-1">Finish this writing record</h2>
+    <p><strong>${escapeHtml(fieldLabel(session))}</strong><br><span class="sign-context-value">${escapeHtml(session.origin.origin + session.origin.path)}</span></p>
+    <p class="sign-note">Confirming stops capture and publishes the record. Further edits will not be included. Review the context that will be public:</p>
     <label><input type="checkbox" class="sign-keep-url" ${url ? "checked" : "disabled"} /> Page URL: <span class="sign-context-value">${escapeHtml(url || "none")}</span></label>
     <label><input type="checkbox" class="sign-keep-title" ${title ? "checked" : "disabled"} /> Page title: <span class="sign-context-value">${escapeHtml(title || "none")}</span></label>
-    <label class="sign-label-row">Label <input type="text" class="sign-label" value="${escapeHtml(label)}" maxlength="120" /></label>
-    <label><input type="checkbox" class="sign-bind" checked /> Bind selected text, or all field content if nothing is selected</label>
-    <p class="sign-note">The check compares wording — letters and digits — not exact text. No document text is sent to PMBAH. A public binding lets anyone test guesses at the wording; it is not encryption.</p>
-    <div class="session-actions">
-      <button class="sign-confirm-go">Sign &amp; upload</button>
-      <button class="secondary sign-confirm-cancel">Cancel</button>
-    </div>`;
-  APP.prepend(panel);
-  const bindCb = panel.querySelector(".sign-bind") as HTMLInputElement;
-  const keepUrl = panel.querySelector(".sign-keep-url") as HTMLInputElement;
-  const keepTitle = panel.querySelector(".sign-keep-title") as HTMLInputElement;
-  const labelInput = panel.querySelector(".sign-label") as HTMLInputElement;
-  (panel.querySelector(".sign-confirm-cancel") as HTMLElement).addEventListener("click", () => void refresh());
-  (panel.querySelector(".sign-confirm-go") as HTMLElement).addEventListener("click", () => {
-    const redactions: CaptureContextRedactions = {};
-    if (url && !keepUrl.checked) redactions.drop_url = true;
-    if (title && !keepTitle.checked) redactions.drop_title = true;
-    const nextLabel = labelInput.value.trim();
-    if (nextLabel !== label) redactions.replace_label = nextLabel;
-    void performSign(session, bindCb.checked, redactions);
-  });
-}
-
-async function requestBinding(session: SessionRecord): Promise<TextBinding | undefined> {
-  const tabId = session.origin.tab_id;
-  if (typeof tabId !== "number" || tabId < 0) return undefined;
-  try {
-    const res = (await chrome.tabs.sendMessage(tabId, {
-      kind: "compute_binding",
-      session_id: session.session_id,
-    })) as ComputeBindingResponse | undefined;
-    return res && res.kind === "binding_result" && res.text_binding ? res.text_binding : undefined;
-  } catch {
-    // Content script gone / tab closed — fall back to signing without a binding.
-    return undefined;
+    <label class="sign-label-row">Public label<input type="text" class="sign-label" value="${escapeHtml(label)}" maxlength="120" /></label>
+    <label><input type="checkbox" class="sign-bind" checked /> Include a wording commitment for the selection in this editor, or the whole editor if nothing is selected.</label>
+    <p class="sign-note">The check compares letters and digits, not exact text. No document text is sent. Anyone can test wording guesses against a public commitment; it is not encryption or proof of authorship.</p>
+    <p class="binding-error notice error" role="alert" hidden></p>
+    <div class="session-actions"><button class="sign-confirm-go">Confirm &amp; publish</button><button class="process-only secondary" hidden>Publish process only</button><button class="sign-confirm-cancel secondary">Cancel</button></div>`;
+  REVIEW.replaceChildren(panel);
+  render();
+  panel.querySelector<HTMLHeadingElement>("h2")!.focus();
+  const bind = panel.querySelector<HTMLInputElement>(".sign-bind")!;
+  const go = panel.querySelector<HTMLButtonElement>(".sign-confirm-go")!;
+  const process = panel.querySelector<HTMLButtonElement>(".process-only")!;
+  const error = panel.querySelector<HTMLElement>(".binding-error")!;
+  let frozen = false;
+  let frozenRedactions: CaptureContextRedactions | undefined;
+  function redactions(): CaptureContextRedactions {
+    if (frozenRedactions) return frozenRedactions;
+    const result: CaptureContextRedactions = {};
+    if (url && !panel.querySelector<HTMLInputElement>(".sign-keep-url")!.checked) result.drop_url = true;
+    if (title && !panel.querySelector<HTMLInputElement>(".sign-keep-title")!.checked) result.drop_title = true;
+    const nextLabel = panel.querySelector<HTMLInputElement>(".sign-label")!.value.trim();
+    if (nextLabel !== label) result.replace_label = nextLabel;
+    return result;
   }
-}
-
-async function performSign(session: SessionRecord, bind: boolean, redactions: CaptureContextRedactions): Promise<void> {
-  showToast("uploading…");
-  const text_binding = bind ? await requestBinding(session) : undefined;
-  if (bind && !text_binding) showToast("couldn't read the field to bind — signing the process only", true);
-  const hasRedactions = Object.keys(redactions).length > 0;
-  const response = await chrome.runtime.sendMessage({
-    kind: "sign_session",
-    session_id: session.session_id,
-    ...(text_binding ? { text_binding } : {}),
-    ...(hasRedactions ? { capture_context_redactions: redactions } : {}),
+  async function finish(withBinding: boolean): Promise<void> {
+    await operation(async () => {
+      frozenRedactions = redactions();
+      panel.querySelectorAll("input").forEach(input => { input.disabled = true; });
+      frozen = true;
+      notify("Finishing the chosen editor and saving its writing record…");
+      const outcome = await finishRecord(send, session.session_id, withBinding, frozenRedactions);
+      if (outcome.kind === "binding_unavailable") {
+        error.textContent = `No record was published. ${outcome.reason} Capture has stopped and this finished snapshot cannot be recomputed after later edits. Cancel, or explicitly publish only the editing process.`;
+        error.hidden = false;
+        go.hidden = true;
+        process.hidden = false;
+        notify("");
+        return;
+      }
+      await reportOutcome(outcome.response);
+    });
+  }
+  go.addEventListener("click", () => void finish(bind.checked));
+  process.addEventListener("click", () => void finish(false));
+  panel.querySelector(".sign-confirm-cancel")!.addEventListener("click", () => {
+    if (guard.busy) return;
+    closeReview();
+    if (frozen) notify("Publishing cancelled. Capture remains stopped; later edits are not included in this draft.");
+    void refresh();
   });
-  await reportUploadOutcome(response, "sign failed");
 }
-
-async function performRetry(session: SessionRecord): Promise<void> {
-  showToast("retrying upload…");
-  const response = await chrome.runtime.sendMessage({ kind: "retry_failed_upload", session_id: session.session_id });
-  await reportUploadOutcome(response, "retry failed");
-}
-
-async function reportUploadOutcome(response: BackgroundResponse, failurePrefix: string): Promise<void> {
-  const result = response.kind === "sign_session_result" || response.kind === "retry_result" ? response.result : null;
+async function reportOutcome(response: BackgroundResponse): Promise<void> {
+  const result = response.kind === "sign_session_result" || response.kind === "retry_result" ? response.result : undefined;
   if (result?.kind === "uploaded") {
-    let copied = false;
-    try {
-      await navigator.clipboard.writeText(result.response.url);
-      copied = true;
-    } catch {
-      // clipboard may be denied; the URL stays visible as the popup link.
-    }
-    const saved = copied ? `record saved · link copied (${result.response.short_signature})` : `record saved · ${result.response.short_signature} (copy the link below)`;
-    showToast(result.observation_note ? `${saved} · ${result.observation_note}` : saved);
+    closeReview();
+    notify(`Record saved. Use Open record or Copy link below.${result.observation_note ? ` ${result.observation_note}` : ""}`);
   } else {
-    const reason = result?.kind === "failed" ? result.reason : response.kind === "error" ? response.reason : "unknown";
-    showToast(`${failurePrefix}: ${reason}`, true);
+    closeReview();
+    const reason = result?.kind === "failed" ? result.reason : response.kind === "error" ? response.reason : "The extension did not return a saved record.";
+    notify(`Record was not saved. ${reason}`, true);
   }
   await refresh();
 }
-
-async function onDiscard(session: SessionRecord): Promise<void> {
-  const response = await chrome.runtime.sendMessage({ kind: "discard_session", session_id: session.session_id });
-  if (response.kind === "discard_result") showToast("discarded");
-  await refresh();
-}
-
-let toastTimer: ReturnType<typeof setTimeout> | undefined;
-function showToast(message: string, isError = false): void {
-  TOAST.textContent = message;
-  TOAST.hidden = false;
-  TOAST.className = `toast${isError ? " error" : ""}`;
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { TOAST.hidden = true; }, isError ? 6000 : 3000);
-}
-
 async function refresh(): Promise<void> {
-  const response = await chrome.runtime.sendMessage({ kind: "list_sessions" });
-  if (response.kind === "list_sessions_result") render(response.sessions);
-  else if (response.kind === "error") render([]);
+  const response = await send({ kind: "list_sessions" });
+  if (response.kind !== "list_sessions_result") {
+    notify(response.kind === "error" ? response.reason : "Could not load local drafts. Reopen the panel to try again.", true);
+    return;
+  }
+  if (response.last_start_error && response.last_start_error !== lastStartError) notify(response.last_start_error, true);
+  lastStartError = response.last_start_error;
+  const changed = JSON.stringify(sessions) !== JSON.stringify(response.sessions) || JSON.stringify(captureStatus) !== JSON.stringify(response.capture_status ?? {});
+  sessions = response.sessions;
+  captureStatus = response.capture_status ?? {};
+  // An explicit context-menu/shortcut start selects its new draft. Ordinary
+  // tab changes do not alter worker selection. Keep a confirmation pinned and
+  // preserve manual panel selection when the worker's selection is unchanged.
+  const previousSelectedId = selectedId;
+  if (!reviewing && !guard.busy && response.selected_session_id !== lastWorkerSelectedId) {
+    if (response.selected_session_id && sessions.some(s => s.session_id === response.selected_session_id)) selectedId = response.selected_session_id;
+    lastWorkerSelectedId = response.selected_session_id;
+  }
+  if (!selectedId || !sessions.some(s => s.session_id === selectedId)) selectedId = response.selected_session_id ?? sessions[0]?.session_id;
+  if (changed || previousSelectedId !== selectedId || !APP.childElementCount) renderPending = true;
+  // Read new explicit selections even when an old control retains focus. Only
+  // ordinary background refreshes wait, preserving URL selection/keyboard focus.
+  const sessionControlHasFocus = document.hasFocus() && APP.contains(document.activeElement);
+  if (renderPending && (!sessionControlHasFocus || previousSelectedId !== selectedId)) render();
 }
-
-void refresh();
+START.addEventListener("click", () => void operation(async () => {
+  const response = await send({ kind: "start_focused_editor", ...(SHARE.checked && selectedId ? { share_session_id: selectedId } : {}) });
+  if (response.kind === "start_editor_result" && response.session_id) {
+    selectedId = response.session_id;
+    notify("Writing record started in the chosen editor. Return there to write, then finish here.");
+    SHARE.checked = false;
+  } else {
+    notify(response.kind === "error" || response.kind === "start_editor_result" ? response.reason ?? "Choose an empty editor first." : "Could not start. Right-click the chosen editor and use Start writing record.", true);
+  }
+  await refresh();
+}));
+void refresh().catch(error => notify(`Could not load local drafts. ${String(error)}`, true));
+// Poll only outside an operation/review; refresh never moves selection or
+// replaces a partially completed confirmation or persistent error message.
+setInterval(() => { if (!guard.busy && !reviewing && document.visibilityState === "visible") void refresh().catch(() => {}); }, 2000);

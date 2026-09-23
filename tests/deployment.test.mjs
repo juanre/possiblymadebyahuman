@@ -158,7 +158,7 @@ test("browser extension release docs define package artifact and store plan", as
     "Edge Add-ons path",
     "Firefox AMO path",
     "Safari/App Store distribution is out of scope",
-    "Do not publish install links until Chrome Web Store approval produces a real URL",
+    "Do not publish a Chrome Web Store install link until approval produces a real URL",
   ]) {
     assert.match(release, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }

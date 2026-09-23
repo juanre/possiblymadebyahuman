@@ -169,11 +169,12 @@ export class SessionRegistry {
     origin: FieldOrigin,
     descriptor: FieldDescriptor,
     capture: CaptureContext,
+    options: { fresh?: boolean } = {},
   ): SessionRecord {
     const resolution = resolveSession(
       origin,
       descriptor,
-      Array.from(this.#sessions.values()),
+      options.fresh ? [] : Array.from(this.#sessions.values()),
       () => this.#uuid.uuid(),
     );
 
@@ -421,13 +422,13 @@ export class SessionRegistry {
     for (const removed of result.removed) {
       if (options?.retain_uploaded_anchors && removed.state === "uploaded"
         && now - removed.last_edit_wall_ms < (options.ttl_ms ?? DEFAULT_TTL_MS)) {
-        // Keep only the identity/link needed by a live field to continue.
+        // Keep identity, public link and binding outcome for the browser
+        // result view. Event logs and private observation tokens are purged.
         this.#sessions.set(removed.session_id, {
           ...removed,
           events: [],
           continuation_anchor: true,
           last_event_chain_tip: null,
-          signed_text_binding: undefined,
           observation: emptyObservation(this.#checkpoint !== null),
         });
         continue;

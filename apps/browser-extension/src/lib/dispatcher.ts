@@ -52,6 +52,7 @@ export class BackgroundDispatcher {
 
   /** Drops expired unsigned captures and uploaded sessions past their grace period. */
   async sweepExpired(): Promise<void> {
+    if (this.registry.list().length === 0) return;
     this.registry.sweep({ retain_uploaded_anchors: true });
     await this.registry.persist();
   }
@@ -60,12 +61,16 @@ export class BackgroundDispatcher {
     await this.ensureInitialised();
     try {
       switch (message.kind) {
+        case "start_focused_editor":
+        case "prepare_finish":
+        case "stop_session":
+          return { kind: "error", reason: "browser_routing_required" };
         case "register_field":
           return await this.#handleRegister(message);
         case "append_mutation":
           return this.#handleAppend(message);
         case "list_sessions":
-          return { kind: "list_sessions_result", sessions: this.registry.list().filter((session) => !session.continuation_anchor) };
+          return { kind: "list_sessions_result", sessions: this.registry.list() };
         case "sign_session":
           return await this.#handleSign(message);
         case "retry_failed_upload":
@@ -86,11 +91,16 @@ export class BackgroundDispatcher {
       tab_id: message.tab_id,
       frame_id: message.frame_id,
     };
+    if (message.share_session_id) {
+      const shared = this.registry.get(message.share_session_id);
+      if (!shared || shared.state !== "active" || shared.origin.origin !== origin.origin) return { kind: "error", reason: "shared_session_unavailable" };
+      return { kind: "register_field_result", result: { kind: "registered", session_id: shared.session_id, certainty: "resumed" } };
+    }
     const eligibility = isFieldEligible({
       origin,
       descriptor: message.descriptor,
       field_is_empty: message.field_is_empty,
-      existing_sessions: this.registry.list(),
+      existing_sessions: message.activation_id ? [] : this.registry.list(),
     });
     if (!eligibility.eligible) {
       return {
@@ -108,7 +118,7 @@ export class BackgroundDispatcher {
     const resumable = message.field_is_empty ? null : findResumableSession(origin, message.descriptor, this.registry.list());
     const session = resumable?.state === "uploaded"
       ? this.registry.continueFrom(resumable.session_id, { origin, descriptor: message.descriptor })
-      : this.registry.findOrCreate(origin, message.descriptor, capture);
+      : this.registry.findOrCreate(origin, message.descriptor, capture, { fresh: !!message.activation_id });
     void this.registry.persist();
     return {
       kind: "register_field_result",

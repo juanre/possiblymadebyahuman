@@ -8,11 +8,13 @@ import "./style.css";
 function App() {
   const slug = window.location.pathname.replace(/^\//, "").replace(/\/$/, "") || "record";
   const isWriteRoute = slug === "write";
+  const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{ loading: boolean; error?: string; notFound?: boolean; record?: RecordApiResponse }>({ loading: !isWriteRoute });
 
   useEffect(() => {
     if (isWriteRoute) return;
     let cancelled = false;
+    setState({ loading: true });
     async function load() {
       try {
         const response = await fetch(`/api/records/${encodeURIComponent(slug)}`);
@@ -29,10 +31,10 @@ function App() {
     }
     void load();
     return () => { cancelled = true; };
-  }, [isWriteRoute, slug]);
+  }, [isWriteRoute, slug, attempt]);
 
   if (isWriteRoute) return <WritePage />;
-  if (state.loading) return <main className="page-shell"><p className="eyebrow">possiblymadebyahuman</p><h1>Writing record</h1><p>Loading writing record…</p></main>;
+  if (state.loading) return <RecordPage />;
   if (state.notFound) {
     return (
       <main className="page-shell">
@@ -50,6 +52,7 @@ function App() {
         <h1>Writing record unavailable</h1>
         <p className="error">{state.error ?? "The record could not be loaded."}</p>
         <p>This page cannot say anything about a record it could not load. Try again in a moment, or <a href="/">go to the home page</a>.</p>
+        <button type="button" onClick={() => setAttempt(value => value + 1)}>Try again</button>
       </main>
     );
   }

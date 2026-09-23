@@ -1,155 +1,58 @@
-# browser extension
+# Browser extension
 
-Chrome/Chromium Manifest V3 producer for `possiblymadebyahuman` content-blind writing records.
+The extension creates content-blind writing records **only for editors you explicitly start**. Opening a page, focusing a field, typing, or opening the side panel does not start capture. No controls are placed over webpage content.
 
-The extension captures the **shape** of editing in any textarea or plain text input on any page — codepoint-anchored insert/delete/replace events with wall-clock timestamps and source attribution — and uploads a signed, content-blind writing record to the configured ingest service when the user clicks **Sign & upload** in the popup. No document text is ever stored, hashed, logged, or transmitted.
+## Use it
 
-## Responsibility
+1. Install the reviewed ZIP by extracting it, opening `chrome://extensions`, enabling Developer mode, and choosing **Load unpacked** on the extracted directory. Pin PMBAH for convenient access. Reload already-open pages after installing or updating.
+   To update an existing unpacked installation, replace the files in its existing directory and click **Reload** on its card at `chrome://extensions`. Keep only one enabled PMBAH installation: loading another directory as a second extension can leave the old passive-capture version running.
+2. Right-click an **empty editor** and choose **Start writing record**. Alternatively, focus it and press **Alt+Shift+W**, or open PMBAH's toolbar side panel and choose **Start in focused editor**. Chrome extension shortcuts can be changed at `chrome://extensions/shortcuts`.
+3. Write in that editor. Other fields remain inactive. The side panel shows the active draft and event count. The extension records edit times, positions, lengths, and sources where measurable; it does not retain your words.
+4. Choose **Finish & get link**, review the page URL, title and label, and choose whether to include a wording commitment. Confirm to stop capture and publish. Finishing freezes the chosen draft before computing its binding and uploading it.
+5. The saved result shows the complete URL, **Open record**, and **Copy link**. Copying is an explicit action. If clipboard access fails, the selectable URL remains available. Further edits are not captured automatically.
 
-- Passive per-field session identity, mutation capture (`beforeinput` / `input` with codepoint maths), and a wall-clock event timeline that preserves idle gaps.
-- Multiple independent per-field sessions running in parallel — two textareas on site A and one on site B all record independently; signing one freezes and uploads only that field's session.
-- Capture-context review at sign time: the popup shows the page URL (already stripped of query/hash), page title and label that will be published; the signer can drop the URL or title and rename the label.
-- Server-observed checkpoints via the producer-core `CheckpointAdapter` (see `packages/producer-core` for cadence/backoff semantics).
-- Chrome/Chromium MV3 package output, deterministic zip artifact for sideload and store submission.
+**Stop** keeps the local draft available to finish; it does not upload it or compute a wording commitment. Finishing that stopped draft can publish its editing activity only. **Discard local draft** removes its local events. A stopped editor must be cleared before a new independent record can start. Reloading or navigating to a new page document stops capture; saved local drafts remain available for review. Old drafts from the passive-capture version never activate a page by themselves.
 
-## Non-responsibility
+For the same document in another tab, select its active draft in the panel and explicitly choose **Share its writing record** before starting in the other editor. The extension does not infer that unrelated fields belong together. Shared sessions can publish editing activity only; they do not silently choose one editor’s wording for a binding. Both editors must represent the same document; independent copies that drift apart do not establish a single reliable document-length history.
 
-- Backend storage, ingestion, or record page presentation.
-- Plaintext upload, document hashing, or replay payloads.
-- Snapshotting existing non-empty fields. See the **Eligibility** section below.
-- Human/AI verdicts, scores, badges, or certificates.
-- Store submission or real install URL publication (owned by a separate task).
+If a wording commitment cannot be obtained, no upload occurs. The panel offers cancel or a separate choice to publish a process-only record. It does not read later edits to manufacture a replacement binding. Failed uploads retain the frozen record for retry. Canceling after capture has stopped leaves the draft stopped; it does not resume capture invisibly.
 
-## Architecture
+## Measurements and privacy
 
-The kernel lives in `packages/producer-core`. The extension wires that kernel to Chrome runtime primitives via thin adapters and a message dispatcher:
+Plain inputs and supported rich-text editors use Unicode codepoint positions and lengths. Rich-text paragraph boundaries and line breaks are included in the local logical text model. Browser operations that cannot be measured reliably use explicit unknown values; they do not invent a length. Equal-size programmatic rewrites without browser input events cannot be detected from numeric snapshots alone. Older records remain unchanged and the viewer can show their editing activity even without a length curve.
 
-```
-content/capture.ts     ← DOM observer; reads field state transiently to compute
-                         codepoint-anchored PendingMutation values; renders a
-                         small floating per-field badge.
-       │
-       ▼  chrome.runtime.sendMessage
-background/service-worker.ts
-       │  hosts the SessionRegistry; routes messages through
-       │  lib/dispatcher.ts; sweeps expired sessions at start-up, on
-       │  field registration, and hourly via chrome.alarms.
-       ▼
-lib/adapters.ts        ← chrome.storage.local, fetch upload, fetch checkpoint,
-                         Date clock, crypto.randomUUID, navigator.clipboard.
-       │
-       ▼
-popup/popup.ts         ← lists sessions across all open tabs, signs one, copies
-                         the returned short URL.
-```
+Text may be read transiently inside a measurement or at binding time. Only numeric state survives between events. Binding computes a salted commitment to canonical letters and digits locally; it uploads no plaintext, but permits candidate-wording checks. Capture context can identify a document: review or omit it before publishing. See [the privacy model](../site/content/docs/privacy.md).
 
-The trust boundary is the service worker: it is the only place that talks to the network. The content script never sees a network call, and the popup only sends user-initiated control messages. The service worker bundle is statically audited to contain no DOM/text-reading symbols.
+Checkpoints begin with edits in an explicitly active draft. They transmit chain tips and event counts, not words. Full records upload only on confirmation. Local sessions expire after three days without editing and are swept hourly; uploaded event logs are cleared after a short grace period while a small local reference retains the result URL until expiry. Removing a local reference does not delete a public record.
 
-### Content-script vs popup response shape
+## Architecture and permissions
 
-The two contexts that send messages to the service worker have different trust profiles, and the response shapes returned to them differ accordingly:
+- `content/capture.ts` is dormant until a worker-authorized user action. It measures only enrolled editors and computes optional bindings locally. It has no network adapter.
+- `background/service-worker.ts` owns authorization, exact tab/frame/document routes, sessions, checkpoints and uploads. Content scripts cannot invoke privileged panel controls or obtain checkpoint bearer tokens.
+- `popup/popup.html` and `popup.ts` implement the browser side panel (the historical filename is retained). The toolbar opens that panel; it is not an overlay or a transient action popup.
+- `packages/producer-core` supplies the numeric event kernel, storage and signing. Explicit starts bypass heuristic matching without changing other producers' matching behavior.
 
-- **Content script** (runs inside every page, including untrusted ones). It forwards only `register_field` and `append_mutation` messages and is allowed to observe only three response kinds: `register_field_result` (carries `session_id` and identity `certainty` only — never observation state), `append_mutation_result` (an acknowledgement with an optional continuation session ID), and the generic `error` (kind + reason). The full `SessionRecord` — including the bearer `observation.last_observed_token` used to authenticate server-observed checkpoints — never crosses the message boundary into a content-script context. A recursive regression test (`tests/browser-extension-canary.test.mjs`) walks the responses for the content-script message kinds and asserts no `last_observed_token` field and no token-equal string ever appears.
-- **Popup** (extension-privileged page, signed by the extension manifest, not reachable from page JavaScript). It forwards `list_sessions`, `sign_session`, `retry_failed_upload`, and `discard_session`. The popup may retain full `SessionRecord` state in v0 because it is extension-privileged. If a future v0.1 surface exposes that state to less-privileged code, the same regression test should be extended to cover those kinds.
+The manifest requests `storage`, `clipboardWrite`, `alarms`, `contextMenus`, `sidePanel`, and `webNavigation`. The latter enumerates frames to locate the focused editor and tracks navigation to retire capture routes. Broad host access and dormant content scripts in all frames retain the exact right-click target, including embedded editors. **Permission is not activation**: no field measurements, sessions, or checkpoints occur before an explicit start. Narrower `activeTab` injection would need a different cross-origin frame/target design; it is not claimed by this release. Permission justifications are in [store preparation](../../docs/chrome-web-store-prep.md).
 
-## Eligibility (the per-field invariant)
+## Build and test
 
-A new producer scope rule applies: **the extension does not snapshot existing non-empty fields**. When the user focuses an eligible field for the first time, the producer-core registry checks for a resumable session matching the field's descriptor under the current `(origin, path, field_kind)` slice. The outcomes:
-
-- **Empty field, no resumable session** → fresh session, badge reads `recording`.
-- **Empty field, resumable session matches** → the existing session is resumed, badge reads `recording (resumed)`.
-- **Non-empty field, resumable session matches** → resumed, mutations continue.
-- **Non-empty field, its session already uploaded** → a continuation session starts, with `parent_record` naming the uploaded record; the signed session stays frozen with its link.
-- **Non-empty field, no resumable session** → INELIGIBLE. Badge reads `not recording (existing content)`. To start a session in this field the user must clear the field and focus it again, or open a fresh one; an ineligible field is re-evaluated on every focus.
-
-This is deliberate: silently snapshotting pre-existing draft text would be a content-blindness violation, and silently merging an unrelated session into the field would be misleading.
-
-## Sign / upload flow
-
-1. Focus a textarea or plain text input. The badge appears: `recording`, `recording (resumed)`, or `not recording (existing content)`.
-2. Type. Each `beforeinput`/`input` cycle synthesises a codepoint-anchored mutation that is forwarded to the service-worker registry. Insertions and selection replacements are measured in `beforeinput` from the pre-change selection and emitted only after `input` confirms the edit occurred; collapsed deletes (Backspace, Delete, word and line deletes), undo/redo, formatting and spellcheck replacements are sized by comparing the field's codepoint length before and after the browser applies them; an IME composition is recorded once, at `compositionend`, as one `ime` event. Only numbers and input classifications cross between events. The producer-core cadence engine commits a server-observed checkpoint on the first mutation, then every 50 events or every 60 seconds with at least one new event (no idle heartbeats).
-3. Open the popup. The session for the focused field appears under its origin group.
-4. Click **Sign & upload**. The sign panel shows the page URL, page title and label that will be published; drop or rename them, choose whether to bind the text, and confirm. The service worker applies those choices, calls `registry.flushObservation` to attempt completion of observation of a session the server has already committed (covering the tail of uncheckpointed events, with at most two 30-second checkpoint attempts), signs the session, and POSTs `{manifest, events, observation}` to the configured ingest endpoint, where `observation` is `{observed_session_id, token}` for an observed session and `{state: "unobserved"}` for one the server never committed or whose checkpoints diverged; in the diverged case the toast says the record was saved without server-observed commitments.
-5. On success the popup shows the returned `short_signature` (the record URL) and copies it to the clipboard, saying so. The session stays listed with its link until the sweep drops it a minute later. Editing the field again (for example pasting the link into the reply) starts a continuation session that names the uploaded record as its parent; the signed record is untouched, and a continuation that is never signed simply expires.
-6. On failure the session moves to `failed_upload` with the reason visible in the popup. **Retry upload** re-signs the same session with the same binding and uploads again; **Discard** drops it.
-
-## Build, package, install
-
-```bash
-npm --workspace @possiblymadebyahuman/browser-extension run build
-npm --workspace @possiblymadebyahuman/browser-extension run package
-# or
+```sh
 make extension-build
 make extension-package
+npm run check
+npm run build:web
+npm run test:web-browser
+make test-release-container
 ```
 
-Outputs:
+Build output is `apps/browser-extension/dist/`; the deterministic artifact is `possiblymadebyahuman-extension-<version>.zip`. Version comes from this package's `package.json`. `EXT_BASE_URL=http://localhost:8787 make extension-package` targets a local service; production is the default.
 
-- build directory: `apps/browser-extension/dist/`
-- deterministic zip: `apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip`
+The production-container gate builds a disposable local service and database, loads the actual extension into Chromium, and checks explicit start → edit → bind → upload → open record. Never point automated test uploads at production. Focused tests cover activation authorization, numeric rich-text capture, panel errors, clipboard denial, event flushing, privacy boundaries, and deterministic packaging.
 
-The version comes from this package's `version` field and is injected into the built `manifest.json`. `EXT_BASE_URL` overrides the production API origin at build time:
+## Support and remaining manual acceptance
 
-```bash
-EXT_BASE_URL=http://localhost:8787 make extension-package
-```
+Chrome 120 or newer is the acceptance target (matching the bundled JavaScript target and side-panel APIs); other Chromium browsers are not independently verified. Firefox and Safari are not supported by this package. No Chrome Web Store approval or install URL is claimed.
 
-### Sideloading in Chrome / Chromium
+Authenticated Gmail needs a human acceptance pass with the packaged version: start in an empty message body, leave recipient and subject fields inactive, type/edit/paste and use IME if relevant, finish with a selected-text binding, open/copy the result, and check the timeline. Repeat with a pop-out compose window, navigation, another tab, and a failed upload. Browser tests use controlled rich-text fixtures and do not establish Gmail compatibility by themselves.
 
-1. Build the extension (or download the zip artifact).
-2. Open `chrome://extensions`.
-3. Enable **Developer mode** (top right).
-4. Click **Load unpacked** and select `apps/browser-extension/dist/`. (To install the deterministic zip on a clean profile, click **Pack extension** with the `dist/` directory, or use **Load unpacked** directly on an unzipped copy.)
-5. Pin the extension to the toolbar for easier popup access.
-6. Open any page with a textarea and start typing. The badge should appear in the top right of the field.
-
-### Support matrix
-
-| Browser | v0 status |
-|---|---|
-| Google Chrome (MV3) | **Required.** Acceptance target. |
-| Chromium (Brave, Edge, Vivaldi, Arc, Opera) | **Best-effort.** Same MV3 + `chrome.*` APIs; sideload steps identical. No known incompatibilities. Not gated. |
-| Mozilla Firefox | **Documented incompat.** Firefox 121+ supports MV3 but uses a different `browser.*` namespace and ships its own polyfill story. v0 does not target Firefox; a follow-up task will evaluate the `webextension-polyfill` shim. |
-| Safari | **Out of scope for v0** unless explicitly re-scoped. Safari's MV3 surface differs enough that a separate target would warrant its own task. |
-
-### Manual testing
-
-The textarea flow below (focus, type with a Backspace, sign from the popup with the binding on, upload, open the public record page, keep editing into a continuation session) also runs automatically in a real Chromium with the built extension loaded, against a locally running service:
-
-```bash
-make local-container                      # app + Postgres on the port in .env.local-container
-make test-extension-e2e PMBAH_LOCAL_BASE_URL=http://localhost:8000
-# or: PMBAH_LOCAL_BASE_URL=http://localhost:8000 npm run test:extension-e2e
-```
-
-`tests/browser/extension-e2e.spec.mjs` builds the extension with `EXT_BASE_URL` pointing at that service, loads it with `--load-extension`, and asserts the uploaded record verifies, has the expected event count and a `text_binding`, and contains none of the typed text. It skips with a message when `PMBAH_LOCAL_BASE_URL` is unset, so the default browser suite stays offline. Never point it at the production origin.
-
-The remaining checks are manual and are the responsibility of the human or reviewer who installs the unpacked extension. Each check corresponds to an acceptance criterion in the task.
-
-- **Textarea capture and binding (Chrome).** Open `chrome://newtab`, navigate to any page with a `<textarea>`, focus it, type a few characters, select a subset of the field text, observe the `recording` badge, open the popup, click **Sign & upload**, confirm the sign panel says it will bind selected text or all field content, and confirm upload returns a `short_signature` copied to the clipboard. Repeat without a selection to confirm it binds all field content.
-- **Contenteditable degraded capture and binding (Chrome/Gmail-like surface).** Open a contenteditable surface (e.g. any rich-text reply box that is fundamentally a contenteditable div), focus it, type. The badge should read `recording`. Select only the reply/body text you intend to sign, leaving surrounding quoted/header/footer material unselected if present. Open the popup — the event count grows as you type. Sign and confirm the upload succeeds. Note: positions are `null` (unknown) for contenteditable; the record page reports the observed length as unknown.
-- **Backspace, IME and undo (Chrome textarea).** Type a few words, press Backspace several times, delete a word with Alt/Ctrl+Backspace, undo with Cmd/Ctrl+Z, and if available commit a few characters through an IME. Sign. The record must upload (no "sign failed"), and its events must show `delete` events with positions, one `ime` event per composition, and `unknown`-source events with null positions for undo.
-- **Multi-field, multi-site session isolation.** Open two textareas on site A in one tab and one textarea on site B in another tab; interleave edits; confirm three independent sessions appear in the popup grouped by origin; sign one; confirm the other two remain `active` with their event counts unchanged.
-- **Pre-existing content INELIGIBLE.** Open a page where a textarea already has some text (e.g. a draft restored by the site itself). Focus it. The badge should read `not recording (existing content)`. Clear the field, click elsewhere and focus it again; the badge should switch to `recording`.
-- **Editing after signing.** Sign a field, then paste the link into it. The badge must read `recording (continues a signed record)`, not an error; the popup must still list the signed session with its link, plus a new one-event session marked as continuing it. Signing the continuation must produce a record whose page says "Continues from" the first.
-- **Idle gap preserved.** Type into a textarea, switch to another tab for several minutes, come back, type one more character. Sign and inspect the record: the last event's `t` should reflect the wall-clock gap, not a compressed value.
-- **TTL sweep.** Leave a session untouched. After 3 days plus an hour the `chrome.alarms` job should sweep it. Easier to verify in tests than by waiting: see `tests/producer-core.test.mjs`.
-- **Failed upload.** Block the configured ingest endpoint (e.g. via DevTools network throttling or by pointing `EXT_BASE_URL` at a closed port). Sign; the popup should show the failure reason and offer **Retry upload** and **Discard**. Unblock the endpoint and retry; the same record uploads. Discarding clears the session.
-
-## Content-blindness guarantees
-
-The package's static + runtime safeguards:
-
-- `tests/browser-extension-canary.test.mjs` builds the production bundle and asserts the service-worker bundle contains no `.innerText`, `.textContent`, `event.data`, or `plaintext` references; the popup bundle contains no DOM-text reads; all bundles contain no producer-core plaintext kernel symbols (`b3HashText`, `getInsertedText`, `replayEvents`, `replayEventsWithText`, `ReplayTextProvider`); and the source files outside the content script never touch DOM text or the banned `final_text_*`/`ins_hash`/`ins_text` symbols.
-- `tests/browser-extension-package.test.mjs` re-asserts the deterministic zip shape: same SHA-256 across rebuilds, only the eight expected entries, no source maps, no `.ts`, no `.env*`, no `.dev*`.
-- `tests/browser-extension.test.mjs` covers the descriptor extractor, codepoint maths, eligibility policy, and the full register → append → sign → upload flow against in-memory fakes; one test runs the signed manifest through `packages/format.verifyRecord` to confirm the produced record is conformant.
-- `packages/producer-core/tests/producer-core-audit.test.mjs` is the kernel-side static audit; this is its consumer-side mirror.
-
-## Store/release docs
-
-- `docs/browser-extension-release.md` — build/package commands, release workflow, Chrome manual publication, Edge/Firefox status, and versioning.
-- `docs/chrome-web-store-prep.md` — human publisher checklist plus draft listing, privacy, and permission text.
-
-Do not publish a placeholder install URL. The real Chrome Web Store URL is recorded only after the store listing task lands.
-
-Checkpoint outcomes are persisted immediately, with storage writes serialized so older snapshots cannot overwrite a newer token. Uploaded logs are cleared after the short grace period; a minimal continuation reference remains until the three-day TTL. Matching fields for the same document may share a session across tabs.
+See [release packaging](../../docs/browser-extension-release.md) and [UX-reset acceptance](../../docs/extension-ux-reset-handoff.md).

@@ -22,6 +22,24 @@ export type TimelinePoint = {
 export const LARGE_INSERT_CODEPOINTS = 50;
 export const LONG_PAUSE_MS = 30_000;
 
+export type ActivityBin = { start: number; end: number; count: number };
+
+// Activity is independent of document-length inference. A bounded histogram
+// remains useful for legacy rich-text records and very dense event logs.
+export function buildActivityBins(events: BufferMutation[], durationMs: number, maxBins = 80): ActivityBin[] {
+  if (events.length === 0) return [];
+  const duration = Math.max(1, durationMs, events.at(-1)?.t ?? 0);
+  const count = Math.max(1, Math.min(200, Math.floor(maxBins) || 1));
+  const bins = Array.from({ length: count }, (_, i) => ({
+    start: duration * i / count, end: duration * (i + 1) / count, count: 0,
+  }));
+  for (const event of events) {
+    const index = Math.min(count - 1, Math.max(0, Math.floor(event.t / duration * count)));
+    bins[index]!.count++;
+  }
+  return bins;
+}
+
 export function verifyRecordChain(record: RecordApiResponse): VerificationState {
   const result = verifyRecord({ manifest: record.manifest, events: record.events });
   return {
