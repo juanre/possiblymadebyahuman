@@ -147,8 +147,9 @@ function isFieldEmpty(element: HTMLElement): boolean {
   return true;
 }
 
-async function registerField(element: HTMLElement, activation_id: string, share_session_id?: string): Promise<BackgroundResponse> {
+async function registerField(element: HTMLElement, activation_id: string, share_session_id?: string, resume_session_id?: string): Promise<BackgroundResponse> {
   const known = fields.get(element);
+  if (known?.state === "recording" && resume_session_id && known.session_id !== resume_session_id) return { kind: "start_editor_result", reason: "This editor already has an active draft. Stop it first." };
   if (known?.state === "recording") return { kind: "start_editor_result", session_id: known.session_id! };
   if (known?.state === "pending") return { kind: "start_editor_result", reason: "Start is already in progress." };
   if (!element.isConnected || !isEligibleElement(element)) return { kind: "start_editor_result", reason: "Choose an editable text field first." };
@@ -158,10 +159,12 @@ async function registerField(element: HTMLElement, activation_id: string, share_
     closest: (selector) => element.closest(selector) as { getAttribute(name: string): string | null } | null,
     parentElement: parentSlice(element),
   });
+  for (const ref of activeEntries) if (ref.deref() === known) activeEntries.delete(ref);
   const entry: FieldEntry = { element, session_id: null, state: "pending", sending: Promise.resolve() };
   fields.set(element, entry);
   const entryRef = new WeakRef(entry);
   activeEntries.add(entryRef);
+  transients.delete(element);
   const transient = transientFor(element);
   transient.rich_length = isContentEditable(element) ? measureRichText(element).length : null;
   attachListeners(element);
@@ -169,7 +172,7 @@ async function registerField(element: HTMLElement, activation_id: string, share_
     kind: "register_field", tab_id: -1, frame_id: -1,
     origin_url: window.location.origin, page_path: window.location.pathname,
     page_title: document.title, descriptor, field_is_empty: isFieldEmpty(element),
-    activation_id, ...(share_session_id ? { share_session_id } : {}),
+    activation_id, ...(share_session_id ? { share_session_id } : {}), ...(resume_session_id ? { resume_session_id } : {}),
   }).catch((error): BackgroundResponse => ({ kind: "error", reason: `The editor could not be started. ${String(error)}` }));
   if (response.kind !== "register_field_result" || response.result.kind !== "registered") {
     entry.state = "error";
@@ -477,7 +480,7 @@ function start(): void {
   document.addEventListener("contextmenu", (event) => { if (!event.isTrusted) return; const target = editorFor(event.composedPath()[0] ?? event.target); contextTarget = target ? new WeakRef(target) : null; }, true);
   document.addEventListener("focusin", (event) => { const target = editorFor(event.composedPath()[0] ?? event.target); focusedTarget = target ? new WeakRef(target) : null; }, true);
   chrome.runtime.onMessage.addListener((raw, sender, sendResponse) => {
-    const message = raw as { kind?: string; target?: string; activation_id?: string; share_session_id?: string; session_id?: string; bind?: boolean };
+    const message = raw as { kind?: string; target?: string; activation_id?: string; share_session_id?: string; resume_session_id?: string; session_id?: string; bind?: boolean };
     // Only extension-owned contexts can drive capture or read a binding.
     const source = sender as { id?: string; tab?: unknown; url?: string };
     if (source.tab || (source.id && source.id !== chrome.runtime.id) || (source.url && !source.url.startsWith(`chrome-extension://${chrome.runtime.id}/`))) return false;
@@ -495,7 +498,7 @@ function start(): void {
       const target = (message.target === "context" ? contextTarget : focusedTarget)?.deref();
       contextTarget = null;
       if (!target) { sendResponse({ kind: "start_editor_result", reason: "Click inside the editor, then choose Start writing record." }); return false; }
-      void registerField(target, message.activation_id, message.share_session_id).then(sendResponse).catch((error) => sendResponse({ kind: "start_editor_result", reason: String(error) }));
+      void registerField(target, message.activation_id, message.share_session_id, message.resume_session_id).then(sendResponse).catch((error) => sendResponse({ kind: "start_editor_result", reason: String(error) }));
       return true;
     }
     if (message.kind === "freeze_session" && message.session_id) {

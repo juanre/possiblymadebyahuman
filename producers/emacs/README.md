@@ -212,20 +212,19 @@ synced between machines:
   turned off, and whenever the server accepts a checkpoint. Enabling
   `pmbah-mode` on that file later resumes the session: earlier events are
   kept and new event times continue from the original start, so a break of
-  hours or days shows up as a pause, not as a new record.
+  hours, days or months shows up as a pause, not as a new record.
 - A successful upload, or `pmbah-discard-session`, removes the state file and
   starts a fresh session in the buffer.
 - Renaming the visited file (`write-file`, `set-visited-file-name`) moves the
   state file with it, so the renamed file resumes the same session.
 - Non-file buffers (`*scratch*`, temporary buffers) keep their session in
   memory only; killing the buffer discards it.
-- Event times and durations are 32-bit millisecond integers, so one record can
-  span at most about 24.8 days. If resuming a saved session would exceed that,
-  or the saved state was recorded under a different format version or cannot
-  be read, the mode keeps the old state file with a `.stale` suffix, tells you
-  with a message, and starts a fresh session. A live session that reaches the
-  bound, at the next edit or when you sign, is set aside the same way rather
-  than uploaded as a record the service would reject.
+- Event times and durations are exact JSON integer milliseconds, supported
+  through 9,007,199,254,740,991 ms, with 64-bit server storage. Months-long
+  sessions retain the original clock; backwards system-clock corrections cannot
+  make later events run backwards. Unreadable or incompatible state, or a clock
+  outside the exact integer range, is kept with a `.stale` suffix before a fresh
+  session starts. This does not change existing format versions or record hashes.
 - Opening the same file in two Emacs instances at once is not supported: both
   would resume the same session and their checkpoints would conflict.
 
@@ -364,8 +363,8 @@ The repository test suite includes Emacs batch tests that:
 - confirm a file buffer's session is saved without text, owner-only, resumed on
   reopen with monotonic event times, removed after upload or discard, and that
   two file buffers keep independent sessions;
-- confirm a saved session past the 32-bit time bound is set aside as `.stale`
-  and a fresh session starts.
+- confirm a saved session resumes after 60 days, preserves its history and
+  original clock, and can be signed after a backwards clock correction.
 
 Run them with:
 
@@ -410,6 +409,6 @@ make check
   diverged commitments, and the upload message says so, quoting the last
   checkpoint failure.
 - `PMBAH: the saved session for <file> ... starting a fresh session`: the saved
-  state could not be resumed (too old for a record's 32-bit clock, a different
+  state could not be resumed (outside the exact integer time range, a different
   format version, or unreadable). It was kept next to the state file with a
   `.stale` suffix.

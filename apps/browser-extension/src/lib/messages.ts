@@ -21,6 +21,7 @@ export type ContentToBackground =
       field_is_empty: boolean;
       activation_id?: string;
       share_session_id?: string;
+      resume_session_id?: string;
     }
   | {
       kind: "append_mutation";
@@ -28,7 +29,7 @@ export type ContentToBackground =
       mutation: PendingMutation;
     }
   | { kind: "list_sessions" }
-  | { kind: "start_focused_editor"; share_session_id?: string }
+  | { kind: "start_focused_editor"; share_session_id?: string; resume_session_id?: string }
   | { kind: "prepare_finish"; session_id: string; bind: boolean }
   | { kind: "stop_session"; session_id: string }
   | {

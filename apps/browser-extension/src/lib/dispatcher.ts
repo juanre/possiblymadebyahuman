@@ -50,10 +50,10 @@ export class BackgroundDispatcher {
     return this.#initPromise;
   }
 
-  /** Drops expired unsigned captures and uploaded sessions past their grace period. */
+  /** Clears uploaded event logs after their grace period; drafts and saved links never expire. */
   async sweepExpired(): Promise<void> {
     if (this.registry.list().length === 0) return;
-    this.registry.sweep({ retain_uploaded_anchors: true });
+    this.registry.sweep({ ttl_ms: Infinity, retain_uploaded_anchors: true });
     await this.registry.persist();
   }
 
@@ -91,6 +91,15 @@ export class BackgroundDispatcher {
       tab_id: message.tab_id,
       frame_id: message.frame_id,
     };
+    if (message.resume_session_id) {
+      const existing = this.registry.get(message.resume_session_id);
+      if (!existing || existing.state !== "active" || existing.origin.origin !== origin.origin) {
+        return { kind: "error", reason: "This draft cannot be resumed in that site." };
+      }
+      const resumed = this.registry.resume(existing.session_id, origin, message.descriptor, { field_is_empty: message.field_is_empty });
+      await this.registry.persist();
+      return { kind: "register_field_result", result: { kind: "registered", session_id: resumed.session_id, certainty: "resumed" } };
+    }
     if (message.share_session_id) {
       const shared = this.registry.get(message.share_session_id);
       if (!shared || shared.state !== "active" || shared.origin.origin !== origin.origin) return { kind: "error", reason: "shared_session_unavailable" };
@@ -147,6 +156,9 @@ export class BackgroundDispatcher {
   }
 
   async #handleSign(message: Extract<ContentToBackground, { kind: "sign_session" }>): Promise<BackgroundResponse> {
+    if (message.text_binding && this.registry.get(message.session_id)?.pending_observation_gap) {
+      return { kind: "error", reason: "This draft has no captured edits since it was resumed. Make an edit before including the current text, or publish only its earlier editing activity." };
+    }
     if (message.capture_context_redactions) {
       this.registry.redactCaptureContext(message.session_id, message.capture_context_redactions);
     }

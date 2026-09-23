@@ -37,8 +37,6 @@ export type AnalysisResult = Signal & {
   created_at?: string;
 };
 
-export const OBSERVED_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-
 export type ObservationState = "observed" | "partial" | "unobserved" | "not_requested";
 export type BoundObservationState = "observed" | "partial";
 
@@ -235,10 +233,6 @@ export class InMemoryRecordStore implements RecordStore {
     let session = this.#observedSessions.get(input.observed_session_id);
     let sessionCreated = false;
     const observedAt = input.observed_at ?? new Date().toISOString();
-    if (session && isExpiredUnfinalizedObservedSession(session, observedAt)) {
-      this.#observedSessions.delete(input.observed_session_id);
-      session = undefined;
-    }
 
     if (!session) {
       if (input.observed_token_hash) {
@@ -299,10 +293,6 @@ export class InMemoryRecordStore implements RecordStore {
   async getObservedSessionForBinding(input: ObservationBindingInput): Promise<ObservedSession> {
     const session = this.#observedSessions.get(input.observed_session_id);
     if (!session) throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
-    if (isExpiredUnfinalizedObservedSession(session, new Date().toISOString())) {
-      this.#observedSessions.delete(input.observed_session_id);
-      throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
-    }
     assertObservedToken(session, input.observed_token_hash);
     return cloneJson(session);
   }
@@ -619,7 +609,6 @@ export class PostgresRecordStore implements RecordStore {
   async appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult> {
     return this.#withTransaction(async (client) => {
       const observedAt = input.observed_at ?? new Date().toISOString();
-      await deleteExpiredObservedSession(client, input.observed_session_id, observedAt);
       let session = (await client.query<ObservedSessionRow>(
         `select observed_session_id, token_hash, finalized_record_hash, observation_state, created_at, finalized_at
          from observed_sessions where observed_session_id = $1 for update`,
@@ -705,7 +694,6 @@ export class PostgresRecordStore implements RecordStore {
   }
 
   async getObservedSessionForBinding(input: ObservationBindingInput): Promise<ObservedSession> {
-    await deleteExpiredObservedSession(this.#db, input.observed_session_id, new Date().toISOString());
     const session = (await this.#db.query<ObservedSessionRow>(
       `select observed_session_id, token_hash, finalized_record_hash, observation_state, created_at, finalized_at
        from observed_sessions where observed_session_id = $1`,
@@ -734,7 +722,7 @@ type RecordRow = Record<string, unknown> & {
   capture_context: CaptureContext | null;
   text_binding: RecordManifest["text_binding"] | null;
   event_count: number;
-  duration_ms: number;
+  duration_ms: number | string;
   created_client_t: string | null;
   ingested_server_t: string;
   parent_record_hash: B3Hash | null;
@@ -776,7 +764,7 @@ function rowToStoredRecord(row: RecordRow, observation: RecordObservation): Stor
     capture_context: row.capture_context,
     ...(row.text_binding ? { text_binding: row.text_binding } : {}),
     event_count: row.event_count,
-    duration_ms: row.duration_ms,
+    duration_ms: numberFromRow(row.duration_ms),
     created_client_t: row.created_client_t,
     ingested_server_t: row.ingested_server_t,
     parent_record: row.parent_record_hash,
@@ -790,7 +778,7 @@ function rowToStoredRecord(row: RecordRow, observation: RecordObservation): Stor
     stats: {
       record_hash: row.record_hash,
       event_count: row.event_count,
-      duration_ms: row.duration_ms,
+      duration_ms: numberFromRow(row.duration_ms),
       observed_final_length: nullableNumberFromRow(row.observed_final_length),
       insert_op_count: numberFromRow(row.insert_op_count),
       delete_op_count: numberFromRow(row.delete_op_count),
@@ -905,29 +893,6 @@ export function notRequestedObservation(): RecordObservation {
   };
 }
 
-function isExpiredUnfinalizedObservedSession(session: Pick<ObservedSession, "finalized_record_hash" | "created_at" | "checkpoints">, nowIso: string): boolean {
-  if (session.finalized_record_hash) return false;
-  const lastActivity = session.checkpoints.reduce(
-    (latest, checkpoint) => checkpoint.observed_at > latest ? checkpoint.observed_at : latest,
-    session.created_at,
-  );
-  return Date.parse(lastActivity) + OBSERVED_SESSION_TTL_MS < Date.parse(nowIso);
-}
-
-async function deleteExpiredObservedSession(db: PostgresQueryable, observedSessionId: string, nowIso: string): Promise<void> {
-  const cutoff = new Date(Date.parse(nowIso) - OBSERVED_SESSION_TTL_MS).toISOString();
-  await db.query(
-    `delete from observed_sessions
-     where observed_session_id = $1
-       and finalized_record_hash is null
-       and coalesce(
-         (select max(observed_at) from observed_checkpoints where observed_session_id = $1),
-         created_at
-       ) < $2`,
-    [observedSessionId, cutoff],
-  );
-}
-
 function assertObservedToken(session: Pick<ObservedSession, "token_hash">, tokenHash: string | undefined): void {
   if (!tokenHash) throw new ObservedSessionTokenError("observed_token_required", "observed_token is required");
   if (tokenHash !== session.token_hash) throw new ObservedSessionTokenError("invalid_observed_token", "observed_token is invalid");
@@ -942,7 +907,15 @@ function cloneJson<T>(value: T): T {
 }
 
 function numberFromRow(value: unknown): number {
-  return typeof value === "number" ? value : Number(value);
+  // pg returns BIGINT columns as decimal strings by default. Do not enable a
+  // global type parser: converting here keeps public JSON numeric and rejects
+  // database values that JavaScript could otherwise silently round.
+  if (typeof value !== "number" && (typeof value !== "string" || !/^-?\d+$/.test(value))) {
+    throw new RangeError("stored integer is not a valid integer");
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(parsed)) throw new RangeError("stored integer exceeds the safe integer range");
+  return parsed;
 }
 
 function nullableNumberFromRow(value: unknown): number | null {

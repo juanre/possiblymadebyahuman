@@ -1,6 +1,6 @@
 # Chrome Web Store prep for v0 browser extension
 
-Status: draft listing updated for extension 0.2.0; authenticated Gmail acceptance and store submission remain pending. Historical evidence below describes earlier packages. Release-readiness reference for `default-aaaa.26`. The browser extension
+Status: draft listing updated for extension 0.2.1; authenticated Gmail acceptance and store submission remain pending. Historical evidence below describes earlier packages. Release-readiness reference for `default-aaaa.26`. The browser extension
 (`default-aaaa.7`) and the deterministic packaging pipeline (`default-aaaa.17`)
 have landed; what remains is human-owned: developer account, listing visibility
 choice, screenshots, listing copy approval, and submission to the Chrome Web
@@ -182,16 +182,19 @@ and final extension behavior.
   current bearer `token` for the server-observed session. The bearer token
   lives only inside `SessionRecord.observation.last_observed_token` and is
   never logged, never sent to content scripts, never published.
-- Local retention/TTL: **3 days from the last edit** (producer-core
-  `DEFAULT_TTL_MS`). The service worker runs an hourly `chrome.alarms` job
-  that sweeps expired sessions. Users can also discard a specific draft from
-  the side panel at any time; discard is immediate. Uploaded event logs are cleared after a short grace period; a small local reference keeps the saved URL until the three-day TTL. Capture never resumes automatically.
+- Local retention: **no automatic expiry for unfinished drafts or saved links**.
+  The service worker cleans redundant uploaded event logs and checkpoint credentials
+  after a short grace period on startup/registration and an hourly alarm; the saved
+  link remains until explicit removal. Uninstall/browser-data clearing can remove
+  local data. Users can discard drafts explicitly. Capture resumes only through
+  **Resume in chosen field**, retaining the original clock and history; the site
+  supplies the text. Server checkpoint metadata also has no automatic expiry.
 
 ### Data transmitted during capture and on explicit sign/upload
 
 - Content-blind PMBAH record manifest and event log:
   - `manifest`: format version, BLAKE3 record hash, session id, producer
-    identity (`browser-extension` v0.2.0 with capabilities `timing` and
+    identity (`browser-extension` v0.2.1 with capabilities `timing` and
     `source_attribution`), capture context, event count, duration,
     optional `text_binding` (scheme, canonical length, salted commitment), and a server-applied ingestion timestamp.
   - `events`: the ordered list of `BufferMutation` records described above.
@@ -229,16 +232,16 @@ and final extension behavior.
 
 ## Permission-justification template (final, reconciled with the shipped manifest)
 
-Extension 0.2.0 declares six API permissions and broad host access. Review
+Extension 0.2.1 declares six API permissions and broad host access. Review
 these disclosures against the actual submitted ZIP. Host permission is not user
 activation: dormant content scripts do not measure editor text, create sessions,
 or send checkpoints before an explicit start.
 
 | Permission / host access | Purpose |
 | --- | --- |
-| `storage` | Persist numeric event logs, descriptors/context, checkpoint credentials, frozen upload state and saved result URLs locally. No document text. Sessions expire three days after the last edit. |
+| `storage` | Persist numeric event logs, descriptors/context, checkpoint credentials, frozen upload state and saved result URLs locally. No document text. Drafts and saved links remain until explicit local removal, without automatic expiry. |
 | `clipboardWrite` | Copy a saved record URL only when the user chooses Copy link. Never read the clipboard. Manual selection remains available on failure. |
-| `alarms` | Hourly sweep of expired local sessions. |
+| `alarms` | Hourly cleanup of redundant uploaded event logs and checkpoint credentials; saved links and unfinished drafts remain. |
 | `contextMenus` | Offer Start writing record for the editor the user right-clicked. |
 | `sidePanel` | Keep draft controls and results in browser-owned UI, outside webpage content. |
 | `webNavigation` | Enumerate frames to locate the explicitly focused editor and retire routes on navigation. No browsing-history database is kept. |
@@ -291,7 +294,7 @@ listing / screenshot / submission actions.
   `host_permissions: ["<all_urls>"]`, content scripts at `document_idle`
   with `all_frames: true`.
 
-**Historical artifact metrics** (v0.1.0, default `EXT_BASE_URL`, `extension-package`; the manifest is now v0.2.0, so rebuild and record fresh metrics before submission):
+**Historical artifact metrics** (v0.1.0, default `EXT_BASE_URL`, `extension-package`; the manifest is now v0.2.1, so rebuild and record fresh metrics before submission):
 
 | Field | Value |
 | --- | --- |

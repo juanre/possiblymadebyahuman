@@ -1,6 +1,6 @@
 # possiblymadebyahuman — Technical Specification (v0.1)
 
-Status: draft for implementation. Audience: the engineering team taking this over.
+Status: product/format thesis, with current implementation boundaries in `docs/sot.md`. The September 2026 extension amendments supersede the original passive-capture and expiry proposals below. Audience: the engineering team taking this over.
 
 ---
 
@@ -98,13 +98,13 @@ The entire user-facing loop, no site visit, no leaving the page:
 
 **Freeze on sign.** Signing freezes that field's session: further edits start a *new* session. A signed record must correspond to a definite state; "I signed then kept editing" would muddy what the link attests. **Clear on sign.** Once uploaded, drop the local log immediately — it has served its purpose and is now on the server. Manual paste only in v0; auto-appending the link to a site's submit is more magic, more fragile per-site, and presumptuous (it edits the user's text) — defer as a per-site nicety.
 
-#### 2.2.4 Local cleanup / TTL
+#### 2.2.4 Durable local drafts and saved links
 
-Unsigned local captures **expire N days (default: 3) after their last edit** — TTL measured from last activity, not creation, so a slow multi-day draft survives as long as it is being touched. If a capture was not signed within the window, it was never going to be; the TTL costs nothing real and bounds the local store. Two clean end-states only: **signed → uploaded → local copy cleared immediately**, or **unsigned → expired and gone**; nothing lingers between.
+Extension drafts and saved links **do not expire automatically**. A writer can return after months and explicitly resume an unfinished session in its chosen field, preserving its numeric history and original clock. The website supplies the text; the extension does not store or restore it. Reattachment adds no fabricated edit. The next real edit includes the elapsed pause and uses an unknown position when continuity across the absence cannot be established. A pristine empty draft resumed in an empty field keeps its measurable first edit.
 
-Cleanup mechanism: do not rely on a background timer (extension service workers get killed). Stamp each session with an expiry and sweep opportunistically — on extension startup, on each new field capture, and lazily discarding any expired session encountered — with a periodic alarm as backup.
+After publication, cleanup removes redundant local event logs and checkpoint credentials after a short grace period but retains the saved link until explicit removal. Startup/registration cleanup and an hourly alarm perform this work; neither deletes drafts merely because they are old. Local removal does not delete server records or checkpoint metadata. Browser-data clearing and uninstall can remove local history.
 
-This TTL applies to **unsigned local captures only**, and must not be conflated with server record lifetime (§5.1), which is the opposite policy.
+Published records remain immutable. Explicit resumption applies to unfinished drafts; additional publication after an already published record requires separate continuation/snapshot design. The shared producer-core default TTL and `/write` behavior remain unchanged.
 
 ---
 
@@ -134,6 +134,8 @@ Notes:
 
 - Offsets and lengths are in Unicode **codepoints**, not UTF-16 units and not bytes. Producers must normalize. This is the single most common place implementations will disagree; it is mandatory and tested.
 - `op` is derivable from the lengths (`del_len>0 && ins_len>0` ⇒ replace) but is stored explicitly for cheap filtering and human readability.
+- `t` and manifest `duration_ms` are non-negative exact JSON/JavaScript integers, up to 9,007,199,254,740,991 milliseconds. PostgreSQL duration and derived delay/active/idle columns use `bigint`; calendar dates use `timestamptz`. Counts, lengths and offsets retain their signed 32-bit bounds. Widening time validation/storage does not change canonical event bytes, existing hashes or format versions.
+- Extension duration ends at the last captured edit; returning only to publish does not add a trailing pause to the signed event timeline.
 - `t` is relative to session start. Absolute wall-clock time, if attested, lives on the record manifest (§4), not on every event — that keeps the event stream content-free and lets the ingestion layer be the authority on real time.
 
 ### 3.2 Process-structure requirement
@@ -240,6 +242,8 @@ Layer 2 may add server metadata distinct from anything the producer claims:
 
 A checkpoint is a commitment, not a text or authorship claim. At checkpoint time the server validates session/token shape, monotonic event counts, and same-count conflicts; it does not receive events and therefore cannot verify prefix contents yet. At final upload the server recomputes public prefix chain tips from the submitted events and checks each stored commitment against the corresponding prefix. If commitments do not match the final record, finalization is rejected rather than publishing a normal record.
 
+Unfinalized server observation sessions and their checkpoints have no automatic expiry. A later authenticated checkpoint can extend the same evidence after a months-long gap. Local discard does not delete server checkpoint metadata.
+
 Checkpoint cadence is activity-driven: first captured event, after a producer-chosen event-count threshold, approximately once per minute only if new events exist since the last checkpoint, and before final upload if uncheckpointed events remain on a session the server has already committed. Producers must not send idle heartbeats when no new events were captured.
 
 The sign-time flush completes observation; it never starts it. A session with at least one commitment gets a final checkpoint covering its uncommitted tail, and one more if events arrive while that checkpoint is in flight, so an observed record is observed to its final event. A session the server never committed is uploaded as `unobserved` rather than given a first commitment at sign time, because a commitment minted at upload would observe none of the writing and would only produce a zero-length span. A session whose checkpoints the server rejected as conflicting is likewise uploaded as `unobserved`, with its stale token kept local, so the writer can still sign the record; the producer tells the writer that the record carries no server-observed commitments. Public UI should describe the wall-clock distance between first and last commitments as a **server-observed span**, not as active writing time; the API field for that value is `server_observed_span_ms`.
@@ -254,14 +258,14 @@ The sign-time flush completes observation; it never starts it. A session with at
 
 ### 5.1 Server record lifetime (durable by default)
 
-A signed, uploaded record is **permanent by default.** This is the deliberate opposite of the local-capture TTL (§2.2.4), and the two must never be conflated. The reasoning: the entire point of the `/<record_hash>` link is that it works when pasted into an argument, possibly months later. A dead provenance link is worse than no link — it reads as "the proof vanished," actively undermining the gesture. So uploaded records do not expire.
+A signed, uploaded record is **permanent by default.** Extension drafts and saved-link references also have no automatic expiry (§2.2.4), but local removal and server record lifetime are separate policies. The reasoning: the entire point of the `/<record_hash>` link is that it works when pasted into an argument, possibly months later. A dead provenance link is worse than no link — it reads as "the proof vanished," actively undermining the gesture. So uploaded records do not expire.
 
 Counterbalancing controls:
 
 - **Owner delete.** The signer can delete their own record. Deletion is real removal, not a tombstone, and afterward the link returns a clear 404. The owner is identified by a capability returned at sign time (a delete token / account binding) — decide the mechanism, but the signer must be able to retract.
 - Because the upload is content-free, a permanent record exposes only edit *shape*, not text — so durable retention is a modest privacy footprint by design.
 
-Summary of the two opposite policies, stated together so no one mixes them up: **unsigned local captures expire in days; signed server records are permanent until the owner deletes them.**
+Extension drafts and saved links have no automatic expiry; published server records also do not expire. The owner-delete mechanism above remains a design proposal, not an available public API.
 
 ---
 
@@ -372,7 +376,7 @@ A producer is "conformant" iff it passes canonicalization + hash-chain + process
 
 1. **Spec repo first.** `format_version 0.1`: event schema, `canonicalization.md`, chaining, manifest, capabilities, conformance vectors. This is the artifact everything references.
 2. **Reference producer #1 — emacs minor mode.** Hooks `after-change-functions` (which hands you `(beg end len)` for every change from any source — the mutation stream natively). The cleanest capture surface and the smallest producer; proves the format against a real long-form, non-browser workflow first. Content-blind, passes conformance. (§2.1)
-3. **Reference producer #2 — capture-all browser extension.** Content script attaching a `beforeinput`/`input` capturer to text fields; per-field id with re-mount handling, capability degradation on rich-text fields, focus/blur session handling, sign-to-seal loop (freeze + clear + upload + clipboard link), few-day TTL on unsigned local captures. The distribution play and the fiddlier producer; build it second, against a format already proven by emacs. (§2.2)
+3. **Reference producer #2 — capture-all browser extension.** Content script attaching a `beforeinput`/`input` capturer to text fields; per-field id with re-mount handling, capability degradation on rich-text fields, focus/blur session handling, sign-to-seal loop (freeze + clear + upload + clipboard link), durable unfinished drafts and saved links with explicit resumption after an absence. The distribution play and the fiddlier producer; build it second, against a format already proven by emacs. (§2.2)
 4. **Ingestion + storage.** Chain verification, content-addressing, immutable store, **permanent signed records with owner-delete (§5.1)**. A plain ingestion timestamp is fine; streaming/attested timestamping is deferred (§1.4).
 5. **Analyzers — timing-distribution and edit-topology.** Two capability profiles to exercise the interface.
 6. **Presentation.** Process timeline first (the hero), then signals-as-facts, then verification panel, then the disclaimer.

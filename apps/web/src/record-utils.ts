@@ -93,8 +93,13 @@ export function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
   const seconds = ms / 1000;
   if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = Math.round(seconds % 60);
+  const totalSeconds = Math.round(seconds);
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor(totalSeconds / 3600) % 24;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const remainder = totalSeconds % 60;
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
   return `${minutes}m ${remainder}s`;
 }
 
@@ -121,6 +126,11 @@ export function formatServerObservedSpan(ms: number): string {
   const totalMinutes = Math.round(ms / 60_000);
   if (totalMinutes < 60) return `${totalMinutes} ${totalMinutes === 1 ? "minute" : "minutes"}`;
   const hours = Math.floor(totalMinutes / 60);
+  if (hours >= 24) {
+    const days = Math.floor(hours / 24);
+    const rest = hours % 24;
+    return `${days} ${days === 1 ? "day" : "days"}${rest ? ` ${rest} ${rest === 1 ? "hour" : "hours"}` : ""}`;
+  }
   const minutes = totalMinutes % 60;
   if (minutes === 0) return `${hours} ${hours === 1 ? "hour" : "hours"}`;
   return `${hours} ${hours === 1 ? "hour" : "hours"} ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;

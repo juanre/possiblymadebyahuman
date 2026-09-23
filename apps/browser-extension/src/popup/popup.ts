@@ -130,7 +130,13 @@ function renderSession(session: SessionRecord): HTMLElement {
     if (isActive(session)) actions.append(button("Stop", () => void operation(async () => {
       const response = await send({ kind: "stop_session", session_id: session.session_id });
       if (response.kind === "error") notify(response.reason, true);
-      else notify("Capture stopped. Further edits are not included. You can publish its editing activity without a wording commitment, or clear the editor before starting a new record.");
+      else notify("Capture stopped. Choose this draft and Resume in chosen field to continue later. Your original timeline is kept.");
+      await refresh();
+    }), true));
+    else actions.append(button("Resume in chosen field", () => void operation(async () => {
+      const response = await send({ kind: "start_focused_editor", resume_session_id: session.session_id });
+      if (response.kind === "start_editor_result" && response.session_id) notify("Draft resumed in the chosen field. The original timeline is kept; edits made while capture was stopped are unknown.");
+      else notify(response.kind === "error" || response.kind === "start_editor_result" ? response.reason ?? "Choose the original field first." : "Could not resume this draft.", true);
       await refresh();
     }), true));
   } else if (selected && session.state === "failed_upload") {
@@ -208,8 +214,8 @@ function openReview(session: SessionRecord): void {
     <label><input type="checkbox" class="sign-keep-url" ${url ? "checked" : "disabled"} /> Page URL: <span class="sign-context-value">${escapeHtml(url || "none")}</span></label>
     <label><input type="checkbox" class="sign-keep-title" ${title ? "checked" : "disabled"} /> Page title: <span class="sign-context-value">${escapeHtml(title || "none")}</span></label>
     <label class="sign-label-row">Public label<input type="text" class="sign-label" value="${escapeHtml(label)}" maxlength="120" /></label>
-    <label><input type="checkbox" class="sign-bind" checked /> Include a wording commitment for the selection in this editor, or the whole editor if nothing is selected.</label>
-    <p class="sign-note">The check compares letters and digits, not exact text. No document text is sent. Anyone can test wording guesses against a public commitment; it is not encryption or proof of authorship.</p>
+    <label><input type="checkbox" class="sign-bind" checked /> Let readers check a copy of this text. Uses selected text, or the whole field if nothing is selected.</label>
+    <p class="sign-note">Your text is not uploaded. Anyone can test wording guesses against a public commitment; it is not encryption or proof of authorship.</p>
     <p class="binding-error notice error" role="alert" hidden></p>
     <div class="session-actions"><button class="sign-confirm-go">Confirm &amp; publish</button><button class="process-only secondary" hidden>Publish process only</button><button class="sign-confirm-cancel secondary">Cancel</button></div>`;
   REVIEW.replaceChildren(panel);

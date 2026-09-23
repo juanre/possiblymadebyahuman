@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { buildActivityBins, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "../apps/web/src/record-utils.ts";
+import { buildActivityBins, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDuration, formatServerObservedSpan, formatUtcMinute, verifyRecordChain } from "../apps/web/src/record-utils.ts";
 import { createTextBinding } from "../packages/format/src/index.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
@@ -263,4 +263,11 @@ test("activity distinguishes empty logs and zero-time edits and bounds dense cha
   assert.ok(bins.length <= 200);
   assert.equal(bins.reduce((sum, bin) => sum + bin.count, 0), dense.length);
   assert.ok(bins.at(-1).end >= dense.at(-1).t);
+});
+
+test("long session durations and observation spans use days without losing the pause", () => {
+  const duration = 60 * 86400000 + 2 * 3600000;
+  assert.equal(formatDuration(duration), "60d 2h");
+  assert.equal(formatDuration(3 * 3600000 + 5 * 60000), "3h 5m");
+  assert.equal(formatServerObservedSpan(duration), "60 days 2 hours");
 });

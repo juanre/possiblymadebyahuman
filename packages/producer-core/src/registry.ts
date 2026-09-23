@@ -207,10 +207,22 @@ export class SessionRegistry {
     return cloneSession(record);
   }
 
+  /** Explicitly reattach an unsigned draft; its original clock and hash chain survive. */
+  resume(session_id: SessionId, origin: FieldOrigin, descriptor: FieldDescriptor, options: { field_is_empty?: boolean } = {}): SessionRecord {
+    const record = this.#requireMutable(session_id);
+    record.origin = { ...origin };
+    record.descriptor = { ...descriptor };
+    record.identity_certainty = "resumed";
+    record.pending_observation_gap = record.events.length > 0 || options.field_is_empty !== true;
+    return cloneSession(record);
+  }
+
   appendMutation(session_id: SessionId, mutation: PendingMutation, _options: AppendOptions = {}): SessionRecord {
     const record = this.#requireMutable(session_id);
     const now = this.#clock.now();
-    const event = appendBufferMutation(record.events, mutation, now, record.base_wall_ms);
+    const observedMutation = record.pending_observation_gap ? { ...mutation, pos: null } : mutation;
+    const event = appendBufferMutation(record.events, observedMutation, now, record.base_wall_ms);
+    delete record.pending_observation_gap;
     record.last_event_chain_tip = advanceChain(
       record.last_event_chain_tip,
       event,
@@ -394,11 +406,9 @@ export class SessionRegistry {
    *
    * In-flight checkpoint caveat: if a checkpoint POST was in flight at the
    * moment of discard, the request continues on the server side and may
-   * succeed — creating an unfinalized observed-session that will be reclaimed
-   * by the ingest service's TTL sweep. The local registry's state stays
-   * consistent (the session is gone and no further checkpoints will fire) but
-   * the orphan checkpoint count on the server is non-zero until TTL. This is
-   * expected behaviour and not a leak: the orphan record contains only
+   * succeed, leaving server-side checkpoint metadata after local discard.
+   * The local registry stays consistent: no further checkpoints will fire.
+   * Local discard does not delete server data. The retained metadata contains only
    * (observed_session_id, event_count, chain_tip) — no text or text-derived
    * hashes are involved.
    */

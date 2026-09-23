@@ -138,6 +138,62 @@ test.describe("browser extension against the local service", () => {
     expect(pageErrors).toEqual([]);
   });
 
+  test("stopped drafts resume in an explicitly chosen nonempty field and finish with a fresh binding", async ({ baseURL }) => {
+    const page = await context.newPage();
+    await page.goto(`${baseURL}/extension-page`);
+    const panel = await context.newPage();
+    await panel.goto(`chrome-extension://${extensionId}/popup.html`);
+    const field = page.getByLabel("plain field");
+    await page.bringToFront();
+    await field.focus();
+    await panel.evaluate(() => document.getElementById("start").click());
+    await expect(panel.locator("#toast")).toContainText("Writing record started");
+    await page.keyboard.type("before");
+    await panel.reload();
+    const draft = panel.locator("article.selected");
+    const sessionId = await draft.getAttribute("data-session-id");
+    await draft.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(draft.getByRole("button", { name: "Resume in chosen field" })).toBeVisible();
+    // A restored page can contain edits from elsewhere; no text import or
+    // inferred replacement is allowed during explicit reattachment.
+    await page.reload();
+    await field.fill("offline text");
+    await page.bringToFront();
+    await field.focus();
+    await panel.evaluate(() => [...document.querySelectorAll("button")].find(button => button.textContent === "Resume in chosen field").click());
+    await expect(panel.locator("#toast")).toContainText("Draft resumed");
+    await expect(draft).toContainText("6 editing events");
+    await page.keyboard.press("End");
+    await page.keyboard.type(" after");
+    await panel.reload();
+    await expect(draft).toHaveAttribute("data-session-id", sessionId);
+    await expect(draft).toContainText("12 editing events");
+    // Stop/resume again in the same DOM node: stale entry WeakRefs and cached
+    // frozen snapshots must not supply an earlier pass's binding.
+    await draft.getByRole("button", { name: "Stop", exact: true }).click();
+    await page.bringToFront();
+    await field.focus();
+    await panel.evaluate(() => [...document.querySelectorAll("button")].find(button => button.textContent === "Resume in chosen field").click());
+    await expect(panel.locator("#toast")).toContainText("Draft resumed");
+    await page.keyboard.type("!");
+    await panel.reload();
+    await draft.getByRole("button", { name: "Finish & get link" }).click();
+    await panel.locator(".sign-confirm-go").click();
+    await expect(draft.getByRole("heading", { name: "Record saved" })).toBeVisible();
+    const url = await draft.getByLabel("Complete record link").inputValue();
+    const record = await (await fetch(`${localBaseUrl}/api/records/${new URL(url).pathname.slice(1)}`)).json();
+    expect(record.manifest.session_id).toBe(sessionId);
+    expect(record.manifest.event_count).toBe(13);
+    expect(record.events[6].pos).toBeNull();
+    expect(record.events[12].pos).toBeNull();
+    expect(record.stats.observed_final_length).toBeNull();
+    expect(record.manifest.text_binding.canonical_length).toBe(canonicalizeTextForBinding("offline text after!").length);
+    expect(verifyRecord({ manifest: record.manifest, events: record.events }).valid).toBe(true);
+    expect(JSON.stringify(record)).not.toContain("offline text");
+    await page.close();
+    await panel.close();
+  });
+
   for (const crossOrigin of [false, true]) {
   test(`freezes selected wording in the chosen ${crossOrigin ? "cross-origin" : "same-origin"} iframe, without binding the parent editor`, async ({ baseURL }) => {
     const page = await context.newPage();

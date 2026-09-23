@@ -15,7 +15,8 @@ export function appendBufferMutation(
   base_wall_ms: number,
 ): BufferMutation {
   const seq = events.length;
-  const t = Math.max(0, wall_ms - base_wall_ms);
+  // A wall-clock correction must not make a resumed history run backwards.
+  const t = Math.max(0, events.at(-1)?.t ?? 0, wall_ms - base_wall_ms);
   const event: BufferMutation = {
     seq,
     t,

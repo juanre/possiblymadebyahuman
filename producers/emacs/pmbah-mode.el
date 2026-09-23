@@ -86,8 +86,8 @@ start time, public events, and the observation token; never document text."
 (defconst pmbah-producer-version "0.1.0")
 (defconst pmbah-format-version "0.2")
 
-(defconst pmbah-max-session-ms 2147483647
-  "Largest event time or duration a record can carry: signed 32-bit milliseconds.")
+(defconst pmbah-max-session-ms 9007199254740991
+  "Largest exact JSON/JavaScript integer for elapsed milliseconds in a record.")
 (defconst pmbah-state-write-idle-seconds 2
   "Idle time after an edit before the session state is written to disk.")
 
@@ -272,7 +272,7 @@ passed transiently to the local helper solely to compute that binding."
             (plist-get state :format_version) pmbah-format-version))
    ((>= (- (pmbah--time-to-ms (current-time)) (plist-get state :session_start_ms))
         pmbah-max-session-ms)
-    "started more than 24 days ago, the most a record's clock can hold")
+    "exceeds the exact integer range for a record clock")
    (t nil)))
 
 (defun pmbah--retire-state-file (path reason)
@@ -552,7 +552,7 @@ tests."
     (user-error "No PMBAH events captured for this buffer"))
   (when (>= (pmbah--elapsed-ms) pmbah-max-session-ms)
     (pmbah--retire-live-session)
-    (user-error "PMBAH session ran past the 24.8 days a record's clock can hold; it was set aside as .stale and a fresh session %s started"
+    (user-error "PMBAH session exceeded the exact integer range of the record clock; it was set aside as .stale and a fresh session %s started"
                 pmbah--session-id))
   (let* ((context (or capture-context
                       (if no-prompts
@@ -1141,7 +1141,8 @@ mistaken for a parse failure and reported a second time."
 (defun pmbah--elapsed-ms ()
   "Return integer milliseconds since the current session started."
   (if pmbah--session-start-time
-      (max 0 (floor (* 1000 (float-time (time-subtract (current-time) pmbah--session-start-time)))))
+      (max 0 (or (plist-get (car pmbah--events) :t) 0)
+           (floor (* 1000 (float-time (time-subtract (current-time) pmbah--session-start-time)))))
     0))
 
 (defun pmbah--json-encode (object)

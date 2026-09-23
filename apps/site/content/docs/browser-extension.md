@@ -5,7 +5,7 @@ group: "Write a record"
 weight: 3
 ---
 
-These instructions apply to extension **0.2.0**. Earlier packages captured fields automatically; replace them before following this guide. Chrome Web Store availability is not yet confirmed. Reviewed developer-mode ZIP packages are distributed through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases); check the package version before installing.
+These instructions apply to extension **0.2.1**. Versions before 0.2.0 captured fields automatically; 0.2.0 lacks the durable-draft and Resume behavior below. Replace older packages before following this guide. Chrome Web Store availability is not yet confirmed. Reviewed developer-mode ZIP packages are distributed through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases); check the package version before installing.
 
 ## Start only where you choose
 
@@ -21,7 +21,7 @@ Write normally. Supported rich-text editors measure Unicode characters, includin
 
 ## Finish and share
 
-Choose **Finish & get link** in the panel. Review the page URL, title, and label, removing identifying metadata if appropriate. Choose whether to include a wording commitment: selected text in that editor, or its full text if nothing is selected. A commitment lets readers check candidate wording; it is not encryption or proof of authorship.
+Choose **Finish & get link** in the panel. Review the page URL, title, and label, removing identifying metadata if appropriate. Choose **Let readers check a copy of this text** to include a check of selected text, or the whole field if nothing is selected. A commitment lets readers check candidate wording; it is not encryption or proof of authorship.
 
 Confirm to stop capture and publish. The result shows a complete link, **Open record**, and **Copy link**. Copying happens only when you choose it. If copying fails, select the visible URL and copy it yourself.
 
@@ -29,7 +29,11 @@ If binding fails, the panel does not silently publish without it. Cancel or sepa
 
 ## Stop, switch tabs, or reload
 
-**Stop** ends capture and retains the local draft for finishing as a process-only record. It does not compute a wording commitment. **Discard local draft** deletes local events. Neither deletes an already published record. Local drafts and result references expire after three days without editing, with an hourly sweep.
+**Stop** pauses capture and keeps the unfinished draft. It does not upload or compute a text commitment. To return later—even after months—click its field, select the draft in the panel and choose **Resume in chosen field**. The field may already contain text; resumption is restricted to the same site. The extension keeps the original session and timeline instead of guessing which document a similar-looking field belongs to.
+
+The next captured edit includes the time away. Edits made while capture was stopped are not added retroactively, so the record may no longer support a document-length curve. Returning only to publish does not extend the timeline past its last captured edit. If you finish immediately after resuming without another captured edit, you can publish the earlier editing activity, but cannot attach a check of the current field text. To include it, resume again and make an edit before finishing.
+
+Drafts and saved links have no automatic expiry. **Discard local draft** removes local events; removing a saved reference does not delete the public record. Browser-data clearing or uninstall can remove local history. The website must preserve your text: PMBAH stores only editing measurements. Published records stay immutable and cannot be resumed in place.
 
 Reloading, navigating to a new page document, and finishing end capture authorization. Typing afterward does not start a new session. To start a new independent record, use an empty editor.
 

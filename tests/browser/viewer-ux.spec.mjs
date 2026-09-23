@@ -85,3 +85,18 @@ test('zero edits are explicit and one measurable edit has a visible length point
   await expect(page.locator('.length-single')).toBeVisible();
   await expect(page.locator('.length-single title')).toContainText('1 codepoints');
 });
+
+for (const elapsed of [60 * 86400000, Number.MAX_SAFE_INTEGER]) {
+  test(`long timeline ${elapsed} renders and verifies even outside the inferred calendar range`, async ({page, request}) => {
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    const record = await activityRecord(request, [ordinary(0, 0), {...ordinary(1), t: elapsed}]);
+    await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
+    await page.goto(`/${slug}`);
+    await expect(page.getByRole('heading', {name: 'Signed writing record', exact: true})).toBeVisible();
+    await expect(page.getByText('Hash chain recomputed in your browser.', {exact: true})).toBeVisible();
+    await expect(page.locator('.timeline-card')).toContainText(`${Math.floor(elapsed / 86400000)}d`);
+    await expect(page.locator('.timeline-card')).not.toContainText(/NaN|Infinity/);
+    expect(errors).toEqual([]);
+  });
+}

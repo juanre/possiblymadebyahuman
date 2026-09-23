@@ -23,8 +23,10 @@ function recordTimingWindow(record: RecordApiResponse): { began: string; ended: 
   const ingested = record.manifest.ingested_server_t;
   if (ingested) {
     const ended = new Date(ingested).getTime();
+    const began = new Date(ended - record.manifest.duration_ms);
+    if (!Number.isFinite(ended) || !Number.isFinite(began.getTime())) return null;
     return {
-      began: new Date(ended - record.manifest.duration_ms).toISOString(),
+      began: began.toISOString(),
       ended: new Date(ended).toISOString(),
       estimated: true,
     };
@@ -144,6 +146,8 @@ function sourceFill(source: string): string {
 }
 
 function formatTimelineTick(seconds: number): string {
+  if (seconds >= 86400) return `${Math.floor(seconds / 86400)}d ${Math.floor(seconds / 3600) % 24}h`;
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds / 60) % 60}m`;
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return s === 0 ? `${m}:00` : `${m}:${String(s).padStart(2, "0")}`;

@@ -184,12 +184,20 @@ references are:
   and `apps/browser-extension/src/lib/{adapters,dispatcher,messages,policy,
   descriptor,codepoint}.ts`.
 - Manifest permissions and host permissions: see the permission justification
-  table in `docs/chrome-web-store-prep.md`. Extension 0.2.0: `["storage",
+  table in `docs/chrome-web-store-prep.md`. Extension 0.2.1: `["storage",
   "clipboardWrite", "alarms", "contextMenus", "sidePanel", "webNavigation"]` + `host_permissions: ["<all_urls>"]`.
 - Zip contents and entry names: see the bullet list above and
   `tests/browser-extension-package.test.mjs`.
-- Local retention/TTL: 3 days from last edit, swept hourly by
-  `chrome.alarms`. Producer-core `DEFAULT_TTL_MS`.
+- Local retention: no automatic expiry for extension drafts or saved links.
+  Startup/registration/hourly cleanup removes redundant uploaded events and
+  checkpoint credentials while preserving saved links. Explicit Resume retains
+  the original session clock across months; no automatic field reattachment.
+  Shared producer-core defaults and `/write` behavior remain unchanged.
+- Long-session service support requires migration `003_long_session_times.sql`,
+  widened time validation and removal of checkpoint expiry. Deploy the service
+  update before relying on the candidate for records longer than 24.86 days.
+  Existing timestamps already use `timestamptz`; only elapsed-time columns become
+  `bigint`. Prior migrations and public hashes remain unchanged.
 - Source-attribution and capability claims: producer identity declares
   `["timing", "source_attribution"]` because the InputEvent → Source map in
   `apps/browser-extension/src/lib/codepoint.ts` returns `unknown` on any

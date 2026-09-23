@@ -17,6 +17,7 @@ test("explicit browser activation scopes permission to one document and freeze d
   let registrations = 0;
   let knownSession;
   let freezeCalls = 0;
+  let skipDrain = false;
   let freezing = false;
   let delayProbe = false;
   let releaseProbe;
@@ -43,7 +44,7 @@ test("explicit browser activation scopes permission to one document and freeze d
       if (message.kind === "start_editor") {
         if (knownSession) return { kind: "start_editor_result", session_id: knownSession };
         registrations++;
-        const reply = await invoke({ ...register, activation_id: message.activation_id, ...(message.share_session_id ? { share_session_id: message.share_session_id } : {}) }, content);
+        const reply = await invoke({ ...register, activation_id: message.activation_id, ...(message.share_session_id ? { share_session_id: message.share_session_id } : {}), ...(message.resume_session_id ? { resume_session_id: message.resume_session_id } : {}) }, content);
         assert.equal(reply.kind, "register_field_result");
         return { kind: "start_editor_result", session_id: reply.result.session_id };
       }
@@ -61,8 +62,10 @@ test("explicit browser activation scopes permission to one document and freeze d
         const during = await invoke({ kind: "list_sessions" });
         assert.equal(during.capture_status[message.session_id], "active", "list cannot revoke append authority during freeze drain");
         // This pending content edit must still be authorized during draining.
-        const appended = await invoke({ kind: "append_mutation", session_id: message.session_id, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } }, content);
-        assert.equal(appended.kind, "append_mutation_result");
+        if (!skipDrain) {
+          const appended = await invoke({ kind: "append_mutation", session_id: message.session_id, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } }, content);
+          assert.equal(appended.kind, "append_mutation_result");
+        }
         return { kind: "binding_result", text_binding: null };
       }
       throw new Error("unexpected content command");
@@ -134,6 +137,23 @@ test("explicit browser activation scopes permission to one document and freeze d
     await invoke({ kind: "stop_session", session_id: fresh.session_id });
     assert.equal(messages.filter(entry => entry.message.kind === "freeze_session").at(-1).message.bind, false, "stop does not request a wording commitment");
     assert.equal(storage["pmbah:explicit-capture:v1"].snapshots[fresh.session_id].binding, null);
+    assert.equal((await invoke({ kind: "start_focused_editor", resume_session_id: fresh.session_id }, content)).kind, "error", "a page cannot resume a draft");
+    const resumed = await invoke({ kind: "start_focused_editor", resume_session_id: fresh.session_id });
+    assert.equal(resumed.session_id, fresh.session_id);
+    assert.equal(storage["pmbah:explicit-capture:v1"].snapshots[fresh.session_id], undefined, "resume invalidates the frozen snapshot");
+    skipDrain = true;
+    const noNewEdit = await invoke({ kind: "prepare_finish", session_id: fresh.session_id, bind: true });
+    assert.match(noNewEdit.reason, /no captured edits since it was resumed/);
+    assert.equal(noNewEdit.text_binding, null);
+    const oldActivity = await invoke({ kind: "prepare_finish", session_id: fresh.session_id, bind: false });
+    assert.equal(oldActivity.reason, undefined);
+    assert.equal((await invoke({ kind: "start_focused_editor", resume_session_id: fresh.session_id })).session_id, fresh.session_id);
+    skipDrain = false;
+    assert.equal((await invoke({ kind: "start_focused_editor", resume_session_id: fresh.session_id })).session_id, undefined, "an already active draft cannot be reattached");
+    assert.equal((await invoke({ ...mutation, session_id: fresh.session_id }, { ...content, frameId: 99 })).kind, "error", "resume stays frame scoped");
+    assert.equal((await invoke({ ...mutation, session_id: fresh.session_id }, { ...content, documentId: "prior-document" })).kind, "error", "resume stays document scoped");
+    assert.equal((await invoke({ ...mutation, session_id: fresh.session_id }, content)).kind, "append_mutation_result");
+    await invoke({ kind: "stop_session", session_id: fresh.session_id });
     handlers.removed(12);
     const afterClose = await invoke({ kind: "list_sessions" });
     assert.equal(afterClose.capture_status[fresh.session_id], "stopped", "closing a tab stops its route");

@@ -4,7 +4,10 @@ Status: approved architecture for v0 implementation.
 Audience: coordinator, developer, reviewer, and future contributors.  
 Spec reference: `docs/spec.md` remains the product/format thesis; this document is the implementation source of truth for architecture, UI, backend, database, routing, and work breakdown.
 
-Extension UX amendment, 23 September 2026: the owner requires explicit activation on the chosen editor and no persistent controls over webpage content. Sections 3.8 and 13.1 define the extension 0.2.0 behavior; extension 0.1.1/0.1.2 implement the superseded passive-capture behavior. Implementation is tracked in [UX-reset epic #3](https://github.com/juanre/possiblymadebyahuman/issues/3) and [the review](extension-ux-review-2026-09-23.md).
+Extension UX amendment, 23 September 2026: the owner requires explicit activation on the chosen editor and no persistent controls over webpage content. Sections 3.8 and 13.1 define the extension 0.2.1 behavior; extension 0.1.1/0.1.2 implement the superseded passive-capture behavior. Implementation is tracked in [UX-reset epic #3](https://github.com/juanre/possiblymadebyahuman/issues/3) and [the review](extension-ux-review-2026-09-23.md).
+
+
+Further owner direction, 23 September 2026: cards must be user-nameable with contextual defaults, use generic field wording, and follow the focused editor. Saved links and unfinished sessions must not expire automatically. A writer must be able to return after months, resume the same session and sign a timeline that includes the pause. Extension 0.2.1 implements indefinite local retention, explicit unfinished-session resumption, and longer time ranges. Editable card names, focus following, collapsed/searchable history, and the broader panel redesign remain pending. These changes are not present in extension 0.2.0. See [the revised panel/session design](extension-panel-design-2026-09-23.md), including time-range, durable identity and server-observation work. Existing published records remain immutable.
 
 ---
 
@@ -89,7 +92,7 @@ Owns:
 - record-hash verification
 - content-blind process-length validation using Unicode codepoint offsets, with explicit JSON `null` for unknown process measurements
 - the format `0.2` text binding: `canon-letters/0.1` canonicalization, the salted commitment, and sealing the binding into `record_hash` (normative detail in `docs/text-binding.md` and `docs/spec/canonicalization.md`)
-- bounded metadata: `capture_context` accepts only its documented keys with capped string lengths, `attestations` only small typed objects with field names capped at 64 characters, producer id/version capped at 128 characters with no extra producer keys, and integer fields only the 32-bit storage range
+- bounded metadata: `capture_context` accepts only its documented keys with capped string lengths, `attestations` only small typed objects with field names capped at 64 characters, producer id/version capped at 128 characters with no extra producer keys, counts/offsets within the 32-bit storage range, and elapsed millisecond fields within the JavaScript safe-integer range
 
 Does not own:
 
@@ -148,7 +151,7 @@ Owns:
 - content-blind manifest construction via `packages/format`
 - session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
 - capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
-- TTL sweep; extension consumers retain a small uploaded-record continuation reference (without events or tokens) through the session TTL
+- configurable TTL sweep; the extension disables draft expiry and retains uploaded-record references indefinitely, without events or checkpoint tokens after cleanup; the `/write` consumer retains its existing policy
 - server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, a 30-second attempt deadline (including response-body reads), immediate serialized persistence of checkpoint outcomes, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before sign+upload that completes observation of a session with at least one commitment (final checkpoint over the uncommitted tail, plus one more round for events that arrive while it is in flight; at most two rounds) and leaves a never-committed session alone, and a `getObservationEnvelope()` accessor that yields the `(observed_session_id, token)` binding for `POST /api/records` when a commitment exists and the session has not diverged, `{ state: "unobserved" }` when it has no commitment or is `diverged`, and `null` when no checkpoint adapter is wired
 - local observation state vocabulary (`disabled` / `unknown` / `known` / `partial` / `diverged`) distinct from the public wire vocabulary on records (`observed` / `partial` / `unobserved` / `not_requested`)
 - adapter interfaces (`StorageAdapter`, `UploadAdapter`, `CheckpointAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`)
@@ -253,7 +256,7 @@ Owns:
 - per-field session identity
 - browser-owned session controls; no persistent injected field labels or overlays
 - sign modal
-- local unsigned capture TTL
+- durable unsigned captures and saved links, retained until explicit local removal
 - sign/freeze/upload/copy-link flow
 - local clear after upload
 - capture-context prompt review before upload
@@ -273,7 +276,7 @@ Owns:
 - server-observed checkpoint orchestration with the `packages/producer-core` cadence and state machine (first event immediate; 50-event delta or 60 s with new events; no idle heartbeats; single in-flight plus one queued slot; 30 s attempt watchdog; 1 s→60 s backoff; `diverged` on 409/400; reset on 404 `observation_unavailable`; up to two flush rounds of an already-observed session before sign), with chain tips advanced from the last known tip by the local `scripts/chain-tip.mjs` helper from public events only
 - observation binding on upload: `(observed_session_id, token)` when a checkpoint succeeded and the session is not diverged, explicit `unobserved` when observation was requested but never succeeded or diverged (the upload message says so), absent when `pmbah-observe-process` is nil
 - one session per buffer, kept across major-mode changes and `revert-buffer` (permanent-local state)
-- per-file session persistence under `pmbah-state-directory` (SHA-256 of the file's true name, owner-only, no text) with resumption anchored at the stored session start, deletion after upload or discard, preservation of diverged observation state/reason across resumption, and `.stale` retirement when the 32-bit event-time bound, a format-version change, or an unreadable file prevents resumption
+- per-file session persistence under `pmbah-state-directory` (SHA-256 of the file's true name, owner-only, no text) with resumption anchored at the stored session start, deletion after upload or discard, preservation of diverged observation state/reason across resumption, and `.stale` retirement when the exact JSON integer time bound, a format-version change, or an unreadable file prevents resumption
 
 ### 3.10 Producer scope invariant
 
@@ -632,7 +635,7 @@ A producer binds `(observed_session_id, token)` only for a session with at least
 
 Backend behavior:
 
-1. Validate schema, including the bounded `capture_context` and `attestations` shapes and 32-bit integer ranges.
+1. Validate schema, including the bounded `capture_context` and `attestations` shapes, 32-bit count/offset ranges, and non-negative safe-integer elapsed milliseconds (`t` and `duration_ms`, at most 9,007,199,254,740,991). Durations and derived delay/active/idle statistics use PostgreSQL `bigint`; actual dates remain `timestamptz`. Existing format versions, canonical bytes and hashes are unchanged.
 2. Verify events are content-blind: no plaintext or text-derived field is accepted, with the single exception of the format `0.2` `text_binding` commitment (§4).
 3. Recompute canonical event bytes.
 4. Recompute BLAKE3 hash chain.
@@ -707,7 +710,7 @@ Output:
 }
 ```
 
-The server stores only `token_hash`, never the bearer token. Checkpoint bodies contain no text or text-derived hashes. Same `(event_count, chain_tip)` is idempotent; same count with a different tip or a stale lower count is a conflict. Token/session lookup failures, including expired unfinalized sessions, return the uniform `observation_unavailable` shape. Unfinalized observed sessions expire after seven days from last checkpoint or creation.
+The server stores only `token_hash`, never the bearer token. Checkpoint bodies contain no text or text-derived hashes. Same `(event_count, chain_tip)` is idempotent; same count with a different tip or a stale lower count is a conflict. Token/session lookup failures return the uniform `observation_unavailable` shape. Unfinalized observed sessions and checkpoints have no automatic expiry, so earlier commitments remain available after months away. Local discard does not delete server checkpoint metadata.
 
 ### 10.4 `GET /api/health`
 
@@ -819,7 +822,7 @@ Build/deploy note:
 
 ### 13.1 Browser extension UI
 
-Primary normal-user author UX. The explicit-start requirements below supersede the previous passive/capture-all design. They apply to extension 0.2.0. Earlier distributed versions do not satisfy them.
+Primary normal-user author UX. The explicit-start requirements below supersede the previous passive/capture-all design. Extension 0.2.0 introduced explicit activation; 0.2.1 adds durable drafts/links and explicit resumption. Versions before 0.2.0 use the superseded passive-capture behavior.
 
 Surfaces:
 
@@ -842,11 +845,14 @@ Behavior:
 8. Local log is cleared shortly after successful upload.
 9. Continuations must respect explicit activation and truthfully identify their coverage, linking to the uploaded record through `parent_record`; signed sessions stay frozen with their links. Edits missed while capture was stopped must not later appear covered. A failed upload can be retried with the same signed record. Same-document session sharing across deliberately activated tabs remains supported. (`/write` retains its existing behavior: its canvas keeps the text on screen, so it reopens the same session and re-signs the whole process.)
 
-Unsigned local capture TTL:
+Extension local retention and resumption:
 
-- Default 3 days after last edit.
-- Sweep opportunistically on startup, new field capture, and session access.
-- Alarm-based cleanup may be a backup but not the only cleanup mechanism.
+- Unsigned drafts and saved record links do not expire automatically. Explicit local removal, browser-data clearing or uninstall can remove them. Already expired entries cannot be restored from local state.
+- Startup/registration/hourly cleanup removes redundant uploaded event logs and checkpoint credentials after the grace period while preserving the saved link.
+- Reload and navigation detach capture. Select an unfinished draft, focus its field and choose **Resume in chosen field**; the field may contain existing text. Resumption is explicit and restricted to the same site origin, without guessing document identity.
+- Resume preserves session identity, event history, checkpoint credentials and original clock. The next real edit includes the intervening pause. If prior edits may have been missed, its position is unknown (`pos: null`), so the viewer does not invent a continuous document-length curve. Reattachment adds no event.
+- Duration ends at the last captured edit. Returning only to publish does not extend the signed event timeline to the publish action. Published records cannot be resumed or mutated in place.
+- Shared producer-core default TTL and `/write` reload behavior are unchanged; this indefinite-retention policy applies to the extension.
 
 ### 13.2 Emacs UI
 
@@ -1039,7 +1045,7 @@ Rules:
 ### M6 — browser extension producer
 
 - Capture text fields/contenteditable.
-- Local session store and TTL.
+- Local session store and consumer-specific retention policy.
 - Capture-context prompt review.
 - Sign/freeze/upload/copy-link flow.
 - Conformance pass.
@@ -1062,7 +1068,7 @@ Rules:
 - Do not call the record page a certificate unless clearly qualified as not certifying humanity.
 - Do not let analyzers mutate records or depend on one another.
 - Do not treat missing capabilities as suspicious; mark analyzer output not applicable.
-- Do not conflate unsigned local TTL with uploaded server record lifetime.
+- Do not conflate local removal/cleanup with uploaded server record lifetime; extension drafts and saved links have no automatic expiry.
 - Keep work in small reviewable tasks with independent review.
 
 ---

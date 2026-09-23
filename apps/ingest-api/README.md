@@ -28,7 +28,7 @@ Checkpoint API contract:
 - Later checkpoint calls include `{event_count, chain_tip, token}`. The server stores only `token_hash`.
 - `POST /api/records` may include sibling `{observation:{observed_session_id, token}}`, or `{observation:{state:"unobserved"}}` when observation was requested but no commitment succeeded; `GET /api/records/:id` returns sibling `{observation:{state, commitments, first_observed_at, last_observed_at, server_observed_span_ms}}`.
 - Public observation states are `observed`, `partial`, `unobserved`, and `not_requested`; prefix mismatch at final upload is rejected rather than published as a normal record.
-- Malformed payloads return `invalid_payload`. Valid UUID/session/token lookup failures return the uniform `observation_unavailable` body. Unfinalized observed sessions expire after seven days from last checkpoint or creation.
+- Malformed payloads return `invalid_payload`. Valid UUID/session/token lookup failures return the uniform `observation_unavailable` body. Unfinalized observed sessions and their checkpoints have no automatic expiry, so authenticated sessions can retain evidence across long absences. Local producer discard does not delete server checkpoint metadata.
 
 The implementation exposes a Fetch `Request` handler plus direct functions for tests and runtime server wiring.
 

@@ -26,11 +26,11 @@ weight: 2
 
 - Each buffer records its own session. You can keep several buffers recording at once; each checkpoints, resumes, and signs on its own.
 - The session survives `M-x <major-mode>` and `revert-buffer`; recording continues into the same session.
-- For a file-visiting buffer, the session is saved to `pmbah-state-directory` (default `~/.emacs.d/pmbah/`) after a moment of idle time, when the buffer or Emacs is killed, when the mode is turned off, and whenever the service accepts a checkpoint. Enabling `pmbah-mode` on that file later resumes the session: earlier events are kept and new event times continue from the original start, so leaving for hours or days shows up as a pause inside one record. The state file holds the session id, start time, format version, public events, and the checkpoint token — never document text — and is readable only by you.
+- For a file-visiting buffer, the session is saved to `pmbah-state-directory` (default `~/.emacs.d/pmbah/`) after a moment of idle time, when the buffer or Emacs is killed, when the mode is turned off, and whenever the service accepts a checkpoint. Enabling `pmbah-mode` on that file later resumes the session: earlier events are kept and new event times continue from the original start, so leaving for hours, days or months shows up as a pause inside one record. The state file holds the session id, start time, format version, public events, and the checkpoint token — never document text — and is readable only by you.
 - A successful upload, or `M-x pmbah-discard-session`, removes the saved state and starts a fresh session.
 - Renaming the visited file (`write-file`, `set-visited-file-name`) moves the saved state with it, so the renamed file resumes the same session.
 - Non-file buffers keep their session in memory only.
-- A record's clock is a 32-bit millisecond counter, so one session can span at most about 24.8 days. If resuming would exceed that, the mode keeps the old state with a `.stale` suffix, tells you, and starts fresh. A live session that reaches the bound, at the next edit or when you sign, is set aside the same way rather than uploaded.
+- Event times and durations support months-long sessions. They use exact JSON integer milliseconds rather than a 32-bit clock; server duration and delay columns use 64-bit storage. A backwards system-clock correction cannot make the event timeline run backwards. Unreadable or incompatible state is still kept with a `.stale` suffix before a fresh session starts.
 
 ## Requirements
 
@@ -201,7 +201,7 @@ Use `C-u M-x pmbah-sign-buffer` to skip the prompts and accept the default yes a
 - **No URL copied**: upload did not complete; the local session is retained for retry.
 - **Mode line stays at `PMBAH:N·`**: no checkpoint has succeeded yet, or the last ones failed. `M-x pmbah-show-session-status` shows the last failure. Failed checkpoints retry with a growing delay (1 s to 60 s) on the next edit; the record can still be signed and is then uploaded as `unobserved` or `partial`.
 - **Mode line shows `PMBAH:N✗`**: the service's commitments diverged from the local session, typically because the same file was recorded from two Emacs instances. No further checkpoints are sent. Signing still works: the record is uploaded with an explicit `unobserved` state instead of binding the diverged commitments, and the upload message says so, quoting the last checkpoint failure.
-- **`PMBAH: the saved session for <file> ... starting a fresh session`**: the saved state could not be resumed (too old for a record's 32-bit clock, a different format version, or unreadable). It was kept next to the state file with a `.stale` suffix.
+- **`PMBAH: the saved session for <file> ... starting a fresh session`**: the saved state could not be resumed (outside the exact integer time range, a different format version, or unreadable). It was kept next to the state file with a `.stale` suffix.
 
 ## Sibling producers
 
