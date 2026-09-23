@@ -122,7 +122,7 @@ starts recording the shape of your editing as a content-blind event log:
 insert/delete/replace positions and lengths in Unicode codepoints, timing, and
 source attribution (typing, paste, drop, cut, IME, autocomplete) when the browser
 reports it. Existing non-empty fields are not recorded — the badge labels them
-"not recording (existing content)" so the extension never silently snapshots a
+"existing text — start in an empty field" so the extension never silently snapshots a
 draft you started elsewhere. A matching saved session can resume in a non-empty field. While you write, the extension sends event counts and hash-chain tips for server-timed checkpoints; it never sends your document text.
 
 When you click Sign & upload in the popup, the extension builds a public
@@ -187,7 +187,7 @@ and final extension behavior.
 
 - Content-blind PMBAH record manifest and event log:
   - `manifest`: format version, BLAKE3 record hash, session id, producer
-    identity (`browser-extension` v0.1.1 with capabilities `timing` and
+    identity (`browser-extension` v0.1.2 with capabilities `timing` and
     `source_attribution`), capture context, event count, duration,
     optional `text_binding` (scheme, canonical length, salted commitment), and a server-applied ingestion timestamp.
   - `events`: the ordered list of `BufferMutation` records described above.
@@ -236,7 +236,7 @@ justifications into the Chrome Web Store privacy form verbatim.
 | `storage` | `permissions: ["storage", ...]` | The service worker stores unsigned per-field session event logs in `chrome.storage.local` (`pmbah:sessions:v1`) until the user signs and uploads them, discards them, or the 3-day TTL sweeps them. Storage holds only content-blind numeric event records and observation state (`observed_session_id`, bearer `token`, commitments — never text). |
 | `clipboardWrite` | `permissions: [..., "clipboardWrite", ...]` | After a successful sign+upload, the popup copies the returned short record URL to the user's clipboard so they can paste it where they want to share it. No other clipboard write occurs. |
 | `alarms` | `permissions: [..., "alarms"]` | The service worker registers a single repeating alarm (`pmbah-ttl-sweep`, every 60 minutes) that runs the local 3-day TTL sweep over unsigned sessions. No other alarm is registered. |
-| `host_permissions: ["<all_urls>"]` | top-level | Required for the content script to attach to textarea and plain text input fields on any page the user visits. This is the capture-all writer producer scope. The content script reads only what is needed transiently during input handling to compute codepoint-anchored numeric metadata, and at signing to compute the optional text binding and never retains text across event boundaries. Non-empty pre-existing fields are marked "not recording (existing content)" and produce no events. |
+| `host_permissions: ["<all_urls>"]` | top-level | Required for the content script to attach to textarea and plain text input fields on any page the user visits. This is the capture-all writer producer scope. The content script reads only what is needed transiently during input handling to compute codepoint-anchored numeric metadata, and at signing to compute the optional text binding and never retains text across event boundaries. Non-empty pre-existing fields are marked "existing text — start in an empty field" and produce no events. |
 | `content_scripts.matches: ["<all_urls>"]`, `all_frames: true` | top-level | Same rationale as `host_permissions`. `all_frames: true` is required because composition surfaces (forum reply boxes, embedded editors) are frequently iframed; the content script must run inside the writer's actual frame. |
 | Network access to the ingest service | implied by upload URL | Outbound HTTPS only to the configured `EXT_BASE_URL` (default `https://possiblymadebyahuman.com`), and only for two endpoints: `POST /api/records` at sign-time and `POST /api/observed-sessions/<id>/checkpoints` during a session. No other network access occurs. The extension does not request `webRequest`. |
 
@@ -343,11 +343,11 @@ each unlocks the next.
    - Chrome Web Store currently requires at least one 1280×800 or 640×400
      screenshot. Recommended: three or four.
    - Suggested set (all using real extension UI, no mockups):
-     - The per-field `recording` badge on a textarea on a familiar site.
+     - The per-field `PMBAH · writing record ↗` badge on a textarea on a familiar site.
      - The popup with two sessions across two origins (multi-session shot).
      - The popup right after a successful sign+upload, showing the
        `short_signature` link.
-     - The badge reading `not recording (existing content)` on a textarea
+     - The badge reading `existing text — start in an empty field` on a textarea
        that already had a draft, to illustrate the eligibility rule.
    - Record the screenshot bundle location here once captured:
      > Screenshots: **TBD by Juan**.

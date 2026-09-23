@@ -417,6 +417,8 @@ const EXTENSION_HARNESS_HTML = `<!doctype html>
           return { kind: "register_field_result", result: { kind: "registered", session_id: "00000000-0000-4000-8000-00000000c0de", certainty: "fresh" } };
         }
         if (message.kind === "append_mutation") return { kind: "append_mutation_result" };
+        if (message.kind === "open_controls") return window.__pmbah.popupUnavailable
+          ? { kind: "error", reason: "open_from_toolbar" } : { kind: "open_controls_result" };
         return { kind: "error", reason: "unexpected " + message.kind };
       },
     },

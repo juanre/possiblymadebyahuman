@@ -13,18 +13,20 @@ import {
   sourceFromInputType,
 } from "../lib/codepoint.ts";
 import { extractDescriptor, isEligibleTag } from "../lib/descriptor.ts";
+import { setFieldIndicator } from "./field-indicator.ts";
 import {
   isComputeBindingRequest,
   type BackgroundResponse,
   type ComputeBindingResponse,
   type ContentToBackground,
+  type OpenControlsRequest,
 } from "../lib/messages.ts";
 import type { PendingMutation } from "../../../../packages/producer-core/src/index.ts";
 import { canonicalizeTextForBinding, createTextBinding, type Source } from "../../../../packages/format/src/index.ts";
 
 declare const chrome: {
   runtime: {
-    sendMessage(message: ContentToBackground): Promise<BackgroundResponse>;
+    sendMessage(message: ContentToBackground | OpenControlsRequest): Promise<BackgroundResponse>;
     onMessage: {
       addListener(
         listener: (message: unknown, sender: unknown, sendResponse: (response: unknown) => void) => boolean | void,
@@ -44,7 +46,6 @@ type FieldEntry = {
   state: "pending" | "recording" | "ineligible" | "signed" | "error";
 };
 
-const BADGE_ATTR = "data-pmbah-badge";
 const SESSION_ATTR = "data-pmbah-session";
 const STATE_ATTR = "data-pmbah-state";
 
@@ -123,56 +124,19 @@ function isFieldEmpty(element: HTMLElement): boolean {
   return true;
 }
 
-function ensureBadge(element: HTMLElement): HTMLElement {
-  const existing = element.getAttribute(BADGE_ATTR);
-  if (existing) {
-    const found = document.querySelector(`[id="${existing}"]`);
-    if (found) return found as HTMLElement;
-  }
-  const id = `pmbah-badge-${Math.random().toString(36).slice(2, 10)}`;
-  element.setAttribute(BADGE_ATTR, id);
-  const badge = document.createElement("div");
-  badge.id = id;
-  badge.setAttribute("role", "status");
-  badge.setAttribute("aria-live", "polite");
-  badge.style.cssText = [
-    "position:absolute",
-    "z-index:2147483647",
-    "padding:2px 8px",
-    "font:11px ui-monospace, SFMono-Regular, Menlo, monospace",
-    "background:#202124",
-    "color:#fbf8f2",
-    "border-radius:999px",
-    "pointer-events:none",
-    "opacity:0.92",
-  ].join(";");
-  badge.textContent = "pending";
-  document.body.appendChild(badge);
-  positionBadge(element, badge);
-  return badge;
-}
-
-function positionBadge(element: HTMLElement, badge: HTMLElement): void {
-  const rect = element.getBoundingClientRect();
-  const top = window.scrollY + rect.top - 16;
-  const left = window.scrollX + rect.right - badge.offsetWidth - 4;
-  badge.style.top = `${Math.max(0, top)}px`;
-  badge.style.left = `${Math.max(0, left)}px`;
-}
-
 function setBadge(element: HTMLElement, state: FieldEntry["state"], note?: string): void {
-  const badge = ensureBadge(element);
   element.setAttribute(STATE_ATTR, state);
-  badge.textContent = stateLabel(state, note);
-  badge.style.background = badgeColor(state);
-  positionBadge(element, badge);
+  setFieldIndicator(element, stateLabel(state, note), badgeColor(state), async () => {
+    const response = await chrome.runtime.sendMessage({ kind: "open_controls" });
+    return response.kind === "open_controls_result";
+  });
 }
 
 function stateLabel(state: FieldEntry["state"], note?: string): string {
   switch (state) {
-    case "pending": return "pending";
-    case "recording": return note ?? "recording";
-    case "ineligible": return "not recording (existing content)";
+    case "pending": return "starting";
+    case "recording": return note ?? "writing record";
+    case "ineligible": return "existing text — start in an empty field";
     case "signed": return "signed";
     case "error": return note ?? "error";
   }
@@ -192,7 +156,10 @@ async function registerField(element: HTMLElement): Promise<void> {
   const known = fields.get(element);
   // A field that was ineligible (it had content) or errored is re-evaluated on
   // focus: it may be empty now, or its uploaded session may be resumable.
-  if (known && known.state !== "ineligible" && known.state !== "error") return;
+  if (known && known.state !== "ineligible" && known.state !== "error") {
+    setBadge(element, known.state);
+    return;
+  }
   if (!isEligibleElement(element)) return;
   const descriptor = extractDescriptor({
     tagName: element.tagName,
@@ -231,7 +198,7 @@ async function registerField(element: HTMLElement): Promise<void> {
   }
   entry.session_id = response.result.session_id;
   element.setAttribute(SESSION_ATTR, response.result.session_id);
-  setBadge(element, "recording", response.result.certainty === "fresh" ? "recording" : `recording (${response.result.certainty})`);
+  setBadge(element, "recording", response.result.certainty === "fresh" ? "writing record" : `writing record (${response.result.certainty})`);
   // Send the queued mutations before accepting live ones so order is kept.
   for (const mutation of transient.queue.splice(0)) void sendMutation(entry, mutation);
   entry.state = "recording";
@@ -423,7 +390,7 @@ async function sendMutation(entry: FieldEntry, mutation: PendingMutation): Promi
   if (response.kind === "append_mutation_result" && response.session_id && response.session_id !== entry.session_id) {
     entry.session_id = response.session_id;
     entry.element.setAttribute(SESSION_ATTR, response.session_id);
-    setBadge(entry.element, "recording", "recording (continues a signed record)");
+    setBadge(entry.element, "recording", "writing record (continues a signed record)");
   }
 }
 

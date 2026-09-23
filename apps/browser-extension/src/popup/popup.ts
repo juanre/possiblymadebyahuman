@@ -56,7 +56,7 @@ function summary(session: SessionRecord): string {
 function render(sessions: SessionRecord[]): void {
   APP.innerHTML = "";
   if (sessions.length === 0) {
-    APP.innerHTML = `<p class="empty">No sessions yet. Focus a textarea or plain text input on any page to start recording.</p>`;
+    APP.innerHTML = `<p class="empty">No writing sessions yet. Reload tabs that were open before installation, then click an empty text field and start writing.</p>`;
     return;
   }
   const groups = groupByOrigin(sessions);

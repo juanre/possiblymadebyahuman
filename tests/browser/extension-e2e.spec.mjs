@@ -66,6 +66,22 @@ test.describe("browser extension against the local service", () => {
     await page.keyboard.press("Backspace");
     const expectedEventCount = typed.length + 1;
 
+    // Exercise the real action popup, not only a tab loaded at popup.html.
+    // The control must keep the text selection intact for optional binding.
+    await field.evaluate(field => field.setSelectionRange(0, 5));
+    await page.getByRole("button", { name: /PMBAH: writing record/ }).click();
+    const cdp = await context.newCDPSession(page);
+    let actionTarget;
+    await expect.poll(async () => {
+      const { targetInfos } = await cdp.send("Target.getTargets");
+      actionTarget = targetInfos.find(target => target.url === `chrome-extension://${extensionId}/popup.html`);
+      return Boolean(actionTarget);
+    }).toBe(true);
+    expect(await field.evaluate(field => [field.selectionStart, field.selectionEnd])).toEqual([0, 5]);
+    await cdp.send("Target.closeTarget", { targetId: actionTarget.targetId });
+    await cdp.detach();
+    await field.evaluate(field => field.setSelectionRange(field.value.length, field.value.length));
+
     const popup = await context.newPage();
     popup.on("pageerror", (error) => pageErrors.push(error.message));
     await popup.goto(`chrome-extension://${extensionId}/popup.html`);
@@ -114,7 +130,7 @@ test.describe("browser extension against the local service", () => {
     await field.focus();
     await page.keyboard.type(" x");
     await expect(page.locator("[data-pmbah-state='error']")).toHaveCount(0);
-    await expect(page.getByRole("status")).toHaveText("recording (continues a signed record)");
+    await expect(page.getByRole("status")).toHaveText("PMBAH · writing record (continues a signed record) ↗");
     await popup.reload();
     const sessions = popup.locator("article.session", { hasText: "plain field" });
     await expect(sessions).toHaveCount(2);
