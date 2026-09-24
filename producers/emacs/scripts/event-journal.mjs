@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Private local event journal. Every line is one content-blind public event.
 import { createReadStream } from "node:fs";
-import { stat, truncate } from "node:fs/promises";
+import { stat, truncate, readFile, open, rename, rm } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import {
   advanceEventHash, sealRecordHash, createTextBinding, canonicalizeTextForBinding,
@@ -203,9 +203,77 @@ export async function publishJournal(input) {
   return validateResponse(response);
 }
 
+function parseRecoveryJson(json, label) {
+  try { return JSON.parse(json); }
+  catch { throw new Error(`${label} is not valid JSON`); }
+}
+
+const RECOVERY_FIELDS = [
+  "session_id", "capture_enabled", "session_start_ms", "format_version", "parent_record",
+  "storage_version", "event_count", "journal_bytes", "frozen_byte_length", "upload_id",
+  "pending_gap", "uploaded_response", "uploaded_at_ms", "signed_duration_ms", "save_failure",
+  "chain_tip", "chain_tip_event_count", "chain_tip_byte_offset", "chain_tip_last_time", "observation",
+];
+
+// Read legacy arrays in the worker, never into the editor's live recovery state.
+export async function readRecoveryState(path, { skipPaused = false } = {}) {
+  const source = parseRecoveryJson(await readFile(path, "utf8"), "recovery metadata");
+  if (!source || typeof source !== "object" || Array.isArray(source)) throw new Error("invalid recovery metadata");
+  if (skipPaused && source.capture_enabled === false) return { capture_enabled: false };
+  const state = Object.fromEntries(RECOVERY_FIELDS.filter((key) => Object.hasOwn(source, key)).map((key) => [key, source[key]]));
+  if (state.storage_version !== 2) {
+    if (!Array.isArray(source.events)) throw new Error("legacy recovery has no event array");
+    state.legacy_event_count = source.events.length;
+  }
+  // Old frozen envelopes can contain the entire event array too. Only the
+  // manifest and observation are recovery metadata; events are verified below.
+  if (source.frozen_record) {
+    state.frozen_record = JSON.stringify({ manifest: parseRecoveryJson(source.frozen_record, "frozen record")?.manifest });
+  }
+  if (source.frozen_upload) {
+    state.frozen_upload = JSON.stringify({ observation: parseRecoveryJson(source.frozen_upload, "frozen upload")?.observation });
+  }
+  // Valid recovery metadata is small even after years of capture. Reject
+  // malformed oversized metadata before it can stall Emacs's JSON parser.
+  if (Buffer.byteLength(JSON.stringify(state)) > 1024 * 1024) throw new Error("recovery metadata exceeds its size limit");
+  return state;
+}
+
+async function inspectRecovery(input) {
+  if (!input.legacy_state_path) return inspectJournal(input);
+  const state = parseRecoveryJson(await readFile(input.legacy_state_path, "utf8"), "legacy recovery metadata");
+  if (state.session_id !== input.session_id || state.format_version !== input.format_version ||
+      !Array.isArray(state.events) || state.events.length !== input.acknowledged_event_count) {
+    throw new Error("legacy recovery metadata changed during verification");
+  }
+  // Verify the complete migration before replacing any existing journal. The
+  // metadata stays legacy until Emacs durably installs the verified cursor.
+  const temporary = `${input.journal_path}.migrating`;
+  let file;
+  try {
+    await rm(temporary, { force: true });
+    file = await open(temporary, "wx", 0o600);
+    let batch = "";
+    for (const event of state.events) {
+      batch += `${JSON.stringify(event)}\n`;
+      if (batch.length >= 65536) { await file.writeFile(batch); batch = ""; }
+    }
+    if (batch) await file.writeFile(batch);
+    await file.sync();
+    await file.close(); file = undefined;
+    const scan = await inspectJournal({ ...input, journal_path: temporary, repair_tail: false });
+    await rename(temporary, input.journal_path);
+    return scan;
+  } finally {
+    if (file) await file.close();
+    await rm(temporary, { force: true });
+  }
+}
+
 export async function runJournalOperation(input) {
   switch (input.operation) {
-    case "inspect": return inspectJournal(input);
+    case "read-recovery": return readRecoveryState(input.state_path, { skipPaused: input.skip_paused === true });
+    case "inspect": return inspectRecovery(input);
     case "truncate": await truncate(input.journal_path, input.byte_length); return { ok: true };
     case "manifest": return buildJournalManifest(input);
     case "publish": {

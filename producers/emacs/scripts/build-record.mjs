@@ -38,7 +38,7 @@ try {
   const input = parseInput(raw);
   // Existing user configurations name this script explicitly. Delegate new
   // journal descriptors; the array branch below is only the legacy CLI export.
-  if (typeof input.journal_path === "string") {
+  if (typeof input.journal_path === "string" || input.operation === "read-recovery") {
     stdout.write(JSON.stringify(await runJournalOperation(input)) + "\n");
     exit(0);
   }

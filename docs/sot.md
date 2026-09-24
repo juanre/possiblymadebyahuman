@@ -25,6 +25,22 @@ share the incremental storage and publication guarantees; hashes and the public
 content-blind promise remain unchanged. This milestone includes removal of
 superseded paths and stale documentation.
 
+Emacs usability amendment, 23 September 2026: once a file is opted into capture,
+reopening it automatically recovers its own session, including after an Emacs
+restart. Empty sessions and explicit pause preferences are durable. Unrelated
+files remain unrecorded. Failed automatic recovery preserves history and stops
+ordinary editing until retried or explicitly bypassed; unsaved capture blocks
+ordinary buffer close and Emacs exit. Existing journal integrity, ownership and
+content-blind guarantees remain in force.
+
+Background recovery amendment, 24 September 2026: automatic file reopening and
+interactive recovery verify history in a worker. The recovering buffer remains
+read-only until verified state is installed; unrelated buffers stay usable.
+Closing cancels recovery without changing saved capture intent. Recovery keeps
+exclusive file ownership through installation or worker cancellation, rejects
+stale callbacks, and preserves the same prefix/hash checks. Noninteractive Lisp
+recovery retains a synchronous interface.
+
 ---
 
 ## 1. Product promise
@@ -296,7 +312,7 @@ Owns:
 - server-observed checkpoint orchestration with the `packages/producer-core` cadence and state machine (first event immediate; 50-event delta or 60 s with new events; no idle heartbeats; single in-flight plus one queued slot; 30 s attempt watchdog; 1 s→60 s backoff; `diverged` on 409/400; reset on 404 `observation_unavailable`; up to two flush rounds of an already-observed session before sign), with chain tips advanced from the last known tip by the local `scripts/chain-tip.mjs` helper from public events only
 - observation binding on upload: `(observed_session_id, token)` when a checkpoint succeeded and the session is not diverged, explicit `unobserved` when observation was requested but never succeeded or diverged (the upload message says so), absent when `pmbah-observe-process` is nil
 - one session per buffer, kept across major-mode changes and `revert-buffer` (permanent-local state)
-- private session persistence under `pmbah-state-directory` (file-path hash or non-file session UUID, no document text), anchored at the original start; frozen record/upload recovery across restart, archived accepted links before draft cleanup, preserved observation state, and `.stale` retirement for unreadable or incompatible state. Capture gaps use an unknown first mutation position; whole-buffer binding includes narrowed-out text unless an explicit region is selected
+- private session persistence under `pmbah-state-directory` (file-path hash or non-file session UUID, no document text), anchored at the original start; frozen record/upload recovery across restart, archived accepted links before draft cleanup, preserved observation state, and preserved evidence on unreadable or incompatible state. Only a live session reaching the exact clock bound retires to a unique `.stale-*` path. Capture gaps use an unknown first mutation position; whole-buffer binding includes narrowed-out text unless an explicit region is selected
 - each mutation saves recovery state before the capture hook returns; a failed save retains the event in memory and pauses ordinary edits through buffer read-only state. `pmbah-retry-save` durably saves and resumes unsigned capture without unfreezing signed records
 
 ### 3.10 Producer scope invariant
@@ -928,7 +944,7 @@ UX:
 
 - mode-line capture indicator: `PMBAH:N` plus `✓` (server has stamped every event), `·` (some events not yet stamped), or `✗` (diverged) when observation is on
 - session status reports event count, duration, observation state with the last checkpoint failure, and API URL
-- several buffers record at once, each in its own session; a file buffer resumes its saved session when the mode is re-enabled, and a message explains when saved state is set aside as `.stale`
+- several buffers record at once, each in its own session; an opted-in file automatically resumes on reopening while explicitly paused files stay paused; recovery errors keep the buffer read-only with `PMBAH:recover!` and preserve saved history
 - sign-buffer command, freezing and saving the record before flushing the final checkpoint and uploading
 - capture-context review/redaction before upload
 - upload returns and copies short URL

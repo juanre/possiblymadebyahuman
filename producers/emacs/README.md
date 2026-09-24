@@ -115,7 +115,9 @@ producer paths from it:
 (setq pmbah-api-base-url "https://possiblymadebyahuman.com")
 ```
 
-Change only `pmbah-checkout-root` for your checkout location.
+Change only `pmbah-checkout-root` for your checkout location. Load the package
+in your init file before opening writing files; automatic recovery needs its
+file-visit hook installed. The `use-package` example below uses `:demand t` for this.
 
 `use-package` users can use the same root variable:
 
@@ -127,6 +129,7 @@ Change only `pmbah-checkout-root` for your checkout location.
              (expand-file-name "producers/emacs" pmbah-checkout-root))
 
 (use-package pmbah-mode
+  :demand t
   :commands (pmbah-mode pmbah-sign-buffer pmbah-show-session-status)
   :custom
   (pmbah-api-base-url "https://possiblymadebyahuman.com")
@@ -216,21 +219,42 @@ synced between machines:
 - Each buffer records its own session. Several buffers can record at once;
   each one checkpoints, resumes, and signs independently, and switching
   between them does nothing to their sessions.
+- Enable `M-x pmbah-mode` once for each file you want recorded. Reopening an
+  opted-in file automatically verifies and resumes its saved session, including
+  after restarting Emacs. Verification runs in a background helper: the mode
+  line shows `PMBAH:recovering`, that buffer stays read-only, and other buffers
+  remain usable. Even an empty session is saved immediately. Other files stay
+  unrecorded; opening them does not start sessions.
+- Wait for verification before signing, discarding, or toggling capture. Closing
+  a recovering buffer cancels its worker; saved history and the previous capture
+  preference remain available for the next visit. Major-mode changes and reverts
+  keep the recovery protection in place.
+- Toggle `M-x pmbah-mode` off to pause a file. That choice is saved and survives
+  reopening; explicitly enable the mode to resume the same history. Set
+  `pmbah-auto-resume` to `nil` to require manual activation for all files. Older
+  recovery files without a saved preference are treated as enabled.
 - The session survives `M-x <major-mode>` and `revert-buffer`, which otherwise
   wipe buffer-local state: recording continues into the same session.
 - Every captured mutation appends one numeric journal line and saves small
   metadata before capture returns. Both writes request a file flush; directory
   rename durability still depends on the filesystem, so this is not a guarantee
   against every power-loss scenario. State also saves when Emacs is killed, when the mode is
-  turned off, and whenever the server accepts a checkpoint. Enabling
-  `pmbah-mode` on that file later resumes the session: earlier events are
+  turned off, and whenever the server accepts a checkpoint. Reopening
+  an opted-in file resumes the session: earlier events are
   kept and new event times continue from the original start, so a break of
   hours, days or months shows up as a pause, not as a new record.
 - If saving fails, the event remains in memory and capture makes the buffer
   read-only. `M-x pmbah-retry-save` saves the pending state and resumes unsigned
-  capture; a frozen upload remains frozen. Each edit writes only its new event
+  capture; a frozen upload remains frozen, and explicitly paused capture stays
+  paused. Each edit writes only its new event
   and bounded metadata; it never rewrites the preceding history. Emacs retains
-  at most 256 events in its capture tail.
+  at most 256 events in its capture tail. Ordinary buffer close and Emacs exit
+  are cancelled if recovery state still cannot be saved. This does not prevent
+  a forced process termination or replace saving your document with `C-x C-s`.
+- If automatic recovery fails, the buffer stays read-only with
+  `PMBAH:recover!` in the mode line and a warning explaining why. Saved history
+  is retained. Resolve the problem and run `M-x pmbah-mode` to retry. To edit
+  privately in that buffer instead, use `C-u -1 M-x pmbah-mode`.
 - Recovery streams the journal and validates the acknowledged count and exact
   byte boundary, cached hash prefix, retained observation commitments, and any
   frozen record hash. Only then may it adopt complete appends beyond stale
@@ -252,14 +276,18 @@ synced between machines:
   session continues saving at its original recovery path, reported in a message.
 - Non-file buffers (`*scratch*`, temporary buffers) save their sessions under
   `session-<session-id>.json`. Run `M-x pmbah-recover-session` in an unused buffer
-  to select a saved session. Recovery restores capture events or a frozen upload,
-  never document text.
+  to select a saved session. Interactive recovery also runs in the background.
+  The destination must have no retained PMBAH session, including an empty one.
+  If it visits an untracked file, the recovered session is associated with that
+  file. Recovery restores capture events or a frozen upload, never document text.
 - Event times and durations are exact JSON integer milliseconds, supported
   through 9,007,199,254,740,991 ms, with 64-bit server storage. Months-long
   sessions retain the original clock; backwards system-clock corrections cannot
   make later events run backwards. Unreadable or incompatible state, or a clock
-  outside the exact integer range, is kept with a `.stale` suffix before a fresh
-  session starts. This does not change existing format versions or record hashes.
+  outside the exact integer range, stops recovery without replacing saved
+  history. Only an already-running session that reaches the clock limit is
+  retired to a unique `.stale-*` path before starting a new one.
+  This does not change existing format versions or record hashes.
 - Each recovery file has one writer. A second buffer or Emacs process cannot
   attach to a session while its current owner remains open, including while
   capture is off. Close the owning buffer before recovering it elsewhere.
@@ -274,7 +302,9 @@ synced between machines:
    M-x pmbah-mode
    ```
 
-3. Write normally. The mode line shows `PMBAH:N`, where `N` is the local event
+3. Write normally. Save your document as usual. Close and reopen the file to
+   resume recording automatically; each file keeps its own session. The mode
+   line shows `PMBAH:N`, where `N` is the local event
    count, followed by an observation mark when checkpoints are enabled: `✓`
    when the server has stamped every event so far, `·` while some events are
    not yet stamped (or no checkpoint has succeeded yet), and `✗` when the
@@ -330,6 +360,11 @@ so other buffers remain usable during a long upload. Closing the signing buffer
 cancels its local helper and keeps the saved frozen prefix available for recovery.
 Noninteractive Lisp callers retain the synchronous, result-returning interface.
 
+Noninteractive Lisp recovery retains a synchronous interface. Automation that
+calls `pmbah-mode` immediately after `find-file-noselect` should bind
+`pmbah-auto-resume` to `nil` around the visit and explicit activation, or wait
+for automatic recovery to finish before issuing session commands.
+
 `pmbah-build-record-for-current-buffer` and `pmbah--session-events` are explicit
 diagnostic exports that materialize arrays. Capture, checkpointing, normal
 signing, and publication do not call these exports.
@@ -342,7 +377,9 @@ and a suffix checkpoint. In the recorded development run, per-edit writes were
 792 bytes after four million events versus 767 bytes near the beginning, with a
 256-event memory tail and 689-byte metadata. After the recovery corrections, recovery took about 22 seconds;
 the subsequent 400 edits took about 308 ms and their checkpoint about 91 ms
-while the PostgreSQL integration suite ran concurrently.
+while the PostgreSQL integration suite ran concurrently. That benchmark measures
+the verification work itself. Automatic reopening now runs it in a worker;
+Emacs stays responsive while the recovering buffer remains protected.
 
 ## Verify the installation
 
@@ -413,6 +450,9 @@ active or the whole buffer otherwise.
 
 ## Local conformance/testing
 
+The [recovery and lifecycle review](../../docs/emacs-recovery-review-2026-09-24.md)
+records the latest findings, fixes, validation, and remaining boundaries.
+
 The repository test suite includes Emacs batch tests that:
 
 - enable `pmbah-mode` in a real empty Emacs buffer;
@@ -432,15 +472,19 @@ The repository test suite includes Emacs batch tests that:
   conflicts pin the session, and unavailable sessions reset;
 - confirm the session survives a major-mode change and `revert-buffer`;
 - confirm a file buffer's session is saved without text, owner-only, resumed on
-  reopen with monotonic event times, removed after upload or discard, and that
-  two file buffers keep independent sessions;
+  reopen with monotonic event times, replaced by an empty successor after upload
+  or discard, and that two file buffers keep independent sessions;
 - confirm a saved session resumes after 60 days, preserves its history and
-  original clock, and can be signed after a backwards clock correction.
+  original clock, and can be signed after a backwards clock correction;
+- verify reopening empty, active, paused and frozen file sessions, including
+  an actual Emacs process restart, independent files, renames, and package reload;
+- retain damaged recovery evidence, block silent editing after recovery errors,
+  and prevent ordinary close or exit when capture cannot be saved.
 
 Run them with:
 
 ```sh
-node --test tests/emacs-producer.test.mjs
+node --test tests/emacs-producer.test.mjs tests/emacs-journal.test.mjs tests/emacs-lifecycle.test.mjs tests/emacs-async-recovery.test.mjs
 ```
 
 or as part of the full project check:
@@ -479,7 +523,10 @@ make check
   is uploaded with an explicit `unobserved` state instead of binding the
   diverged commitments, and the upload message says so, quoting the last
   checkpoint failure.
+- `PMBAH:recovering`: verification is running in the background. Other buffers
+  remain usable. Close this buffer to cancel; reopening will retry.
+- `PMBAH:recover!`: recovery failed. Inspect `M-x pmbah-show-session-status`
+  or `*Warnings*`, fix the reported issue, then retry with `M-x pmbah-mode`.
 - `PMBAH: the saved session for <file> ... starting a fresh session`: the saved
-  state could not be resumed (outside the exact integer time range, a different
-  format version, or unreadable). It was kept next to the state file with a
-  `.stale` suffix.
+  live session reached the exact integer clock limit. Its state was retained
+  at the unique `.stale-*` path printed in the message.

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { inspectJournal, buildJournalManifest, publishJournal, journalEvents } from "../producers/emacs/scripts/event-journal.mjs";
+import { inspectJournal, buildJournalManifest, publishJournal, journalEvents, readRecoveryState } from "../producers/emacs/scripts/event-journal.mjs";
 import { computeEventHashChain, computeRecordHash, verifyRecord } from "../packages/format/src/index.ts";
 
 const emacs = spawnSync("sh", ["-c", "command -v emacs"], { encoding: "utf8" }).stdout.trim();
@@ -14,6 +14,40 @@ const id = "00000000-0000-4000-8000-000000000091";
 const elapsed = 2 * 365 * 24 * 60 * 60 * 1000;
 const eventsFor = (count) => Array.from({ length: count }, (_, seq) => ({ seq, t: Math.floor(seq * elapsed / Math.max(1, count - 1)), op: "insert", pos: seq, del_len: 0, ins_len: 1, source: "typing" }));
 const serialize = (events) => events.map((event) => `${JSON.stringify(event)}\n`).join("");
+
+test("recovery metadata sent to Emacs excludes embedded histories and is size bounded", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pmbah-recovery-metadata-"));
+  const path = join(directory, "state.json");
+  try {
+    const state = { storage_version: 2, session_id: id, events: eventsFor(1000), unexpected: "private-extra",
+      frozen_record: JSON.stringify({ manifest: { session_id: id }, events: eventsFor(1000) }),
+      frozen_upload: JSON.stringify({ observation: { state: "unobserved" }, events: eventsFor(1000) }) };
+    await writeFile(path, JSON.stringify(state));
+    const compact = await readRecoveryState(path);
+    assert.equal(compact.events, undefined);
+    assert.equal(compact.unexpected, undefined);
+    assert.deepEqual(JSON.parse(compact.frozen_record), { manifest: { session_id: id } });
+    assert.deepEqual(JSON.parse(compact.frozen_upload), { observation: { state: "unobserved" } });
+    await writeFile(path, JSON.stringify({ ...state, observation: { token: "x".repeat(1024 * 1024) } }));
+    await assert.rejects(readRecoveryState(path), /recovery metadata exceeds its size limit/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("recovery parse errors never quote private metadata", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pmbah-recovery-redaction-"));
+  const path = join(directory, "state.json");
+  const secret = "PRIVATE-OBSERVATION-TOKEN-CANARY";
+  try {
+    for (const contents of [secret, JSON.stringify({ storage_version: 2, frozen_record: secret }),
+      JSON.stringify({ storage_version: 2, frozen_upload: secret })]) {
+      await writeFile(path, contents);
+      await assert.rejects(readRecoveryState(path), (error) => {
+        assert.equal(error.message.includes(secret), false);
+        return /not valid JSON/.test(error.message);
+      });
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
 const descriptor = (path, count) => ({ journal_path: path, session_id: id, format_version: "0.3", event_count: count,
   duration_ms: elapsed, created_client_t: "2024-09-23T00:00:00.000Z", producer: { id: "emacs", version: "0.1.0", capabilities: ["timing", "pause_fidelity"] } });
 
@@ -457,5 +491,164 @@ test("native recovery rejects changed cached history and leaves repeated retries
     assert.equal(output, true);
     assert.equal(await readFile(journal, "utf8"), damaged);
     assert.equal(await readFile(state, "utf8"), metadata);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+for (const appendProgress of ["before", "partial", "complete"]) {
+  test(`native interrupted ${appendProgress} append and retry metadata save preserve each event once`, { skip: !emacs }, async () => {
+    const temp = await mkdtemp(join(tmpdir(), "pmbah-journal-append-quit-"));
+    try {
+      const output = await native(temp, `(with-temp-buffer
+        (pmbah-mode 1)
+        (let ((writer (symbol-function 'write-region)) interrupted)
+          (cl-letf (((symbol-function 'write-region)
+                     (lambda (start end filename &rest rest)
+                       (if (and (not interrupted) (stringp start) (> (length start) 10)
+                                (string-suffix-p ".jsonl" filename))
+                           (progn
+                             (setq interrupted t)
+                             ${appendProgress === "before" ? "nil" : appendProgress === "partial"
+                               ? "(apply writer (substring start 0 10) nil filename rest)"
+                               : "(apply writer start end filename rest)"}
+                             (signal 'quit nil))
+                         (apply writer start end filename rest)))))
+            (condition-case nil (insert "first") (quit nil)))
+          (unless (and interrupted pmbah--save-failure buffer-read-only pmbah--journal-repair
+                       (= pmbah--next-seq 1) (= pmbah--journal-count 0)
+                       (= (length pmbah--journal-pending) 1))
+            (error "interrupted append did not retain and pause the pending event"))
+          ;; Retrying first repairs any uncertain bytes, then appends the event.
+          ;; Interrupt metadata persistence after that append has succeeded.
+          (cl-letf (((symbol-function 'pmbah--write-json-file)
+                     (lambda (&rest _) (signal 'quit nil))))
+            (condition-case nil (pmbah-retry-save) (quit nil)))
+          (unless (and pmbah--save-failure buffer-read-only
+                       (= pmbah--journal-count 1) (null pmbah--journal-pending)
+                       (= (length (pmbah--session-events)) 1))
+            (error "interrupted metadata retry lost its saved journal cursor"))
+          (pmbah-retry-save)
+          (when (or pmbah--save-failure buffer-read-only)
+            (error "successful retry did not restore capture"))
+          (insert "second")
+          (princ (pmbah--json-encode
+                  (list :events (vconcat (pmbah--session-events))
+                        :count pmbah--next-seq :stored pmbah--journal-count
+                        :snapshot (pmbah--state-snapshot)
+                        :hook (if (memq #'pmbah--after-change after-change-functions) t :json-false)
+                        :failure pmbah--save-failure)))))`);
+      assert.equal(output.count, 2);
+      assert.equal(output.stored, 2);
+      assert.equal(output.snapshot.event_count, 2);
+      assert.equal(output.hook, true, "capture hook survives cancellation and retries");
+      assert.equal(output.failure, null);
+      assert.deepEqual(output.events.map(({ seq, ins_len }) => ({ seq, ins_len })), [
+        { seq: 0, ins_len: 5 }, { seq: 1, ins_len: 6 },
+      ]);
+    } finally { await rm(temp, { recursive: true, force: true }); }
+  });
+}
+
+test("native checkpoint launch cancellation keeps capture active and completes the failed attempt", { skip: !emacs }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-journal-checkpoint-quit-"));
+  try {
+    const output = await native(temp, `(with-temp-buffer
+      (setq pmbah-observe-process t)
+      (pmbah-mode 1)
+      (cl-letf (((symbol-function 'process-send-string)
+                 (lambda (&rest _) (signal 'quit nil))))
+        (insert "first"))
+      (unless (and pmbah-mode (memq #'pmbah--after-change after-change-functions)
+                   (= pmbah--next-seq 1) pmbah--observation-last-failure
+                   (not pmbah--observation-in-flight) (not pmbah--observation-request)
+                   (not pmbah--observation-watchdog))
+        (error "checkpoint cancellation removed capture or stranded its attempt"))
+      (when (seq-some (lambda (process)
+                       (and (string-prefix-p "pmbah-node" (process-name process))
+                            (process-live-p process))) (process-list))
+        (error "cancelled checkpoint retained a helper process"))
+      (setq pmbah-observe-process nil)
+      (insert "second")
+      (princ (pmbah--json-encode
+              (list :count pmbah--next-seq :events (vconcat (pmbah--session-events))
+                    :hook (if (memq #'pmbah--after-change after-change-functions) t :json-false)
+                    :save_failure pmbah--save-failure))))`);
+    assert.equal(output.count, 2);
+    assert.equal(output.hook, true);
+    assert.equal(output.save_failure, null);
+    assert.deepEqual(output.events.map(({ seq, ins_len }) => ({ seq, ins_len })), [
+      { seq: 0, ins_len: 5 }, { seq: 1, ins_len: 6 },
+    ]);
+  } finally { await rm(temp, { recursive: true, force: true }); }
+});
+
+for (const callbackOutcome of ["http", "quit"]) {
+  test(`native inline checkpoint callback preserves ${callbackOutcome === "http" ? "the newer HTTP handle" : "capture after cancellation"}`, { skip: !emacs }, async () => {
+    const temp = await mkdtemp(join(tmpdir(), "pmbah-journal-inline-checkpoint-"));
+    try {
+      const output = await native(temp, `(with-temp-buffer
+        (pmbah-mode 1) (insert "first")
+        (let ((scan (pmbah--journal-helper (append (list :operation "inspect") (pmbah--chain-tip-payload))))
+              (helper (make-pipe-process :name "inline-finished-helper" :noquery t))
+              (http (generate-new-buffer " *inline-http-response*")))
+          (unwind-protect
+              (progn
+                (make-pipe-process :name "inline-http" :buffer http :noquery t)
+                (cl-letf (((symbol-function 'pmbah--run-node-script-async)
+                           (lambda (_script _payload callback)
+                             (funcall callback scan nil)
+                             helper))
+                          ((symbol-function 'pmbah--observation-post)
+                           (lambda (&rest _)
+                             ${callbackOutcome === "http" ? "(setq pmbah--observation-request http)" : "(signal 'quit nil)"})))
+                  (pmbah--observation-kick))
+                ${callbackOutcome === "http" ? `
+                (unless (eq pmbah--observation-request http)
+                  (error "completed helper replaced its callback's active HTTP handle"))
+                (pmbah--observation-timeout (current-buffer) pmbah--session-id pmbah--observation-attempt)
+                (when (buffer-live-p http) (error "timeout did not close the current HTTP request"))` : ""}
+                (unless (and (not pmbah--observation-in-flight) (not pmbah--observation-request)
+                             (not pmbah--observation-watchdog) pmbah--observation-last-failure)
+                  (error "inline callback left a failed observation attempt running"))
+                (insert "second")
+                (princ (pmbah--json-encode
+                        (list :count pmbah--next-seq
+                              :hook (if (memq #'pmbah--after-change after-change-functions) t :json-false)))))
+            (when (process-live-p helper) (delete-process helper))
+            (when (buffer-live-p http) (kill-buffer http)))))`);
+      assert.deepEqual(output, { count: 2, hook: true });
+    } finally { await rm(temp, { recursive: true, force: true }); }
+  });
+}
+
+test("native closing a recording buffer cancels checkpoint workers, HTTP requests and watchdogs", { skip: !emacs }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-journal-close-checkpoint-"));
+  try {
+    const output = await native(temp, `(progn
+      (dolist (kind '(helper http))
+        (let ((writer (generate-new-buffer "checkpoint-writer"))
+              (response (generate-new-buffer " *checkpoint-response*")) process watchdog path)
+          (unwind-protect
+              (progn
+                (setq process (make-pipe-process :name "pending-checkpoint" :buffer response :noquery t))
+                (with-current-buffer writer
+                  (pmbah-mode 1) (insert "captured")
+                  (setq path (pmbah--state-file)
+                        pmbah--observation-request (if (eq kind 'helper) process response)
+                        pmbah--observation-in-flight t)
+                  (pmbah--observation-arm-watchdog)
+                  (setq watchdog pmbah--observation-watchdog))
+                (kill-buffer writer)
+                (when (or (buffer-live-p writer) (process-live-p process) (memq watchdog timer-list))
+                  (error "closing writer retained checkpoint resources"))
+                (when (and (eq kind 'http) (buffer-live-p response))
+                  (error "closing writer retained its HTTP response buffer"))
+                (unless (= (plist-get (pmbah--read-state path) :event_count) 1)
+                  (error "closing writer lost durable capture")))
+            (when (process-live-p process) (delete-process process))
+            (when (buffer-live-p response) (kill-buffer response))
+            (when (buffer-live-p writer) (kill-buffer writer))
+            (when (timerp watchdog) (cancel-timer watchdog)))))
+      (princ "true"))`);
+    assert.equal(output, true);
   } finally { await rm(temp, { recursive: true, force: true }); }
 });

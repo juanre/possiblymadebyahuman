@@ -18,7 +18,10 @@ async function runEmacs(scriptPath, env = {}) {
   try {
     return await new Promise((resolveRun, rejectRun) => {
       const child = spawn(emacs, ["--batch", "-Q", "--eval", `(progn
-          (setq pmbah-state-directory ${JSON.stringify(recoveryDirectory)})
+          ;; These scenarios exercise explicit synchronous Lisp activation.
+          ;; Automatic background recovery has its own native lifecycle suite.
+          (setq pmbah-state-directory ${JSON.stringify(recoveryDirectory)}
+                pmbah-auto-resume nil)
           (defun pmbah-test-materialize (descriptor)
             (append (list (cons 'manifest (alist-get 'manifest descriptor))
                           (cons 'events (vconcat (pmbah--session-events))))
@@ -1017,10 +1020,13 @@ test("Emacs producer persists a file buffer's session without text and resumes i
                            :event_count pmbah--next-seq))
     (insert "?")
     (pmbah--write-state)
-    (let ((existed (file-exists-p (pmbah--state-file))))
+    (let ((existed (file-exists-p (pmbah--state-file)))
+          (discarded-journal (pmbah--journal-file)))
       (pmbah-discard-session)
       (setq after-discard (list :state_file_existed_before (if existed t :json-false)
-                                :state_file_exists (if (file-exists-p (pmbah--state-file)) t :json-false))))
+                                :state_file_exists (if (file-exists-p (pmbah--state-file)) t :json-false)
+                                :old_journal_exists (if (file-exists-p discarded-journal) t :json-false)
+                                :state (pmbah--read-state (pmbah--state-file)))))
     (pmbah-test-kill-file-buffer))
   (with-temp-file ${JSON.stringify(outputPath)}
     (insert (pmbah--json-encode (list :first first :second second :after_sign after-sign :after_discard after-discard)))))
@@ -1067,7 +1073,11 @@ test("Emacs producer persists a file buffer's session without text and resumes i
     assert.notEqual(output.after_sign.session, first.session);
     assert.equal(output.after_sign.event_count, 0);
     assert.equal(output.after_discard.state_file_existed_before, true);
-    assert.equal(output.after_discard.state_file_exists, false, "discard removes the state file");
+    assert.equal(output.after_discard.state_file_exists, true, "capture remains opted in after discard");
+    assert.equal(output.after_discard.old_journal_exists, false, "discard removes the old event journal");
+    assert.notEqual(output.after_discard.state.session_id, output.after_sign.session);
+    assert.equal(output.after_discard.state.event_count, 0);
+    assert.equal(output.after_discard.state.capture_enabled, true);
     assert.equal(JSON.stringify(output).includes("Hello"), false);
   } finally {
     await rm(temp, { recursive: true, force: true });
