@@ -16,6 +16,7 @@ const requiredEntries = [
   "content.js",
   "popup.html",
   "popup.js",
+  "favicon.svg",
   "icons/16.png",
   "icons/48.png",
   "icons/128.png",

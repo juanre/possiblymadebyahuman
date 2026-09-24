@@ -117,10 +117,11 @@ share a short URL. Not a human/AI detector.
 possiblymadebyahuman records the shape of a writing process without uploading the
 words you wrote.
 
-Choose an empty editor yourself: right-click and choose Start writing record,
+Choose an editor yourself: right-click and choose Start writing record,
 use the keyboard shortcut, or start from the extension side panel. Visiting a
 page, focusing a field, and typing do not activate capture. Other fields remain
-inactive. No controls cover the webpage.
+inactive. You can start partway through writing: earlier text is not imported,
+and only later edits are captured. No controls cover the webpage.
 
 The extension measures edit positions and lengths in Unicode codepoints, timing,
 and sources such as typing, paste, and IME when the browser reports them. Plain
@@ -135,7 +136,7 @@ an explicit action; the visible URL remains available if clipboard access fails.
 A binding failure stops publication. Cancel or separately choose a process-only
 record; a stopped editor is not read again to create a different commitment. Further edits do not automatically start another record.
 
-Public records contain neither your document plaintext nor per-event inserted text. By default, signing includes a salted commitment to selected wording (or the whole field with no selection). You can turn this binding off. The public commitment allows candidate text to be checked, so short or predictable wording may be guessed. The capture context (page URL stripped of query and
+Public records contain neither your document plaintext nor per-event inserted text. Signing includes a salted commitment to selected wording (or the whole field with no selection). When the text-check scope is unavailable or its hash cannot be computed, the panel offers cancellation or explicit publication of editing activity only. The public commitment allows candidate text to be checked, so short or predictable wording may be guessed. The capture context (page URL stripped of query and
 fragment, page title, field kind) is shown for review before upload and can be
 edited or removed.
 
@@ -161,7 +162,7 @@ and final extension behavior.
   input handler scope, to compute numeric process metadata
   (codepoint offsets, insertion length, deletion length, source attribution).
   The text reference is discarded when the handler returns. No text crosses
-  event boundaries; no text is retained in extension state. At signing, the selected text (or whole field with no selection) is read transiently for the optional binding.
+  event boundaries; no text is retained in extension state. At signing, the selected text (or whole field with no selection) is read transiently to compute the text binding.
 - Per-event mutation structure: codepoint position, inserted codepoint count,
   deleted codepoint count, operation type, wall-clock timestamp, source
   attribution (typing / paste / drop / cut / IME / autocomplete / unknown).
@@ -211,7 +212,7 @@ and final extension behavior.
 
 - Document text.
 - Per-event inserted text.
-- Per-insertion text hashes. The optional, on-by-default text binding is the one text-derived commitment sent at signing.
+- Per-insertion text hashes. The text binding is the one text-derived commitment sent at signing.
 - Absolute local file paths.
 - Operating system, browser fingerprint, or hardware identifiers.
 - A human/AI verdict, confidence score, or authorship certification.

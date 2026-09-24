@@ -179,7 +179,7 @@ async function registerField(element: HTMLElement, activation_id: string, share_
     entry.state = "error";
     transient.queue.length = 0;
     activeEntries.delete(entryRef);
-    return { kind: "start_editor_result", reason: response.kind === "error" ? response.reason : "Start in an empty editor. Existing text is not imported into a writing record." };
+    return { kind: "start_editor_result", reason: response.kind === "error" ? response.reason : "The writing record could not be started. Try again." };
   }
   entry.session_id = response.result.session_id;
   for (const mutation of transient.queue.splice(0)) void sendMutation(entry, mutation);

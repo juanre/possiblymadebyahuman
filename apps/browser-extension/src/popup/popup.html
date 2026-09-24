@@ -4,10 +4,13 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PMBAH · Writing records</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml" />
   <style>
     * { box-sizing: border-box; }
     body { margin: 0; padding: 1rem; font: 14px/1.5 system-ui, sans-serif; color: #221b17; background: #fbf8f2; }
     h1 { font-size: 18px; margin: 0; }
+    .brand { display: flex; align-items: center; gap: .7rem; }
+    .brand img { width: 48px; height: 48px; border-radius: 6px; flex-shrink: 0; }
     h2 { font-size: 16px; margin: 0 0 .6rem; }
     p { margin: .5rem 0; }
     .lede, .note, .session-meta, .footer { color: #62594e; font-size: 13px; }
@@ -26,7 +29,7 @@
     #saved-history { border-top: 1px solid #d8c8a6; padding-top: 1rem; }
     #history-title { font-size: 16px; }
     .pagination { display: flex; align-items: center; justify-content: space-between; gap: .4rem; margin-top: .8rem; }
-    .binding-scope { font-weight: 600; padding-left: 1.5rem; }
+    .binding-scope { font-weight: 600; }
     .rename-form { border-top: 1px solid #d8c8a6; margin-top: .7rem; }
     .session-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .5rem; }
     .session-title { font-weight: 600; overflow-wrap: anywhere; }
@@ -52,9 +55,10 @@
   </style>
 </head>
 <body>
-  <h1>PMBAH · Writing records</h1>
-  <details id="help"><summary>Help</summary><p>Right-click an empty editor and choose “Start writing record”, or focus it and press Alt+Shift+W. You can also use the button below. Only a field you explicitly choose is captured.</p><p>A writing record contains editing measurements, not your words. Stop to pause a draft; resume it later in the chosen field. Finishing publishes a record and stops capture.</p></details>
+  <header class="brand"><img src="icons/128.png" alt="possiblymadebyahuman" width="48" height="48" /><h1>Writing records</h1></header>
+  <details id="help"><summary>Help</summary><p>Click in the field you want to work on, then choose Start below. You can also right-click it and choose “Start writing record”, or press Alt+Shift+W. The field can already contain text.</p><p>A writing record contains editing measurements, not your words. Stop to pause a draft; resume it later in the chosen field. Finishing publishes a record and stops capture.</p></details>
   <button id="start" disabled>Start in focused editor</button>
+  <p class="note">Records edits from when you start. Earlier writing is not included.</p>
   <label id="share-option" hidden><input type="checkbox" id="share" /> This is the same document as the chosen active draft. Share its writing record.</label>
   <p id="toast" class="notice" role="status" aria-live="polite" hidden></p>
   <section id="review" aria-label="Review before publishing"></section>

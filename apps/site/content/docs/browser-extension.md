@@ -5,7 +5,7 @@ group: "Write a record"
 weight: 3
 ---
 
-This guide describes the **0.3.0 candidate**. The currently deployed extension release is **0.2.1**, which keeps drafts and saved links but does not have the panel and signed-finish behavior below. Install 0.3.0 only after its compatible API and record viewer have been deployed and a release package is available. Chrome Web Store availability is not confirmed; developer-mode ZIP packages are distributed through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases). Check the package version before installing.
+This guide describes extension **0.3.1**, which supports starting in fields that already contain text. It requires API and viewer version **0.3 or newer**. Developer-mode ZIP packages are distributed through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases); Chrome Web Store availability is not confirmed. Check the package version before installing.
 
 ## Install or update
 
@@ -15,7 +15,9 @@ To update an unpacked installation, replace its files in the same directory and 
 
 ## Start only where you choose
 
-Right-click an **empty editor** and choose **Start writing record**. You can also focus the editor and use **Alt+Shift+W**, or open PMBAH from the toolbar and choose **Start in focused editor**. Shortcuts are configurable at `chrome://extensions/shortcuts`.
+Right-click an **editor** and choose **Start writing record**. You can also focus the editor and use **Alt+Shift+W**, or open PMBAH from the toolbar and choose **Start in focused editor**. Shortcuts are configurable at `chrome://extensions/shortcuts`.
+
+You can start with text already in the field. The record captures edits from that point onward; it does not import earlier text or reconstruct how it was written. The editing timeline still shows later activity, but the total document length is unknown when capture starts partway through.
 
 Opening the panel or focusing a field does not start capture. Other fields remain inactive. Editors can be text fields or supported rich-text areas on different sites; this is not limited to email. In an email, the body, recipient and subject fields are separate: choose the one you intend to work in.
 
@@ -29,13 +31,13 @@ Write normally. Supported rich-text editors measure Unicode characters, includin
 
 Choose **Finish & get link**. The review identifies the draft being finished; moving focus elsewhere does not change that target. Under **Public context**, review the page URL, title and public label, removing identifying details if appropriate.
 
-**Let readers check a copy of this text** adds an optional text check. The scope appears separately as **Selected text** or **Whole field**. If the selection changes before confirmation, review the updated scope and confirm again. **How the text check works** explains the limits: a match does not establish exact text equality, authorship, or that these edits produced that text. The check is public and permits wording guesses; it is not encryption.
+Publishing includes a text check. The scope appears separately as **Selected text** or **Whole field**. It checks the text present when you finish, which may include text written before capture started; it does not claim that earlier writing was captured. If the selection changes before confirmation, review the updated scope and confirm again. A match does not establish exact text equality, authorship, or that these edits produced that text. The check is public and permits wording guesses; it is not encryption.
 
 Choose **Confirm & publish** to stop capture and publish. For a new 0.3 record, signed duration includes elapsed time up to this finish action, including time away before finishing. It is a client claim, not evidence that the server watched the whole interval. The viewer separately shows server-observed span and intervals with no captured edits.
 
 The result shows the complete URL, **Open record** and **Copy link**. Copying happens only when you choose it. If copying fails, select the visible URL and copy it yourself. Choose **Done** to dismiss the result; its link remains in saved history.
 
-If the text check fails, nothing is silently published without it. Cancel or explicitly choose **Publish editing activity only**. The stopped editor is not read again to create a different commitment. Canceling after capture has stopped leaves the draft stopped. A failed upload retries the same frozen record, including its finish time.
+If the text-check scope is unavailable or its hash cannot be computed, nothing is silently published without it. Only then does the panel offer cancel or **Publish editing activity only**. The stopped editor is not read again to create a different commitment. Canceling after capture has stopped leaves the draft stopped. A failed upload retries the same frozen record, including its finish time.
 
 ## Stop and return later
 
@@ -53,7 +55,7 @@ A published record and its link never change when you continue writing. In **Sav
 
 The new clock begins at the earlier record's signed finish, so the pause before continuing is included. For an older saved record without a signed finish, the retained local upload time is used as an approximate boundary. Neither case claims that edits made while capture was stopped were observed.
 
-To start an independent record, use an empty editor. If two editors show the same document, select its active draft and explicitly choose to **share its writing record** before starting in the second editor. Use this only for the same document. A session spanning several editors can publish editing activity without a text check.
+To start an independent record, choose **Start writing record** in the intended editor. If two editors show the same document, select its active draft and explicitly choose to **share its writing record** before starting in the second editor. Use this only for the same document. A session spanning several editors can publish editing activity without a text check.
 
 ## Keep and find your links
 

@@ -30,11 +30,11 @@ A producer may inspect editor text synchronously when an editor/browser API make
 
 The browser extension starts only in an editor you explicitly choose, using the context menu, keyboard shortcut, or side panel. Other fields remain inactive. It shows controls in the browser side panel, not over the webpage. Reloading, navigating to a new page document, stopping, or finishing ends capture authorization. Old local drafts do not activate a new page. Focusing a field only updates the panel’s editor context; it does not authorize capture.
 
-Producers (the browser extension and the Emacs minor mode) offer capture-context and binding choices before upload, so the signer can:
+Producers offer a review before upload, so the signer can:
 
 - review or omit `capture_context` (page title, URL, buffer name, major mode);
 - strip query strings and fragments from URLs;
-- choose whether to include a document commitment;
+- review the text-check scope; `/write` and Emacs also offer a choice to omit the commitment;
 - decide not to sign at all.
 
 ## Capture context, specifically
@@ -75,7 +75,7 @@ If the producer cannot reach the ingest service, checkpoint attempts fail while 
 ## What we cannot offer
 
 - Deletion of uploaded records. There is no public deletion API. Permanence is the price of not asking for an account. If a record contains material that is clearly abusive (spam, illegal content) and is reported to the maintainers, the service operator may remove it on a case-by-case basis. See [Terms / Service Notes](/docs/terms/).
-- Secrecy for predictable bound text. The binding's salt is public, so anyone can test guesses against it; short or predictable text may be guessed. Binding is not encryption. You can turn it off and upload a process-only record.
+- Secrecy for predictable bound text. The binding's salt is public, so anyone can test guesses against it; short or predictable text may be guessed. Binding is not encryption. `/write` and Emacs let you turn it off; extension 0.3.1 includes it in normal publication and offers an editing-activity-only fallback if the scope is unavailable or the hash cannot be computed.
 - A guarantee that a third party did not separately keep a copy of the writing. We can only describe what *this* service stores.
 
 ## Contact

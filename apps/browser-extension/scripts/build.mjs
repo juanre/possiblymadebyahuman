@@ -89,6 +89,7 @@ async function watchBuild() {
 async function copyPopupHtml() {
   const html = await readFile(join(root, "src/popup/popup.html"), "utf8");
   await writeFile(join(dist, "popup.html"), html);
+  await copyFile(join(root, "../site/static/favicon.svg"), join(dist, "favicon.svg"));
 }
 
 async function writeManifest() {

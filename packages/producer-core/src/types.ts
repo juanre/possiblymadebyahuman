@@ -108,7 +108,7 @@ export type ObservationEnvelope = {
 };
 
 export type SessionRecord = {
-  /** First real edit after explicit reattachment cannot infer continuity across the uncaptured gap. */
+  /** First real edit cannot infer an uncaptured starting document or continuity across reattachment. */
   pending_observation_gap?: boolean;
   session_id: SessionId;
   format_version: FormatVersion;

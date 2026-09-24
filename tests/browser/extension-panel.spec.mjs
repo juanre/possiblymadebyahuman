@@ -73,6 +73,29 @@ test("unavailable text check uploads nothing until editing activity is explicitl
   await expect(page.getByText("No text check included.", { exact: true })).toBeVisible();
 });
 
+test("finish includes the text hash without an opt-out", async ({ page }) => {
+  const { state } = await loadPanel(page);
+  await page.getByRole("button", { name: "Finish & get link" }).click();
+  await expect(page.locator(".sign-bind")).toHaveCount(0);
+  await expect(page.locator(".text-check-help")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Publish editing activity only" })).toBeHidden();
+  await page.getByRole("button", { name: "Confirm & publish" }).click();
+  await expect(page.getByRole("heading", { name: "Record saved" })).toBeVisible();
+  expect(state.calls.find(m => m.kind === "prepare_finish").bind).toBe(true);
+  expect(state.calls.find(m => m.kind === "sign_session").text_binding).toBeTruthy();
+});
+
+test("unavailable scope offers only an explicit editing-activity fallback", async ({ page }) => {
+  const unavailable = await loadPanel(page, { scope: "unavailable" });
+  await page.getByRole("button", { name: "Finish & get link" }).click();
+  await expect(page.getByRole("button", { name: "Confirm & publish" })).toBeHidden();
+  await expect(page.getByRole("button", { name: "Publish editing activity only" })).toBeVisible();
+  expect(unavailable.state.calls.some(m => m.kind === "sign_session")).toBe(false);
+  await page.getByRole("button", { name: "Publish editing activity only" }).click();
+  await expect(page.getByRole("heading", { name: "Record saved" })).toBeVisible();
+  expect(unavailable.state.calls.find(m => m.kind === "prepare_finish").bind).toBe(false);
+});
+
 test("finish pins its draft and reviewed selection token even when focus changes, and duplicate clicks upload once", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 380, height: 900 });
   const { state } = await loadPanel(page, { delay: 150, scope: "selection" });
