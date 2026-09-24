@@ -522,8 +522,14 @@ test('/write failed local capture save is visible, stops editing, and can be sav
   page.on('pageerror', error => errors.push(error.message));
   await installStorageFailure(page);
   const canvas = await setupRecoveryUpload(page, route => route.abort());
-  await page.evaluate(() => { window.__failLocalSave = true; });
+  await expect.poll(async () => (await readWriteSessions(page))[0]?.events.length).toBe('recover fixture'.length);
+  // Arm the failure inside the actual input task. Earlier queued metadata
+  // saves must not freeze the canvas before the character under test is typed.
+  await canvas.evaluate(element => {
+    element.addEventListener('input', () => { window.__failLocalSave = true; }, { once: true, capture: true });
+  });
   await canvas.pressSequentially('x');
+  await expect(canvas).toHaveValue('recover fixturex');
   await expect(canvas).not.toBeEditable();
   await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('could not be saved locally');
   await page.evaluate(() => { window.__failLocalSave = false; });

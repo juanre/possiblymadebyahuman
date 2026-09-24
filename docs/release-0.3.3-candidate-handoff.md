@@ -5,7 +5,11 @@ with incremental journals, resumable upload chunks, streaming analysis and paged
 verification. It also includes the producer correctness fixes and the subsequent
 Emacs recovery corrections. UX redesign remains deferred.
 
-The release tag is `v0.3.3-rc.1`; the extension package version is `0.3.3`.
+The release tag is `v0.3.3-rc.2`; the extension package version is `0.3.3`.
+The first candidate was blocked before image publication by a browser test that
+armed its simulated storage failure before its intended input event. The second
+candidate synchronizes that fault injection with the native input task and
+asserts the character was actually typed; production code is unchanged.
 The existing release workflow publishes the multi-platform GHCR image and the
 extension ZIP. Publishing that image does not deploy Render. The owner requested
 GHCR publication only; Render deployment remains a separate step.
