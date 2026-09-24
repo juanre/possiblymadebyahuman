@@ -242,9 +242,6 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 .signet-head { display: flex; align-items: center; gap: 18px; margin: 6px 0 14px; }
 .signet-seal { flex: 0 0 auto; line-height: 0; }
 .signet-seal-svg { width: 62px; height: 62px; display: block; transform: rotate(-7deg); }
-.signet-seal-svg .seal-edge { fill: none; stroke: #8b5e34; stroke-width: 1.6; stroke-linejoin: round; opacity: 0.9; }
-.signet-seal-svg .seal-ring { fill: none; stroke: #8b5e34; stroke-width: 1; opacity: 0.5; }
-.signet-seal-svg .seal-mark { fill: none; stroke: #3d2f17; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 .signet-titles h1 { margin: 0; font-size: clamp(2rem, 6vw, 3.4rem); line-height: 1.03; }
 .signet-scope { margin: 6px 0 0; font-size: 0.95rem; color: #514a40; }
 .signet-statement { margin: 6px 0 0; font-size: 1.05rem; color: #3d2f17; }
@@ -264,7 +261,7 @@ section.card[aria-label="Check a document"] {
   border-top: 2px dashed #d9c8ad;
 }
 .record-footer-mark { margin: 0; font-weight: 800; letter-spacing: 0.05em; color: #3d2f17; text-transform: lowercase; }
-.record-footer-seal { color: #8b5e34; }
+.record-footer-seal { vertical-align: middle; }
 .record-footer-tagline {
   font-family: 'Iowan Old Style', 'New York', ui-serif, Georgia, serif;
   font-style: italic;
@@ -333,28 +330,34 @@ section.card[aria-label="Check a document"] {
   display: flex;
   flex-direction: column;
   background: #fbf8f2;
+  overflow-y: auto;
+}
+.write-header {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 16px 24px 12px;
 }
 .write-home {
-  position: fixed;
-  top: 14px;
-  left: 18px;
-  z-index: 2;
   color: #8b5e34;
   font-size: 0.78rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   letter-spacing: 0.04em;
   text-decoration: none;
-  opacity: 0.65;
-  padding: 2px 6px;
+  overflow-wrap: anywhere;
+  max-width: 100%;
   border-radius: 4px;
 }
-.write-home:hover, .write-home:focus-visible { opacity: 1; text-decoration: underline; }
+.write-home:hover, .write-home:focus-visible { text-decoration: underline; }
+.write-notice { margin: 0; font-size: 0.8rem; line-height: 1.5; color: #756b60; }
 .write-canvas-wrap {
   flex: 1 1 auto;
   display: flex;
   justify-content: center;
-  padding: 38px 24px 8px; /* top padding clears the fixed home link */
-  min-height: 0;
+  padding: 0 24px 8px;
+  min-height: 12rem;
 }
 .write-canvas {
   width: 100%;
@@ -518,7 +521,8 @@ section.card[aria-label="Check a document"] {
   .signet-seal-svg { width: 48px; height: 48px; }
   .measure-popover { max-width: min(260px, 80vw); }
 
-  .write-canvas-wrap { padding: 38px 12px 8px; }
+  .write-header { padding: 12px; }
+  .write-canvas-wrap { padding: 0 12px 8px; }
   .write-canvas { padding: 1.9rem 16px; }
   .write-message { padding: 6px 12px 0; }
   .write-result { flex-wrap: wrap; padding: 12px 12px 4px; }
@@ -530,8 +534,6 @@ section.card[aria-label="Check a document"] {
   .ml-right { justify-content: flex-end; }
   .ml-error { white-space: normal; max-width: none; }
 }
-
-.write-notice { margin: 0.5rem 1rem; font-size: 0.8rem; color: #756b60; }
 
 /* The header keeps its geometry while data loads, without claiming a result. */
 .signet-loading .signet-seal { visibility: hidden; }

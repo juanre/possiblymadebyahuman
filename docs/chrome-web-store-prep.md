@@ -335,14 +335,14 @@ each unlocks the next.
      > Listing visibility: **TBD by Juan — public or unlisted**.
 
 3. **Approved icon artwork.**
-   - The package includes PMBAH pencil-figure-derived PNG icons generated from
-     `apps/site/static/images/pmbah-figure-1200.jpg` and committed under
+   - The package uses the PMBAH infinity favicon artwork generated from
+     `apps/site/static/icon-512.png` and committed under
      `apps/browser-extension/icons/`.
    - The Chrome Web Store listing icon is the PMBAH infinity mark committed at
      `apps/browser-extension/store-assets/chrome-web-store-icon-128.png`.
    - Required sizes per current Chrome Web Store policy: 128 (listing tile),
      and the in-product 16 / 48 / 128 set already in the manifest.
-   - In-product icon source: `apps/site/static/images/pmbah-figure-1200.jpg` →
+   - In-product icon source: `apps/site/static/icon-512.png` →
      `apps/browser-extension/icons/{16,48,128}.png`.
    - Store listing icon source: `apps/site/static/icon-512.png` →
      `apps/browser-extension/store-assets/chrome-web-store-icon-128.png`.

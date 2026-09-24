@@ -710,11 +710,7 @@ export function RecordSignet({ record }: { record?: RecordApiResponse }) {
       <p className="eyebrow"><a className="eyebrow-home" href="/">← possiblymadebyahuman</a></p>
       <div className="signet-head">
         <span className="signet-seal" aria-hidden="true">
-          <svg viewBox="0 0 64 64" className="signet-seal-svg">
-            <path className="seal-edge" d="M 57.00 32.00 A 2.6 2.6 0 0 1 55.99 39.04 A 2.6 2.6 0 0 1 53.03 45.52 A 2.6 2.6 0 0 1 48.37 50.89 A 2.6 2.6 0 0 1 42.39 54.74 A 2.6 2.6 0 0 1 35.56 56.75 A 2.6 2.6 0 0 1 28.44 56.75 A 2.6 2.6 0 0 1 21.61 54.74 A 2.6 2.6 0 0 1 15.63 50.89 A 2.6 2.6 0 0 1 10.97 45.52 A 2.6 2.6 0 0 1 8.01 39.04 A 2.6 2.6 0 0 1 7.00 32.00 A 2.6 2.6 0 0 1 8.01 24.96 A 2.6 2.6 0 0 1 10.97 18.48 A 2.6 2.6 0 0 1 15.63 13.11 A 2.6 2.6 0 0 1 21.61 9.26 A 2.6 2.6 0 0 1 28.44 7.25 A 2.6 2.6 0 0 1 35.56 7.25 A 2.6 2.6 0 0 1 42.39 9.26 A 2.6 2.6 0 0 1 48.37 13.11 A 2.6 2.6 0 0 1 53.03 18.48 A 2.6 2.6 0 0 1 55.99 24.96 A 2.6 2.6 0 0 1 57.00 32.00 Z" />
-            <circle className="seal-ring" cx="32" cy="32" r="20" />
-            <path className="seal-mark" d="M20 32 C20 26 26 26 32 32 C38 38 44 38 44 32 C44 26 38 26 32 32 C26 38 20 38 20 32 Z" />
-          </svg>
+          <img src="/favicon.svg" className="signet-seal-svg" alt="" width="62" height="62" />
         </span>
         <div className="signet-titles">
           <h1 aria-label={record ? undefined : "Loading writing record"}><span aria-hidden={!record}>Signed writing record</span></h1>
@@ -734,7 +730,7 @@ export function RecordFooter() {
   return (
     <footer className="record-footer">
       <div className="record-footer-rule" aria-hidden="true" />
-      <p className="record-footer-mark"><span className="record-footer-seal" aria-hidden="true">∞</span> possiblymadebyahuman</p>
+      <p className="record-footer-mark"><img className="record-footer-seal" src="/favicon.svg" alt="" width="24" height="24" /> possiblymadebyahuman</p>
       <p className="record-footer-tagline">We cannot prove a human wrote it. But we can record the writing process, and sign it for you.</p>
       <nav className="record-footer-links" aria-label="Site">
         <a href="/">Home</a>
