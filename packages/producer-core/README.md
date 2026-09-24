@@ -9,7 +9,7 @@
 - **`resolveSession`** — fingerprint-based identity with explicit `IdentityCertainty` of `fresh` | `resumed` | `degraded` | `collision`. No silent merging of distinct fields.
 - **Wall-clock timeline** — `appendBufferMutation` stamps each event with `t = wall_ms - base_wall_ms`. Idle gaps are preserved, never compressed.
 - **`buildCaptureContext` / `redactCaptureContext` / `stripQueryAndHash`** — pre-upload provenance helpers. URLs are stripped of query/hash by default; title and field-kind are editable/omittable before signing.
-- **TTL sweep** — `sweepExpired` removes sessions whose `last_edit_wall_ms` is older than `ttl_ms` (default 3 days) and clears `uploaded` sessions after a short grace. A user-driven `registry.discard(session_id)` removes one specific session immediately and is distinct from the time-based sweep — it returns the removed record or `null` when the id is not present. The extension overrides this default with indefinite draft retention and saved-link anchors; `/write` retains its existing policy. If a checkpoint POST is in flight at discard, it may still succeed and leave server checkpoint metadata. Local discard does not delete that metadata, which has no automatic server expiry and contains no document text.
+- **TTL sweep** — `sweepExpired` removes sessions whose `last_edit_wall_ms` is older than `ttl_ms` (default 3 days) and clears `uploaded` sessions after a short grace. A user-driven `registry.discard(session_id)` removes one specific session immediately and is distinct from the time-based sweep — it returns the removed record or `null` when the id is not present. The extension overrides this default with indefinite draft retention and saved-link anchors; `/write` now uses the same indefinite draft/link retention. If a checkpoint POST is in flight at discard, it may still succeed and leave server checkpoint metadata. Local discard does not delete that metadata, which has no automatic server expiry and contains no document text.
 - **Adapter interfaces** — `StorageAdapter`, `UploadAdapter`, `CheckpointAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`. The kernel never imports a chrome/window/DOM symbol; consumers wire these.
 - **Server-observed checkpoint orchestration** — when a `CheckpointAdapter` is wired, the kernel maintains an incremental BLAKE3 chain tip per session, runs an activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; never on idle), holds a single in-flight checkpoint with one queued coalescing slot, doubles backoff 1s→60s on transient/rate-limited failure, pins to `diverged` on 409/400, resets observation on 404 `observation_unavailable`, and caps retained commitments at 32 (oldest anchor + last 31).
 
@@ -29,7 +29,7 @@ import { SessionRegistry } from "@possiblymadebyahuman/producer-core";
 const registry = new SessionRegistry({
   clock:    { now: () => Date.now() },
   uuid:     { uuid: () => crypto.randomUUID() },
-  storage:  myStorageAdapter,       // chrome.storage.local for the extension, IndexedDB/localStorage for /write
+  storage:  myStorageAdapter,       // IndexedDbSessionStorage with a journal for browser producers
   producer: { id: "browser-extension", version: "0.1.0", capabilities: ["timing"] },
 });
 
@@ -44,22 +44,20 @@ registry.appendMutation(session.session_id, {
   source: "typing",
 });
 
-await registry.flushObservation(session.session_id); // completes observation of an already-committed session
 const draft = registry.sign(session.session_id);
-const observation = registry.getObservationEnvelope(session.session_id); // null when no checkpoint adapter is wired; { state: "unobserved" } when never committed or diverged
+await registry.persist(); // freeze the seal and private upload capability first
+await registry.flushObservation(session.session_id);
+const observation = registry.getObservationEnvelope(session.session_id);
 registry.markUploading(session.session_id);
-try {
-  const resp = await myUploadAdapter.postRecord({
-    manifest: draft.manifest,
-    events: draft.events,
-    observation: observation ?? undefined,
-  });
-  registry.markUploaded(session.session_id, resp);
-  await myClipboardAdapter.writeText(resp.url);
-} catch (err) {
-  registry.markFailedUpload(session.session_id, String(err));
-}
 await registry.persist();
+const response = await myUploadAdapter.postJournalRecord({
+  upload_id: draft.upload_id,
+  manifest: draft.manifest,
+  observation: observation ?? undefined,
+}, (start, count) => registry.readEvents(session.session_id, start, count));
+registry.markUploaded(session.session_id, response);
+await registry.persist();
+await myClipboardAdapter.writeText(response.url);
 ```
 
 ## Server-observed checkpoints
@@ -83,7 +81,7 @@ Cadence is activity-gated. The kernel never sends idle heartbeats. Triggers, in 
 3. delta > 0 AND ≥ 60s since the last attempt → immediate
 4. otherwise — wait
 
-Concurrency: at most one checkpoint is in flight; while one runs, further triggers set a single queued flag. The kernel re-reads `record.events.length` after each checkpoint completes and folds the queued trigger into one trailing call. The `max(last_committed_event_count, response.event_count)` guard absorbs out-of-order responses.
+Concurrency: at most one checkpoint is in flight; while one runs, further triggers set a single queued flag. The kernel re-reads `sessionEventCount(record)` after each checkpoint completes and folds the queued trigger into one trailing call. The `max(last_committed_event_count, response.event_count)` guard absorbs out-of-order responses.
 
 Failure handling:
 
@@ -91,7 +89,7 @@ Failure handling:
 - `conflict` (409) or `client_bug` (400): observation pins to `diverged`. No further checkpoints fire, and the record uploads as `{ state: "unobserved" }` with the stale token kept local.
 - `unavailable` (404 `observation_unavailable`, session unavailable or token lost): observation resets to `unknown`, `observed_session_id` and `last_observed_token` are cleared, commitments dropped. The next mutation mints a fresh `observed_session_id`.
 
-Sign-time flush is explicit: callers run `await registry.flushObservation(session_id)` before `sign()`. It completes observation of a session the server has already committed — awaiting the in-flight checkpoint or kicking one over the uncommitted tail, then one more round for events that arrived while that checkpoint was in flight (at most two rounds) — so an observed record is observed to its final event. A session with no commitment is left alone rather than given a first commitment at sign time, and a `diverged` session is not checkpointed. `flushObservation` does not retry a checkpoint it kicked; an inherited in-flight checkpoint that fails still gets the flush's own attempt.
+Sign-time flush is explicit: callers first sign and durably persist the frozen record, then run `await registry.flushObservation(session_id)` before publication. It completes observation of a session the server has already committed — awaiting the in-flight checkpoint or kicking one over the uncommitted tail, then one more round for events that arrived while that checkpoint was in flight (at most two rounds) — so an observed record is observed to its final event. A session with no commitment is left alone rather than given a first commitment at sign time, and a `diverged` session is not checkpointed. `flushObservation` does not retry a checkpoint it kicked; an inherited in-flight checkpoint that fails still gets the flush's own attempt.
 
 `getObservationEnvelope(session_id)` says what the upload should carry: `null` when no checkpoint adapter is wired (observation not requested), `{ observed_session_id, token }` when a commitment exists and the session has not diverged, and `{ state: "unobserved" }` when the session has no commitment or is `diverged` (its stale token stays local). When the ingest API rejects a bound upload with `observation_mismatch` or `observation_unavailable`, callers run `markObservationRejected(session_id, code)` so the retry uploads as unobserved instead of binding the same token again; `IngestUploadError` carries that `code` for upload adapters that surface it.
 
@@ -144,11 +142,11 @@ When in doubt, prefer creating a new session with `degraded` certainty over sile
 
 ## What you can verify without text
 
-`registry.sign()` runs `verifyEventHashChain({manifest, events})` before returning. It validates the manifest, canonical events and the version-specific record seal.
+Journal-backed `registry.sign()` validates the manifest and seals the already-validated incremental event tip, without reading history. Every accepted append validates its event before changing the tip; legacy migration verifies the imported chain. Publication streams the persisted events to the server, which independently verifies the complete chain before accepting the seal. The compatibility snapshot adapter runs `verifyEventHashChain({manifest, events})` when signing.
 
 With `signedFinishTime: true`, the registry creates format `0.3` records. Finish duration includes the elapsed wait after the last edit and is frozen for exact retries; finishing creates no event. Active `0.2` drafts upgrade without changing their checkpoint tips. Legacy failed uploads and `0.1` drafts retain their original version/hash. Consumers must sign and persist the frozen state before awaiting checkpoint flush or HTTP upload.
 
-Explicit `continueFrom()` creates a linked segment from an uploaded record, preserves its saved anchor, and starts the new clock at the prior signed finish. The first real edit has unknown position unless the consumer explicitly reattaches an empty field. Old anchors without a signed finish use their local upload time as a legacy boundary. `discardPersisted(ids)` removes local records with awaited storage and restores the removed records on failure without overwriting other sessions. See [signed finish and continuations](../../docs/signed-finish-and-continuations.md).
+The obsolete `reopen()` API has been removed: uploaded segments stay immutable. Explicit `continueFrom()` creates a linked segment from an uploaded record, preserves its saved anchor, and starts the new clock at the prior signed finish. The first real edit has unknown position unless the consumer explicitly reattaches an empty field. Old anchors without a signed finish use their local upload time as a legacy boundary. `discardPersisted(ids)` removes local records with awaited storage and restores the removed records on failure without overwriting other sessions. See [signed finish and continuations](../../docs/signed-finish-and-continuations.md).
 
 It does not verify document content, because PMBAH v0 does not inspect, hash, replay, or store document content.
 
@@ -172,3 +170,15 @@ If a capability becomes unsupported mid-session (e.g. the source attribution heu
 `tests/producer-core.test.mjs` covers the acceptance scenarios from default-aaaa.29 plus invariants (no plaintext keys in the public draft, identity helpers exposed independently, capture-context redaction). `tests/producer-core-checkpoints.test.mjs` covers the server-observed checkpoint orchestration: immediate first-mutation commit, delta-50 and 60s-time cadence, single-in-flight + queued coalescing, transient/rate-limited backoff doubling without idle retries, `diverged` pinning on 409/400, `observation_unavailable` reset + fresh observed-session minting, chain-tip incremental advance equivalence, and commitment eviction at watermark. `tests/producer-core-audit.test.mjs` is a static source audit that fails the build if any banned plaintext-handling symbol or import escape appears in `packages/producer-core/src`. Tests inject a mutable clock, a deterministic UUID factory, an in-memory storage adapter, and a recording checkpoint adapter — no real time, no real browser, no real network.
 
 Run `make check` to exercise the full project test suite including these tests.
+
+Browser capture adapters share numeric applied-input derivation. Unknown history
+replacement sizes stay null, including zero-net-length replacements. Extension
+messages carry capture wall times independently of the event shape, preserving
+timing through registration and storage queues. Browser uploads use a complete
+30-second deadline and validate acknowledgements before retiring frozen state.
+
+Production browser storage uses `EventJournalStorage`: atomic small session metadata plus appended event rows. `SessionRecord.events` is empty for journal sessions; `sessionEventCount()` and `sessionLastEventTime()` expose the persisted numeric summary. `get()`, `list()`, signing and recovery do not materialize event history. `readEvents()` returns at most 4,096 events for resumable publication. The private `upload_id` is generated once at signing, persisted with the frozen state, and reused on retries.
+
+Concurrent `persist()` requests share a covering transaction. Only dirty metadata and pending event prefixes are copied; new edits during an in-flight transaction remain queued for the next one. Failed commits preserve the pending prefix. A per-session backlog of 4,096 events refuses further appends before changing the chain; browser adapters pause capture, surface the failure and preserve uncertainty when capture resumes. Explicit discard first settles an in-flight append, then deletes transactionally, so rollback cannot duplicate an accepted prefix.
+
+`StorageAdapter.read/write` and full `events` arrays remain only for legacy compatibility, tests and explicit small-record callers. Production IndexedDB failure never falls back to snapshots. See [browser storage](../browser-storage/README.md) for migration and publication details. `appendMutation(id, mutation, { snapshot: false })` avoids an unused metadata return copy.

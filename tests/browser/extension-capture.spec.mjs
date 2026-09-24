@@ -12,6 +12,44 @@ function shapes(list) {
   return list.map(({ op, pos, del_len, ins_len, source }) => ({ op, pos, del_len, ins_len, source }));
 }
 
+test("capture times survive pending registration and serialized acknowledgement queues", async ({ page }) => {
+  await page.goto("/extension-harness");
+  await page.getByLabel("plain field").focus();
+  await page.evaluate(() => {
+    window.__captureClock = 1_000;
+    Date.now = () => window.__captureClock;
+    const send = chrome.runtime.sendMessage;
+    const registration = new Promise(resolve => { window.__releaseRegistration = resolve; });
+    const acknowledgement = new Promise(resolve => { window.__releaseAcknowledgement = resolve; });
+    chrome.runtime.sendMessage = async message => {
+      if (message.kind === "register_field") await registration;
+      const response = await send(message);
+      if (message.kind === "append_mutation") await acknowledgement;
+      return response;
+    };
+    window.__activation = window.__pmbah.activate();
+  });
+  await page.evaluate(() => { window.__captureClock = 1_010; });
+  await page.keyboard.type("a");
+  await page.evaluate(() => { window.__captureClock = 1_025; });
+  await page.keyboard.type("b");
+  expect(await mutations(page)).toHaveLength(0);
+  await page.evaluate(async () => {
+    window.__captureClock = 5_000;
+    window.__releaseRegistration();
+    await window.__activation;
+  });
+  await expect.poll(async () => (await mutations(page)).length).toBe(1);
+  await page.evaluate(() => { window.__captureClock = 1_035; });
+  await page.keyboard.type("c");
+  expect(await mutations(page)).toHaveLength(1);
+  await page.evaluate(() => { window.__captureClock = 8_000; window.__releaseAcknowledgement(); });
+  await expect.poll(async () => (await mutations(page)).length).toBe(3);
+  const messages = await page.evaluate(() => window.__pmbah.messages);
+  expect(messages.find(message => message.kind === "register_field").started_at_wall_ms).toBe(1_000);
+  expect(messages.filter(message => message.kind === "append_mutation").map(message => message.captured_at_wall_ms)).toEqual([1_010, 1_025, 1_035]);
+});
+
 test.describe("extension content script in a real page", () => {
   test.beforeEach(async ({ page }) => {
     page.on("pageerror", (error) => { throw error; });
@@ -66,7 +104,7 @@ test.describe("extension content script in a real page", () => {
     expect(await field.inputValue()).toBe("zab");
   });
 
-  test("undo records a net change with unknown position and leaves later typing exact", async ({ page }) => {
+  test("undo preserves unknown sizes and position and leaves later typing exact", async ({ page }) => {
     const field = page.getByLabel("plain field");
     await field.focus();
     await page.evaluate(() => window.__pmbah.activate());
@@ -78,7 +116,7 @@ test.describe("extension content script in a real page", () => {
     const undo = events.find((event) => event.source === "unknown");
     expect(undo).toBeTruthy();
     expect(undo.pos).toBeNull();
-    expect(undo.op).toBe("delete");
+    expect(undo).toMatchObject({ op: "replace", del_len: null, ins_len: null });
     expect(events.at(-1).op).toBe("insert");
     expect(events.at(-1).ins_len).toBe(1);
     expect(validateEventLog(events.map((event, seq) => ({ seq, t: seq * 10, ...event })))).toEqual([]);

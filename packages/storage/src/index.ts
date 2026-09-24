@@ -1,4 +1,5 @@
 import { computeEventHashChain, type Attestation, type B3Hash, type CaptureContext, type EventLog, type RecordManifest, type Signal, type WritingRecord } from "../../format/src/index.ts";
+import { InMemoryChunkedStore, PostgresChunkedStore, type ChunkedStore } from "./chunked.ts";
 
 export type RecordStats = {
   record_hash: B3Hash;
@@ -16,9 +17,9 @@ export type RecordStats = {
   autocomplete_event_count: number;
   programmatic_event_count: number;
   unknown_source_count: number;
-  inserted_codepoints_total: number;
-  deleted_codepoints_total: number;
-  largest_atomic_insert_codepoints: number;
+  inserted_codepoints_total: number | null;
+  deleted_codepoints_total: number | null;
+  largest_atomic_insert_codepoints: number | null;
   inter_event_delay_min_ms: number | null;
   inter_event_delay_p50_ms: number | null;
   inter_event_delay_p90_ms: number | null;
@@ -86,6 +87,8 @@ export type AppendObservedCheckpointResult = {
 export type ObservationBindingInput = {
   observed_session_id: string;
   observed_token_hash: string;
+  /** Legacy array uploads bound observation loading to their already bounded log. */
+  maximum_event_count?: number;
 };
 
 export type BoundRecordObservation = Omit<RecordObservation, "state" | "observed_session_id"> & {
@@ -94,6 +97,7 @@ export type BoundRecordObservation = Omit<RecordObservation, "state" | "observed
 };
 
 export type StoredRecord = WritingRecord & {
+  event_storage?: "inline" | "chunks";
   short_signature: string;
   stats: RecordStats;
   signals: AnalysisResult[];
@@ -116,6 +120,7 @@ export type SaveRecordResult = {
 };
 
 export interface RecordStore {
+  readonly chunked?: ChunkedStore;
   saveRecord(input: SaveRecordInput): Promise<SaveRecordResult>;
   findByRecordHash(recordHash: B3Hash): Promise<StoredRecord | null>;
   findByShortSignature(shortSignature: string): Promise<StoredRecord | null>;
@@ -162,9 +167,12 @@ export class InMemoryRecordStore implements RecordStore {
   readonly #byHash = new Map<B3Hash, StoredRecord>();
   readonly #byShortSignature = new Map<string, B3Hash>();
   readonly #observedSessions = new Map<string, ObservedSession>();
+  readonly chunked = new InMemoryChunkedStore(this.#observedSessions, id => this.findByShortSignatureOrHash(id));
 
   async saveRecord(input: SaveRecordInput): Promise<SaveRecordResult> {
     const recordHash = input.record.manifest.record_hash;
+    const chunked = this.chunked.findCompleted(recordHash);
+    if (chunked) return { stored: chunked, created: false };
     const existing = this.#byHash.get(recordHash);
     if (existing) {
       if (existing.short_signature !== input.short_signature) {
@@ -207,12 +215,12 @@ export class InMemoryRecordStore implements RecordStore {
 
   async findByRecordHash(recordHash: B3Hash): Promise<StoredRecord | null> {
     const stored = this.#byHash.get(recordHash);
-    return stored ? cloneStoredRecord(stored) : null;
+    return stored ? cloneStoredRecord(stored) : this.chunked.findCompleted(recordHash);
   }
 
   async findByShortSignature(shortSignature: string): Promise<StoredRecord | null> {
     const recordHash = this.#byShortSignature.get(shortSignature);
-    return recordHash ? this.findByRecordHash(recordHash) : null;
+    return recordHash ? this.findByRecordHash(recordHash) : this.chunked.findCompleted(shortSignature);
   }
 
   async findByShortSignatureOrHash(id: string): Promise<StoredRecord | null> {
@@ -221,10 +229,11 @@ export class InMemoryRecordStore implements RecordStore {
   }
 
   async shortSignatureExists(shortSignature: string): Promise<boolean> {
-    return this.#byShortSignature.has(shortSignature);
+    return this.#byShortSignature.has(shortSignature) || this.chunked.findCompleted(shortSignature) !== null;
   }
 
   async recordExists(id: string): Promise<boolean> {
+    if (this.chunked.findCompleted(id)) return true;
     if (id.startsWith("b3:")) return this.#byHash.has(id as B3Hash);
     return this.#byShortSignature.has(id);
   }
@@ -294,6 +303,9 @@ export class InMemoryRecordStore implements RecordStore {
     const session = this.#observedSessions.get(input.observed_session_id);
     if (!session) throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
     assertObservedToken(session, input.observed_token_hash);
+    if (input.maximum_event_count !== undefined && session.checkpoints.some(checkpoint => checkpoint.event_count > input.maximum_event_count!)) {
+      throw new ObservedCheckpointConflictError("observation_mismatch", "checkpoint event_count exceeds final record");
+    }
     return cloneJson(session);
   }
 }
@@ -317,9 +329,11 @@ export type PostgresDatabase = PostgresQueryable & {
  */
 export class PostgresRecordStore implements RecordStore {
   readonly #db: PostgresDatabase;
+  readonly chunked: PostgresChunkedStore;
 
   constructor(db: PostgresDatabase) {
     this.#db = db;
+    this.chunked = new PostgresChunkedStore(db);
   }
 
   async saveRecord(input: SaveRecordInput): Promise<SaveRecordResult> {
@@ -345,99 +359,13 @@ export class PostgresRecordStore implements RecordStore {
           }
           const checkpoints = (await client.query<ObservedCheckpointRow>(
             `select checkpoint_id, event_count, chain_tip, observed_at
-             from observed_checkpoints where observed_session_id = $1 order by event_count, observed_at`,
-            [input.observation.observed_session_id],
+             from observed_checkpoints where observed_session_id = $1 order by event_count desc limit $2`,
+            [input.observation.observed_session_id, input.record.events.length + 1],
           )).rows.map(rowToObservationCommitment);
           finalObservation = validateRecordObservation(input.record, session.observed_session_id, checkpoints);
         }
 
-        await client.query(
-          `insert into records (
-            record_hash, short_signature, format_version, session_id,
-            producer_id, producer_version, producer_capabilities, capture_context, text_binding,
-            event_count, duration_ms,
-            created_client_t, ingested_server_t, parent_record_hash, attestations, events, created_at, observation_state
-          ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15::jsonb,$16::jsonb,$17,$18)`,
-          [
-            manifest.record_hash,
-            input.short_signature,
-            manifest.format_version,
-            manifest.session_id,
-            manifest.producer.id,
-            manifest.producer.version,
-            JSON.stringify(manifest.producer.capabilities),
-            JSON.stringify(manifest.capture_context ?? null),
-            manifest.text_binding ? JSON.stringify(manifest.text_binding) : null,
-            manifest.event_count,
-            manifest.duration_ms,
-            manifest.created_client_t ?? null,
-            manifest.ingested_server_t ?? new Date().toISOString(),
-            manifest.parent_record ?? null,
-            JSON.stringify(manifest.attestations),
-            JSON.stringify(input.record.events),
-            createdAt,
-            finalObservation?.state === "unobserved" ? "unobserved" : "not_requested",
-          ],
-        );
-
-        await client.query(
-          `insert into record_stats (
-            record_hash, observed_final_length, insert_op_count, delete_op_count, replace_op_count,
-            typed_event_count, paste_event_count, cut_event_count, drop_event_count,
-            ime_event_count, autocomplete_event_count, programmatic_event_count, unknown_source_count,
-            inserted_codepoints_total, deleted_codepoints_total, largest_atomic_insert_codepoints,
-            inter_event_delay_min_ms, inter_event_delay_p50_ms, inter_event_delay_p90_ms,
-            inter_event_delay_p95_ms, inter_event_delay_p99_ms, inter_event_delay_max_ms,
-            active_time_ms, idle_time_ms, long_pause_count, delay_histogram
-          ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb)`,
-          [
-            input.stats.record_hash,
-            input.stats.observed_final_length,
-            input.stats.insert_op_count,
-            input.stats.delete_op_count,
-            input.stats.replace_op_count,
-            input.stats.typed_event_count,
-            input.stats.paste_event_count,
-            input.stats.cut_event_count,
-            input.stats.drop_event_count,
-            input.stats.ime_event_count,
-            input.stats.autocomplete_event_count,
-            input.stats.programmatic_event_count,
-            input.stats.unknown_source_count,
-            input.stats.inserted_codepoints_total,
-            input.stats.deleted_codepoints_total,
-            input.stats.largest_atomic_insert_codepoints,
-            input.stats.inter_event_delay_min_ms,
-            input.stats.inter_event_delay_p50_ms,
-            input.stats.inter_event_delay_p90_ms,
-            input.stats.inter_event_delay_p95_ms,
-            input.stats.inter_event_delay_p99_ms,
-            input.stats.inter_event_delay_max_ms,
-            input.stats.active_time_ms,
-            input.stats.idle_time_ms,
-            input.stats.long_pause_count,
-            JSON.stringify(input.stats.delay_histogram),
-          ],
-        );
-
-        for (const signal of signals) {
-          await client.query(
-            `insert into analysis_results (
-              id, record_hash, analyzer_id, analyzer_version, applicable, measures, human_range, explanation
-            ) values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8)
-            on conflict (record_hash, analyzer_id, analyzer_version) do nothing`,
-            [
-              signal.id ?? crypto.randomUUID(),
-              manifest.record_hash,
-              signal.analyzer_id,
-              signal.analyzer_version,
-              signal.applicable,
-              JSON.stringify(signal.measures),
-              signal.human_range ? JSON.stringify(signal.human_range) : null,
-              signal.explanation,
-            ],
-          );
-        }
+        await insertRecordData(client, { ...input, observation: finalObservation });
 
         if (input.observation?.observed_session_id) {
           if (!finalObservation || !finalObservation.observed_session_id) throw new ObservedCheckpointConflictError("observation_mismatch", "observed session final observation is missing");
@@ -514,6 +442,8 @@ export class PostgresRecordStore implements RecordStore {
          r.parent_record_hash,
          r.attestations,
          r.events,
+         to_jsonb(r)->>'event_storage' as event_storage,
+         to_jsonb(r)->'observation_summary' as observation_summary,
          r.created_at,
          r.observation_state as record_observation_state,
          s.insert_op_count,
@@ -552,7 +482,7 @@ export class PostgresRecordStore implements RecordStore {
       [recordHash],
     );
     if (!result.rows[0]) return null;
-    const observation = await this.#findObservationByRecordHash(recordHash, (result.rows[0].record_observation_state ?? "not_requested") as ObservationState);
+    const observation = (result.rows[0].observation_summary as RecordObservation | null) ?? await this.#findObservationByRecordHash(recordHash, (result.rows[0].record_observation_state ?? "not_requested") as ObservationState);
     return rowToStoredRecord(result.rows[0], observation);
   }
 
@@ -565,15 +495,19 @@ export class PostgresRecordStore implements RecordStore {
     const session = sessionResult.rows[0];
     if (!session) return fallbackState === "unobserved" ? unobservedObservation() : notRequestedObservation();
     const checkpointResult = await this.#db.query<ObservedCheckpointRow>(
-      `select checkpoint_id, event_count, chain_tip, observed_at
-       from observed_checkpoints where observed_session_id = $1 order by event_count, observed_at`,
+      `(select checkpoint_id,event_count,chain_tip,observed_at from observed_checkpoints where observed_session_id=$1 order by event_count limit 1)
+       union (select checkpoint_id,event_count,chain_tip,observed_at from observed_checkpoints where observed_session_id=$1 order by event_count desc limit 31) order by event_count`,
       [session.observed_session_id],
     );
-    return observationFromCheckpoints(
-      session.observed_session_id,
-      (session.observation_state ?? "partial") as BoundObservationState,
-      checkpointResult.rows.map(rowToObservationCommitment),
-    );
+    const aggregate = (await this.#db.query<{ count: number; first_at: string; last_at: string }>(
+      `select count(*)::integer as count,min(observed_at) as first_at,max(observed_at) as last_at
+       from observed_checkpoints where observed_session_id=$1`, [session.observed_session_id])).rows[0];
+    const observation = observationFromCheckpoints(session.observed_session_id,
+      (session.observation_state ?? "partial") as BoundObservationState, checkpointResult.rows.map(rowToObservationCommitment));
+    if (!aggregate?.count) return observation;
+    return { ...observation, checkpoint_count: aggregate.count,
+      first_observed_at: new Date(aggregate.first_at).toISOString(), last_observed_at: new Date(aggregate.last_at).toISOString(),
+      server_observed_span_ms: new Date(aggregate.last_at).getTime() - new Date(aggregate.first_at).getTime() };
   }
 
   async findByShortSignature(shortSignature: string): Promise<StoredRecord | null> {
@@ -700,12 +634,16 @@ export class PostgresRecordStore implements RecordStore {
       [input.observed_session_id],
     )).rows[0];
     if (!session) throw new ObservedSessionTokenError("observed_session_not_found", "observed session not found");
+    assertObservedToken(rowToObservedSession(session, []), input.observed_token_hash);
     const checkpoints = (await this.#db.query<ObservedCheckpointRow>(
       `select checkpoint_id, event_count, chain_tip, observed_at
-       from observed_checkpoints where observed_session_id = $1 order by event_count, observed_at`,
-      [input.observed_session_id],
+       from observed_checkpoints where observed_session_id = $1 order by event_count desc limit $2`,
+      [input.observed_session_id, input.maximum_event_count === undefined ? null : input.maximum_event_count + 1],
     )).rows.map(rowToObservationCommitment);
-    const observedSession = rowToObservedSession(session, checkpoints);
+    if (input.maximum_event_count !== undefined && checkpoints.some(checkpoint => checkpoint.event_count > input.maximum_event_count!)) {
+      throw new ObservedCheckpointConflictError("observation_mismatch", "checkpoint event_count exceeds final record");
+    }
+    const observedSession = rowToObservedSession(session, checkpoints.sort((a, b) => a.event_count - b.event_count));
     assertObservedToken(observedSession, input.observed_token_hash);
     return observedSession;
   }
@@ -773,6 +711,7 @@ function rowToStoredRecord(row: RecordRow, observation: RecordObservation): Stor
 
   return {
     manifest,
+    ...(row.event_storage === "chunks" ? { event_storage: "chunks" as const } : {}),
     events: row.events,
     short_signature: row.short_signature,
     stats: {
@@ -791,9 +730,9 @@ function rowToStoredRecord(row: RecordRow, observation: RecordObservation): Stor
       autocomplete_event_count: numberFromRow(row.autocomplete_event_count),
       programmatic_event_count: numberFromRow(row.programmatic_event_count),
       unknown_source_count: numberFromRow(row.unknown_source_count),
-      inserted_codepoints_total: numberFromRow(row.inserted_codepoints_total),
-      deleted_codepoints_total: numberFromRow(row.deleted_codepoints_total),
-      largest_atomic_insert_codepoints: numberFromRow(row.largest_atomic_insert_codepoints),
+      inserted_codepoints_total: nullableNumberFromRow(row.inserted_codepoints_total),
+      deleted_codepoints_total: nullableNumberFromRow(row.deleted_codepoints_total),
+      largest_atomic_insert_codepoints: nullableNumberFromRow(row.largest_atomic_insert_codepoints),
       inter_event_delay_min_ms: nullableNumberFromRow(row.inter_event_delay_min_ms),
       inter_event_delay_p50_ms: nullableNumberFromRow(row.inter_event_delay_p50_ms),
       inter_event_delay_p90_ms: nullableNumberFromRow(row.inter_event_delay_p90_ms),
@@ -924,4 +863,99 @@ function nullableNumberFromRow(value: unknown): number | null {
 
 function isPostgresUniqueViolation(error: unknown): error is { code: string } {
   return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "23505";
+}
+
+/** Insert immutable public rows on the caller's transaction. */
+export async function insertRecordData(client: PostgresQueryable, input: SaveRecordInput): Promise<void> {
+  const manifest = input.record.manifest;
+  const createdAt = input.created_at ?? new Date().toISOString();
+  const signals = input.signals ?? [];
+  const finalObservation = input.observation;
+  await client.query(
+    `insert into records (
+      record_hash, short_signature, format_version, session_id,
+      producer_id, producer_version, producer_capabilities, capture_context, text_binding,
+      event_count, duration_ms,
+      created_client_t, ingested_server_t, parent_record_hash, attestations, events, created_at, observation_state
+    ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15::jsonb,$16::jsonb,$17,$18)`,
+    [
+      manifest.record_hash,
+      input.short_signature,
+      manifest.format_version,
+      manifest.session_id,
+      manifest.producer.id,
+      manifest.producer.version,
+      JSON.stringify(manifest.producer.capabilities),
+      JSON.stringify(manifest.capture_context ?? null),
+      manifest.text_binding ? JSON.stringify(manifest.text_binding) : null,
+      manifest.event_count,
+      manifest.duration_ms,
+      manifest.created_client_t ?? null,
+      manifest.ingested_server_t ?? new Date().toISOString(),
+      manifest.parent_record ?? null,
+      JSON.stringify(manifest.attestations),
+      JSON.stringify(input.record.events),
+      createdAt,
+      finalObservation?.state === "unobserved" ? "unobserved" : "not_requested",
+    ],
+  );
+
+  await client.query(
+    `insert into record_stats (
+      record_hash, observed_final_length, insert_op_count, delete_op_count, replace_op_count,
+      typed_event_count, paste_event_count, cut_event_count, drop_event_count,
+      ime_event_count, autocomplete_event_count, programmatic_event_count, unknown_source_count,
+      inserted_codepoints_total, deleted_codepoints_total, largest_atomic_insert_codepoints,
+      inter_event_delay_min_ms, inter_event_delay_p50_ms, inter_event_delay_p90_ms,
+      inter_event_delay_p95_ms, inter_event_delay_p99_ms, inter_event_delay_max_ms,
+      active_time_ms, idle_time_ms, long_pause_count, delay_histogram
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb)`,
+    [
+      input.stats.record_hash,
+      input.stats.observed_final_length,
+      input.stats.insert_op_count,
+      input.stats.delete_op_count,
+      input.stats.replace_op_count,
+      input.stats.typed_event_count,
+      input.stats.paste_event_count,
+      input.stats.cut_event_count,
+      input.stats.drop_event_count,
+      input.stats.ime_event_count,
+      input.stats.autocomplete_event_count,
+      input.stats.programmatic_event_count,
+      input.stats.unknown_source_count,
+      input.stats.inserted_codepoints_total,
+      input.stats.deleted_codepoints_total,
+      input.stats.largest_atomic_insert_codepoints,
+      input.stats.inter_event_delay_min_ms,
+      input.stats.inter_event_delay_p50_ms,
+      input.stats.inter_event_delay_p90_ms,
+      input.stats.inter_event_delay_p95_ms,
+      input.stats.inter_event_delay_p99_ms,
+      input.stats.inter_event_delay_max_ms,
+      input.stats.active_time_ms,
+      input.stats.idle_time_ms,
+      input.stats.long_pause_count,
+      JSON.stringify(input.stats.delay_histogram),
+    ],
+  );
+
+  for (const signal of signals) {
+    await client.query(
+      `insert into analysis_results (
+        id, record_hash, analyzer_id, analyzer_version, applicable, measures, human_range, explanation
+      ) values ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8)
+      on conflict (record_hash, analyzer_id, analyzer_version) do nothing`,
+      [
+        signal.id ?? crypto.randomUUID(),
+        manifest.record_hash,
+        signal.analyzer_id,
+        signal.analyzer_version,
+        signal.applicable,
+        JSON.stringify(signal.measures),
+        signal.human_range ? JSON.stringify(signal.human_range) : null,
+        signal.explanation,
+      ],
+    );
+  }
 }

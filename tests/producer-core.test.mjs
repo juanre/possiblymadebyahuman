@@ -127,6 +127,35 @@ test("producer-core package identifier is exported", () => {
   assert.equal(PRODUCER_CORE_PACKAGE, "@possiblymadebyahuman/producer-core");
 });
 
+test("captured wall times preserve queued edit gaps and clamp clock rollback", () => {
+  const { registry, clock } = makeRegistry();
+  clock.set(5_000);
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc), { started_at_wall_ms: 1_000 });
+  for (const [pos, captured_at_wall_ms] of [1_010, 1_025, 1_015].entries()) {
+    clock.advance(200);
+    registry.appendMutation(session.session_id, { op: "insert", pos, del_len: 0, ins_len: 1, source: "typing" }, { captured_at_wall_ms });
+  }
+  const captured = registry.get(session.session_id);
+  assert.equal(captured.base_wall_ms, 1_000);
+  assert.deepEqual(captured.events.map(event => event.t), [10, 25, 25]);
+  assert.equal(captured.last_edit_wall_ms, 1_025);
+  registry.appendMutation(session.session_id, { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" });
+  assert.equal(registry.get(session.session_id).events.at(-1).t, 4_600, "legacy callers still use the registry clock");
+});
+
+test("invalid capture wall times reject before session creation or append mutation", () => {
+  const { registry } = makeRegistry();
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc), { initial_content_unknown: true });
+  const before = registry.snapshot();
+  for (const invalid of [-1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, null, "1000"]) {
+    assert.throws(() => registry.findOrCreate(originA, desc, captureForOrigin(originA, desc), { fresh: true, started_at_wall_ms: invalid }), /capture wall time/);
+    assert.throws(() => registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" }, { captured_at_wall_ms: invalid }), /capture wall time/);
+    assert.deepEqual(registry.snapshot(), before);
+  }
+});
+
 test("1. fresh session has stable id, 'fresh' certainty, and 'active' state", () => {
   const { registry, clock } = makeRegistry();
   clock.set(1_000);
@@ -340,33 +369,6 @@ test("loading an interrupted signing operation preserves a frozen, exactly retry
   assert.equal(restarted.get(session.session_id).state, "failed_upload");
   assert.throws(() => restarted.appendMutation(session.session_id, { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" }), SessionFrozenError);
   assert.deepEqual(restarted.sign(session.session_id), signed);
-});
-
-test("reopen resumes an uploaded session so editing and re-signing continue the same record", () => {
-  const { registry, clock } = makeRegistry();
-  clock.set(0);
-  const desc = descriptor();
-  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
-  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" });
-  const firstDraft = registry.sign(session.session_id);
-  registry.markUploading(session.session_id);
-  registry.markUploaded(session.session_id, { record_hash: firstDraft.manifest.record_hash, short_signature: "First12345", url: "https://example.test/First12345", created: true });
-  assert.equal(registry.get(session.session_id).state, "uploaded");
-  assert.equal(firstDraft.events.length, 1);
-
-  const reopened = registry.reopen(session.session_id);
-  assert.equal(reopened.state, "active");
-  assert.equal(reopened.events.length, 1, "events are kept across reopen");
-  assert.equal(registry.get(session.session_id).uploaded_response, undefined);
-
-  // Continue writing and sign again: the new record covers the whole process.
-  registry.appendMutation(session.session_id, { op: "insert", pos: 3, del_len: 0, ins_len: 2, source: "typing" });
-  const secondDraft = registry.sign(session.session_id);
-  assert.equal(secondDraft.events.length, 2, "re-signed record spans original + new edits");
-  assert.notEqual(secondDraft.manifest.record_hash, firstDraft.manifest.record_hash);
-
-  // reopen is only valid from an uploaded session.
-  assert.throws(() => registry.reopen(session.session_id), SessionFrozenError);
 });
 
 test("11. signing one session leaves siblings active and writable", () => {
@@ -667,4 +669,19 @@ test("failed persisted removal restores saved links without losing other drafts'
   await registry.discardPersisted([saved.session_id]);
   assert.equal(registry.get(saved.session_id), undefined);
   assert.equal(storage.peek().some(record => record.session_id === saved.session_id), false);
+});
+
+test("rejected appends leave the entire session and pending boundary intact", () => {
+  const { registry, clock } = makeRegistry();
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc), { initial_content_unknown: true });
+  const before = registry.get(session.session_id);
+  clock.advance(50);
+  assert.throws(() => registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 1, ins_len: 0, source: "typing" }));
+  assert.deepEqual(registry.get(session.session_id), before);
+  const after = registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  assert.equal(after.events.length, 1);
+  assert.equal(after.events[0].seq, 0);
+  assert.equal(after.events[0].pos, null);
+  assert.equal(verifyRecord(registry.sign(session.session_id)).valid, true);
 });

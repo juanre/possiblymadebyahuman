@@ -8,10 +8,16 @@ A published record is immutable. An explicit **Continue in chosen field** action
 
 Old saved anchors have no signed finish. Their retained local upload time supplies the continuation boundary; this is a local legacy approximation, not new server evidence. Old 0.1 unfinished sessions also retain their existing finish semantics, because replacing their event-chain domain would invalidate prior checkpoints. Active 0.2 drafts can upgrade to 0.3 while keeping their original event chain. Failed legacy uploads retain their original version/hash for retry.
 
-Producer-core enables this contract through `signedFinishTime: true`. Other consumers remain on their current contract until explicitly opted in. New continuation sessions preserve old saved anchors even after uploaded event logs and checkpoint tokens have been cleared. Removing a local saved link is explicit; `discardPersisted` preserves the in-memory links if storage rejects the removal and leaves other drafts' concurrent edits intact. Local removal never deletes the public record.
+Producer-core enables this contract through `signedFinishTime: true`. The extension and `/write` both opt in; Emacs implements the same final seal and durable frozen retry contract. Legacy retries remain unchanged. New continuation sessions preserve old saved anchors even after uploaded event logs and checkpoint tokens have been cleared. Removing a local saved link is explicit; `discardPersisted` preserves the in-memory links if storage rejects the removal and leaves other drafts' concurrent edits intact. Local removal never deletes the public record.
 
 Finish elapsed time is signed as a client claim. Calendar metadata and capture context are not newly sealed. Server-observed span is still the span between received checkpoints. Active and idle measures remain sums between consecutive real events; the extra time before the first or after the last event is outside those measurements.
 
-No new database column or migration is required: `duration_ms` and `parent_record_hash` already store these fields, and format version is text. The API verifies the new finalization hash, retains compatible 0.2 checkpoint prefixes, and preserves old public records. Deploy the new API/viewer before distributing a producer that emits 0.3. Existing old clients cannot verify 0.3 records, and an older API rejects them.
+The format-0.3 seal itself needs no new database column or migration: `duration_ms` and `parent_record_hash` already store these fields, and format version is text. The API verifies the new finalization hash, retains compatible 0.2 checkpoint prefixes, and preserves old public records. Deploy the new API/viewer before distributing a producer that emits 0.3. Existing old clients cannot verify 0.3 records, and an older API rejects them.
 
 Validation covers duration/parent/binding tampering, a stable canonical hash vector, trailing pauses without edits, clock rollback, frozen retries across restart, legacy checkpoint preservation, retained links across continuation and storage failure, and a real PostgreSQL/API roundtrip under pgdbm-owned test databases.
+
+The producer correctness pass separately requires migration 004 for nullable size
+statistics. `/write` serializes local storage ownership across tabs and restores
+frozen uploads without restoring document text. Emacs retains private recovery
+files for both file and non-file buffers and archives accepted links before
+clearing the active draft.

@@ -82,7 +82,7 @@ export function QuickStatsPanel({ record }: { record: RecordApiResponse }) {
         <Stat label="Typing events" value={stats.typed_event_count} />
         <Stat label="Insert / delete / replace" value={`${stats.insert_op_count} / ${stats.delete_op_count} / ${stats.replace_op_count}`} />
         <Stat label="Paste / unknown" value={`${stats.paste_event_count} / ${stats.unknown_source_count}`} />
-        <Stat label="Largest atomic insert" value={`${stats.largest_atomic_insert_codepoints} codepoints`} />
+        <Stat label="Largest atomic insert" value={stats.largest_atomic_insert_codepoints === null ? "unknown" : `${stats.largest_atomic_insert_codepoints} codepoints`} />
         <Stat label="Active / idle between edits" value={`${formatDuration(stats.active_time_ms)} / ${formatDuration(stats.idle_time_ms)}`} />
         <Stat label="Delay p50 / p95" value={`${formatDelayMs(stats.inter_event_delay_p50_ms)} / ${formatDelayMs(stats.inter_event_delay_p95_ms)}`} />
       </div>
@@ -361,18 +361,18 @@ export function SignalCard({ signal }: { signal: Signal }) {
       <h3>{signal.analyzer_id} <small>v{signal.analyzer_version}</small></h3>
       {!signal.applicable && <p className="pill">Not applicable</p>}
       <p>{signal.explanation}</p>
-      {signal.measures.length > 0 && <dl className="measure-grid">{signal.measures.map((measure) => <React.Fragment key={measure.key}><dt><MeasureTerm name={measure.key} /></dt><dd>{String(measure.value)}{measure.unit ? ` ${measure.unit}` : ""}</dd></React.Fragment>)}</dl>}
+      {signal.measures.length > 0 && <dl className="measure-grid">{signal.measures.map((measure) => <React.Fragment key={measure.key}><dt><MeasureTerm name={measure.key} /></dt><dd>{measure.value === null ? "unavailable" : `${String(measure.value)}${measure.unit ? ` ${measure.unit}` : ""}`}</dd></React.Fragment>)}</dl>}
     </article>
   );
 }
 
-export function VerificationPanel({ record }: { record: RecordApiResponse }) {
+export function VerificationPanel({ record, verification: suppliedVerification }: { record: RecordApiResponse; verification?: VerificationState }) {
   // The record's signature is the BLAKE3 record hash; the URL is derived from
   // it. We recompute it from the events in-browser so the "Computed hash" row
   // is the reader's own re-derivation, not a server claim — but we don't dress
   // it up as a verdict, because comparing it to the server's own hash field
   // is only a check of internal consistency.
-  const verification = useMemo(() => verifyRecordChain(record), [record]);
+  const verification = useMemo(() => suppliedVerification ?? verifyRecordChain(record), [record, suppliedVerification]);
   return (
     <section className="card">
       <h2>Signature &amp; details</h2>
@@ -461,6 +461,7 @@ function UtcInstant({ iso }: { iso: string | null }) {
 // check of internal consistency (the events shown are the events signed), not
 // a verdict about authorship.
 function ChainStatus({ verification }: { verification: VerificationState }) {
+  if (verification.pending) return <p className="chain-status" role="status">{verification.messages.join(" ")}</p>;
   if (verification.ok) {
     return (
       <p className="chain-status ok" role="status">
@@ -496,21 +497,22 @@ export function ManifestDetails({ record, computedRecordHash }: { record: Record
       <dt>Capabilities</dt><dd>{manifest.producer.capabilities.join(", ") || "none declared"}</dd>
       <dt>Server metadata</dt><dd>{manifest.ingested_server_t ? "ingestion time present" : "client-claimed time only"}</dd>
       <dt>Analyzer versions</dt><dd>{record.signals.map((signal) => `${signal.analyzer_id}@${signal.analyzer_version}`).join(", ") || "none"}</dd>
-      <dt>Server-observed commitments</dt><dd><ObservationCommitmentsList commitments={record.observation.commitments} state={record.observation.state} /></dd>
+      <dt>Server-observed commitments</dt><dd><ObservationCommitmentsList commitments={record.observation.commitments} state={record.observation.state} totalCount={record.observation.checkpoint_count} /></dd>
     </dl>
   );
 }
 
-export function ObservationCommitmentsList({ commitments, state }: { commitments: ObservationCommitment[]; state: RecordObservation["state"] }) {
+export function ObservationCommitmentsList({ commitments, state, totalCount = commitments.length }: { commitments: ObservationCommitment[]; state: RecordObservation["state"]; totalCount?: number }) {
   if (commitments.length === 0) {
     return state === "not_requested" ? <span className="muted">not requested</span> : <span className="muted">none</span>;
   }
   const summary = state === "partial"
-    ? `${commitments.length} server-observed commitments (partial)`
-    : `${commitments.length} server-observed ${commitments.length === 1 ? "commitment" : "commitments"}`;
+    ? `${totalCount} server-observed commitments (partial)`
+    : `${totalCount} server-observed ${totalCount === 1 ? "commitment" : "commitments"}`;
   return (
     <details className="observation-commitments" data-state={state}>
       <summary>{summary}</summary>
+      {totalCount > commitments.length && <p className="muted">Showing the first checkpoint and the latest {commitments.length - 1} of {totalCount}. All stored checkpoints were checked when the record was published.</p>}
       <ol className="observation-commitments-list">
         {commitments.map((commitment) => (
           <li key={commitment.checkpoint_id} className="observation-commitment">
@@ -533,7 +535,7 @@ function truncateHash(hash: string): string {
   return `${hash.slice(0, 9)}…${hash.slice(-4)}`;
 }
 
-export function TextBindingSection({ record }: { record: RecordApiResponse }) {
+export function TextBindingSection({ record, verification }: { record: RecordApiResponse; verification?: VerificationState }) {
   const binding = record.manifest.text_binding;
   if (!binding) {
     return (
@@ -545,23 +547,27 @@ export function TextBindingSection({ record }: { record: RecordApiResponse }) {
   }
   return (
     <>
-      <DocumentCheckCard record={record} />
+      <DocumentCheckCard record={record} verification={verification} />
       <CommensurabilityCard record={record} />
     </>
   );
 }
 
-export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
+export function DocumentCheckCard({ record, verification: suppliedVerification }: { record: RecordApiResponse; verification?: VerificationState }) {
   const binding = record.manifest.text_binding!;
   const sessionId = record.manifest.session_id;
+  const verification = useMemo(() => suppliedVerification ?? verifyRecordChain(record), [record, suppliedVerification]);
   const [candidate, setCandidate] = useState("");
   const [result, setResult] = useState<BindingCheckResult | null>(null);
+  const [checkedRecord, setCheckedRecord] = useState<RecordApiResponse | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
+  const currentResult = verification.ok && checkedRecord === record ? result : null;
   return (
     <section className="card" id="check-a-document" aria-label="Check a document">
       <h2>Check a document against this record</h2>
       <p className="muted">Have a copy of this writing? Paste it below and your browser tells you whether it is the text signed here, comparing wording, not exact text. (The Check button turns on once you paste something.)</p>
       <p className="binding-check-privacy">Runs entirely in your browser; the document you paste is never uploaded.</p>
+      {!verification.ok && <p role={verification.pending ? "status" : "alert"}>{verification.pending ? "Verify the full event log before checking a document against its binding." : "This record failed integrity verification. Document checking is unavailable because its binding cannot be trusted."}</p>}
       <textarea
         className="binding-check-input"
         value={candidate}
@@ -579,17 +585,19 @@ export function DocumentCheckCard({ record }: { record: RecordApiResponse }) {
         <button
           className="verify-button"
           type="button"
-          disabled={candidate.length === 0}
+          disabled={!verification.ok || candidate.length === 0}
           onClick={() => {
+            if (!verification.ok) return;
             setResult(checkCandidateAgainstBinding(binding, candidate, sessionId));
+            setCheckedRecord(record);
             setCheckedAt(new Date().toLocaleTimeString());
           }}
         >
           Check
         </button>
       </div>
-      {result && <BindingResult result={result} />}
-      {result && checkedAt ? <p className="muted binding-checked-at">Checked at {checkedAt}.</p> : null}
+      {currentResult && <BindingResult result={currentResult} />}
+      {currentResult && checkedAt ? <p className="muted binding-checked-at">Checked at {checkedAt}.</p> : null}
     </section>
   );
 }
@@ -630,7 +638,7 @@ export function CommensurabilityCard({ record }: { record: RecordApiResponse }) 
         <Stat label="Signed text" value={`${binding.canonical_length} letters & digits (no punctuation or spacing)`} />
         <Stat
           label="Writing process"
-          value={`${formatDuration(stats.duration_ms)} · ${stats.event_count} edits · ${pasteLabel} · largest insert ${stats.largest_atomic_insert_codepoints}`}
+          value={`${formatDuration(stats.duration_ms)} · ${stats.event_count} edits · ${pasteLabel} · largest insert ${stats.largest_atomic_insert_codepoints ?? "unknown"}`}
         />
       </div>
       <p className="muted">What counts as “enough” is yours to read.</p>
@@ -745,17 +753,19 @@ export function RecordFooter() {
 }
 
 export function RecordPage({ record }: { record?: RecordApiResponse }) {
+  const verification = useMemo(() => record ? verifyRecordChain(record) : undefined, [record]);
   return (
     <main className="page-shell record-page">
       <RecordSignet record={record} />
       {record ? <>
+      {verification && !verification.ok && <p className="card" role="alert">This record failed integrity verification. Its displayed events and binding may have been changed.</p>}
       <TimingFingerprint record={record} />
-      <TextBindingSection record={record} />
+      <TextBindingSection record={record} verification={verification} />
       <CaptureContextSummary record={record} />
       <QuickStatsPanel record={record} />
       <EditTimeline record={record} />
       <SignalList signals={record.signals} />
-      <VerificationPanel record={record} />
+      <VerificationPanel record={record} verification={verification} />
       <DisclaimerBanner />
       </> : <div className="record-loading" aria-busy="true">
         <p role="status">Loading writing record…</p>

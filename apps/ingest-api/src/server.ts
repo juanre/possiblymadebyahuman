@@ -10,6 +10,10 @@ import { PostgresRecordStore, type PostgresDatabase, type RecordStore } from "..
 import { loadSqlMigrations } from "../../../packages/storage/src/migrations.ts";
 
 export const DEFAULT_RECORD_BODY_LIMIT_BYTES = 10_000_000;
+export const DEFAULT_CHECKPOINT_BODY_LIMIT_BYTES = 16_384;
+export const DEFAULT_MAX_IN_FLIGHT_API_REQUESTS = 8;
+export const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 30_000;
+export const DEFAULT_STATEMENT_TIMEOUT_MS = 15_000;
 export const DEFAULT_POOL_MAX = 5;
 export const DEFAULT_POOL_IDLE_TIMEOUT_MS = 30_000;
 export const DEFAULT_POOL_CONNECTION_TIMEOUT_MS = 5_000;
@@ -44,11 +48,9 @@ export function createPoolConfig(env: NodeJS.ProcessEnv = process.env): pg.PoolC
     connectionTimeoutMillis: parsePositiveInteger(env.PG_POOL_CONNECTION_TIMEOUT_MS, DEFAULT_POOL_CONNECTION_TIMEOUT_MS),
   };
 
-  const statementTimeout = parseOptionalPositiveInteger(env.PG_STATEMENT_TIMEOUT_MS ?? env.PG_QUERY_TIMEOUT_MS);
-  if (statementTimeout !== undefined) {
-    config.statement_timeout = statementTimeout;
-    config.query_timeout = statementTimeout;
-  }
+  const statementTimeout = parsePositiveInteger(env.PG_STATEMENT_TIMEOUT_MS ?? env.PG_QUERY_TIMEOUT_MS, DEFAULT_STATEMENT_TIMEOUT_MS);
+  config.statement_timeout = statementTimeout;
+  config.query_timeout = statementTimeout;
   return config;
 }
 
@@ -59,22 +61,44 @@ export type RuntimeServerOptions = {
   webDistDir?: string;
   siteDistDir?: string;
   recordBodyLimitBytes?: number;
+  checkpointBodyLimitBytes?: number;
+  maxInFlightApiRequests?: number;
+  httpRequestTimeoutMs?: number;
   requiredMigrationVersions?: readonly string[];
   buildRevision?: string;
 };
 
 export function createRuntimeServer(options: RuntimeServerOptions): Server {
-  const server = createServer(async (req, res) => {
+  const maxInFlight = options.maxInFlightApiRequests ?? DEFAULT_MAX_IN_FLIGHT_API_REQUESTS;
+  const requestTimeout = options.httpRequestTimeoutMs ?? DEFAULT_HTTP_REQUEST_TIMEOUT_MS;
+  if (!Number.isSafeInteger(maxInFlight) || maxInFlight <= 0) throw new RangeError("maxInFlightApiRequests must be a positive safe integer");
+  if (!Number.isSafeInteger(requestTimeout) || requestTimeout <= 0) throw new RangeError("httpRequestTimeoutMs must be a positive safe integer");
+  let inFlight = 0;
+  const server = createServer({ requestTimeout, headersTimeout: Math.min(60_000, requestTimeout),
+    connectionsCheckingInterval: Math.min(1_000, requestTimeout) }, async (req, res) => {
+    let admitted = false;
     try {
-      await route(req, res, options);
+      // Admission and routing must use the same normalized target, including
+      // absolute-form requests and dot segments, before any body is buffered.
+      const requestUrl = new URL((req.url ?? "/").replace(/^\/+/, "/"), `http://${req.headers.host ?? "localhost"}`);
+      const apiRequest = requestUrl.pathname.startsWith("/api/");
+      if (apiRequest && inFlight >= maxInFlight) {
+        res.setHeader("retry-after", "1");
+        res.setHeader("connection", "close");
+        json(res, 503, { error: "server_busy" });
+        return;
+      }
+      if (apiRequest) { inFlight++; admitted = true; }
+      await route(req, res, options, requestUrl);
     } catch (error) {
       if (error instanceof RequestBodyTooLargeError) {
         json(res, 413, { error: "request_body_too_large", max_bytes: error.limitBytes });
         return;
       }
+      if (req.aborted || res.destroyed) return;
       console.error(error);
       json(res, 500, { error: "internal_server_error" });
-    }
+    } finally { if (admitted) inFlight--; }
   });
   return server;
 }
@@ -145,13 +169,13 @@ export async function readiness(
   }
 }
 
-async function route(req: IncomingMessage, res: ServerResponse, options: RuntimeServerOptions): Promise<void> {
-  // Repeated leading slashes collapse to one: "//" is not a valid URL and
-  // "//host/path" would otherwise parse as a different host.
-  const requestUrl = new URL((req.url ?? "/").replace(/^\/+/, "/"), `http://${req.headers.host ?? "localhost"}`);
-
+async function route(req: IncomingMessage, res: ServerResponse, options: RuntimeServerOptions, requestUrl: URL): Promise<void> {
   if (requestUrl.pathname.startsWith("/api/")) {
-    const response = await options.api.handleRequest(await toFetchRequest(req, requestUrl, options.recordBodyLimitBytes ?? DEFAULT_RECORD_BODY_LIMIT_BYTES));
+    const checkpoint = /^\/api\/observed-sessions\/[^/]+\/checkpoints$/.test(requestUrl.pathname);
+    const upload = requestUrl.pathname === "/api/record-uploads" || requestUrl.pathname.startsWith("/api/record-uploads/");
+    const bodyLimit = upload ? Math.min(1024 * 1024, options.recordBodyLimitBytes ?? DEFAULT_RECORD_BODY_LIMIT_BYTES) : checkpoint ? Math.min(options.checkpointBodyLimitBytes ?? DEFAULT_CHECKPOINT_BODY_LIMIT_BYTES,
+      options.recordBodyLimitBytes ?? DEFAULT_RECORD_BODY_LIMIT_BYTES) : options.recordBodyLimitBytes ?? DEFAULT_RECORD_BODY_LIMIT_BYTES;
+    const response = await options.api.handleRequest(await toFetchRequest(req, requestUrl, bodyLimit));
     await writeFetchResponse(res, response);
     return;
   }
@@ -339,6 +363,9 @@ export async function main(): Promise<void> {
     store,
     db: pool as PostgresDatabase,
     recordBodyLimitBytes: RECORD_BODY_LIMIT_BYTES,
+    checkpointBodyLimitBytes: parsePositiveInteger(process.env.CHECKPOINT_BODY_LIMIT_BYTES, DEFAULT_CHECKPOINT_BODY_LIMIT_BYTES),
+    maxInFlightApiRequests: parsePositiveInteger(process.env.MAX_IN_FLIGHT_API_REQUESTS, DEFAULT_MAX_IN_FLIGHT_API_REQUESTS),
+    httpRequestTimeoutMs: parsePositiveInteger(process.env.HTTP_REQUEST_TIMEOUT_MS, DEFAULT_HTTP_REQUEST_TIMEOUT_MS),
     requiredMigrationVersions,
   });
   installGracefulShutdown(server, pool);

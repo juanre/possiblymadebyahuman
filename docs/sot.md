@@ -4,9 +4,26 @@ Status: approved architecture for v0 implementation.
 Audience: coordinator, developer, reviewer, and future contributors.  
 Spec reference: `docs/spec.md` remains the product/format thesis; this document is the implementation source of truth for architecture, UI, backend, database, routing, and work breakdown.
 
-Extension UX amendment, 23 September 2026: the owner requires explicit activation on the chosen editor and no persistent controls over webpage content. Extension 0.2.1 is the currently deployed release. The **0.3.0 candidate** implements the next panel and signed-finish contract in sections 3.8 and 13.1; this document is not deployment evidence. Versions before 0.2.0 use the superseded passive-capture behavior. Work follows [UX-reset epic #3](https://github.com/juanre/possiblymadebyahuman/issues/3), [the review](extension-ux-review-2026-09-23.md), and [the panel/session design](extension-panel-design-2026-09-23.md).
+Extension UX amendment, 23 September 2026: the owner requires explicit activation on the chosen editor and no persistent controls over webpage content. The last deployment recorded here was extension 0.2.1; current deployment has not been reverified. Source package version is **0.3.3** and implements the next panel and signed-finish contract in sections 3.8 and 13.1; this document is not deployment evidence. Versions before 0.2.0 use the superseded passive-capture behavior. Work follows [UX-reset epic #3](https://github.com/juanre/possiblymadebyahuman/issues/3), [the review](extension-ux-review-2026-09-23.md), and [the panel/session design](extension-panel-design-2026-09-23.md).
 
-Further owner direction, 23 September 2026: cards have private editable names with contextual defaults, use generic field wording, and follow the focused editor without starting capture. Saved links and unfinished sessions have no automatic expiry. Extension 0.2.1 supplies long-duration storage and explicit unfinished-session resumption. The 0.3.0 candidate adds the focus-aware panel, collapsed searchable/exportable history, signed finish time and explicit linked continuations. Existing published records remain immutable. See [signed finish and continuations](signed-finish-and-continuations.md) for the versioned format contract and compatibility boundaries. Deploy the compatible API/viewer before distributing 0.3.0; integrated release checks and authenticated-site acceptance are separate gates.
+Further owner direction, 23 September 2026: cards have private editable names with contextual defaults, use generic field wording, and follow the focused editor without starting capture. Saved links and unfinished sessions have no automatic expiry. Extension 0.2.1 supplies long-duration storage and explicit unfinished-session resumption. The current source adds the focus-aware panel, collapsed searchable/exportable history, signed finish time and explicit linked continuations. Existing published records remain immutable. See [signed finish and continuations](signed-finish-and-continuations.md) for the versioned format contract and compatibility boundaries. Deploy the compatible API/viewer before distributing 0.3.0; integrated release checks and authenticated-site acceptance are separate gates.
+
+Producer correctness amendment, 23 September 2026: the owner requires equivalent
+capture, signed-finish and recovery guarantees across the extension, `/write`,
+and Emacs. All new sessions use format 0.3; frozen legacy uploads retain their
+original hashes. Capture timestamps precede delivery queues, ambiguous sizes stay
+unknown, and each producer freezes and persists before upload. UX redesign and
+broader copy changes remain deferred. See the [fix ledger](producer-correctness-fixes-2026-09-23.md)
+for implementation evidence and limits. Migration 004 is required for nullable
+size statistics; this source status does not establish deployment.
+
+Long-session architecture amendment, 23 September 2026: the owner requires
+bounded per-edit work and memory for multi-year, millions-of-events sessions.
+The [long-session architecture](long-session-architecture.md) supersedes full
+snapshot persistence and monolithic publication. All producers
+share the incremental storage and publication guarantees; hashes and the public
+content-blind promise remain unchanged. This milestone includes removal of
+superseded paths and stale documentation.
 
 ---
 
@@ -151,7 +168,7 @@ Owns:
 - content-blind manifest construction via `packages/format`
 - session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
 - capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
-- configurable TTL sweep; the extension disables draft expiry and retains uploaded-record references indefinitely, without events or checkpoint tokens after cleanup; the `/write` consumer retains its existing policy
+- configurable TTL sweep; the extension disables draft expiry and retains uploaded-record references indefinitely, without events or checkpoint tokens after cleanup; `/write` also retains drafts and saved links without automatic expiry
 - server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, a 30-second attempt deadline (including response-body reads), immediate serialized persistence of checkpoint outcomes, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before upload (after freezing and persisting the signed record in extension 0.3.0) that completes observation of a session with at least one commitment (final checkpoint over the uncommitted tail, plus one more round for events that arrive while it is in flight; at most two rounds) and leaves a never-committed session alone, and a `getObservationEnvelope()` accessor that yields the `(observed_session_id, token)` binding for `POST /api/records` when a commitment exists and the session has not diverged, `{ state: "unobserved" }` when it has no commitment or is `diverged`, and `null` when no checkpoint adapter is wired
 - local observation state vocabulary (`disabled` / `unknown` / `known` / `partial` / `diverged`) distinct from the public wire vocabulary on records (`observed` / `partial` / `unobserved` / `not_requested`)
 - adapter interfaces (`StorageAdapter`, `UploadAdapter`, `CheckpointAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`)
@@ -161,7 +178,7 @@ Does not own:
 - DOM observation, `chrome.*`, `window.*`, `document.*`
 - Plaintext storage, hashing, replay, upload, or helper payloads
 - Text-based verification; `packages/format.verifyRecord` verifies public structure and hash chain only
-- Storage technology: checkpoint outcomes are persisted through `StorageAdapter.write(snapshot)`; browser consumers provide the storage implementation. Tokens stay in local observation state and are sent only to the ingest service for observation requests
+- Storage technology: production browser consumers provide a transactional IndexedDB event journal. Commits append only new events and update small session metadata, including checkpoint outcomes. Snapshot adapters remain for bounded compatibility callers and tests. Tokens stay in local observation state and are sent only to the ingest service for observation requests
 - Listing/store copy or browser packaging
 
 ### 3.4 `packages/storage`
@@ -262,7 +279,7 @@ Owns:
 - capture-context prompt review before upload; private card names are separate from the public label
 - exact focused-editor routing scoped to the panel’s browser window and active tab; focus alone never authorizes capture
 - compact saved history with search, paging, link export and explicit local removal
-- format 0.3 signed finish and explicit linked continuation, enabled only for this producer
+- format 0.3 signed finish and linked continuation, shared in correctness with the other producers
 
 ### 3.9 `producers/emacs`
 
@@ -274,18 +291,19 @@ Owns:
 - `after-change-functions` capture
 - buffer/session status
 - sign-buffer command
-- conformant event logs (format `0.2`)
+- conformant event logs (new sessions use format `0.3`; frozen legacy uploads retain their format)
 - capture-context prompts/redaction before upload
 - server-observed checkpoint orchestration with the `packages/producer-core` cadence and state machine (first event immediate; 50-event delta or 60 s with new events; no idle heartbeats; single in-flight plus one queued slot; 30 s attempt watchdog; 1 s→60 s backoff; `diverged` on 409/400; reset on 404 `observation_unavailable`; up to two flush rounds of an already-observed session before sign), with chain tips advanced from the last known tip by the local `scripts/chain-tip.mjs` helper from public events only
 - observation binding on upload: `(observed_session_id, token)` when a checkpoint succeeded and the session is not diverged, explicit `unobserved` when observation was requested but never succeeded or diverged (the upload message says so), absent when `pmbah-observe-process` is nil
 - one session per buffer, kept across major-mode changes and `revert-buffer` (permanent-local state)
-- per-file session persistence under `pmbah-state-directory` (SHA-256 of the file's true name, owner-only, no text) with resumption anchored at the stored session start, deletion after upload or discard, preservation of diverged observation state/reason across resumption, and `.stale` retirement when the exact JSON integer time bound, a format-version change, or an unreadable file prevents resumption
+- private session persistence under `pmbah-state-directory` (file-path hash or non-file session UUID, no document text), anchored at the original start; frozen record/upload recovery across restart, archived accepted links before draft cleanup, preserved observation state, and `.stale` retirement for unreadable or incompatible state. Capture gaps use an unknown first mutation position; whole-buffer binding includes narrowed-out text unless an explicit region is selected
+- each mutation saves recovery state before the capture hook returns; a failed save retains the event in memory and pauses ordinary edits through buffer read-only state. `pmbah-retry-save` durably saves and resumes unsigned capture without unfreezing signed records
 
 ### 3.10 Producer scope invariant
 
 All v0 producers record the writing process captured after a user starts a session. They do not silently wrap pre-existing document content into a new record scope.
 
-- **Emacs** may enable `pmbah-mode` in a non-empty buffer. It records only mutations after capture starts, using Emacs' absolute positions and lengths for those later mutations. Its helper receives only process metadata (`events`, producer info, capture context, duration), not inserted text, text hashes-for-anything-else, initial snapshots/baselines, or text replay fixtures. **Local transient-binding exception:** at sign time the helper may receive the active region when `use-region-p` is true, otherwise the whole buffer, *solely* to compute the approved content-blind text binding (the `canon-letters/0.1` commitment) locally via the shared `packages/format` implementation. The helper must discard that text without persisting, logging, replaying, uploading, or passing it onward; only the sealed binding object (`scheme`, `canonical_length`, `commitment`) and the record survive. The text never leaves the user's machine — this is a local-compute exception, not a storage-policy exception, and plaintext storage/upload remains forbidden.
+- **Emacs** may enable `pmbah-mode` in a non-empty buffer. It records only mutations after capture starts, using Emacs' absolute positions and lengths for those later mutations. Its helper receives only process metadata (a private journal descriptor, producer info, capture context, duration), not inserted text, text hashes-for-anything-else, initial snapshots/baselines, or text replay fixtures. **Local transient-binding exception:** at sign time the helper may receive the active region when `use-region-p` is true, otherwise the whole buffer, *solely* to compute the approved content-blind text binding (the `canon-letters/0.1` commitment) locally via the shared `packages/format` implementation. The helper must discard that text without persisting, logging, replaying, uploading, or passing it onward; only the sealed binding object (`scheme`, `canonical_length`, `commitment`) and the record survive. The text never leaves the user's machine — this is a local-compute exception, not a storage-policy exception, and plaintext storage/upload remains forbidden.
 - **Browser extension** requires explicit start in an editor for a new independent session; existing text does not prevent starting. Only subsequent mutations are captured. No initial text or length baseline is imported, so a session started in a non-empty editor must preserve unknown total document length rather than infer an empty starting document. Explicit resumption or linked continuation may attach to a non-empty editor on the same site origin; missing edits remain unknown and are never reconstructed. It never enrolls another field by heuristic matching. An additional editor may explicitly join the same active document session; this is a user choice, not an automatic inference. Reload, full-document navigation, stop, and finish retire capture authorization. Historical local drafts remain stopped. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths. Normal extension publication includes a text binding without an opt-out checkbox. If its scope is unavailable or computation fails, offer cancellation or an explicit editing-activity-only fallback. At sign time, the content script may transiently read selected text in the active field/editor, or all current content of that field/editor when no in-field selection is available, solely to compute the content-blind binding commitment; only the binding object may cross to the service worker/upload. It must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
 - **`/write` first-party page** starts from an empty textarea and clears/discards the visible canvas independently of the persisted content-blind session record. At sign time, if binding is enabled, it binds selected text in the writing canvas, or all current canvas content when nothing is selected.
 - **`packages/producer-core`** accepts only public mutation shapes and session metadata. It must not require plaintext, final text, inserted text, text hashes, or text replay to sign/verify a record.
@@ -469,7 +487,7 @@ Reasons:
 - Avoids premature object-storage split.
 - Neon gives managed Postgres while preserving a standard Postgres development/test surface.
 
-If event logs become too large later, raw events can move to object storage while Postgres remains the index.
+New records store immutable event chunks in PostgreSQL, with separate indexed upload cursors and summaries. Individual requests contain at most 4096 events; neither finalization nor paged reading assembles the complete log. Existing inline JSONB records remain readable through the compatibility API. Migration 005 installs this storage layout.
 
 ### 7.1 `records`
 
@@ -494,7 +512,9 @@ ingested_server_t        timestamptz not null
 parent_record_hash       text null references records(record_hash)
 
 attestations             jsonb not null default '[]'
-events                   jsonb not null
+events                   jsonb not null # legacy inline records; [] for chunked records
+event_storage            text not null # inline | chunks
+observation_summary      jsonb null # bounded finalized observation summary
 
 created_at               timestamptz not null default now()
 ```
@@ -622,9 +642,32 @@ Do not implement this unless explicitly approved later.
 
 ## 10. Backend API
 
+### 10.0 Resumable publication and paged reads
+
+All current producers publish through `POST /api/record-uploads`, supplying a
+persisted private UUID upload id, frozen manifest and optional observation binding.
+The returned cursor identifies the committed event prefix. Batches of at most
+4096 events append through `POST /api/record-uploads/:id/chunks`; identical retries
+are idempotent and conflicting overlap is rejected. `POST .../:id/finalize`
+checks the full sealed prefix and publishes atomically. No incomplete record is
+public. The creating transaction records the canonical chunk owner; a duplicate
+upload cannot replace its events. Delay histograms for exact percentile calculation
+are private temporary state and are retired after finalization.
+
+`GET /api/records/:id/summary` returns bounded metadata/statistics and endpoint
+times. `GET /api/records/:id/events?offset=N&limit=L` returns at most 4096 events
+with prefix chain boundaries. Readers stream verification with bounded memory;
+unverified summaries cannot enable document-binding checks. Large records expose
+a bounded activity overview only after full local verification. Storage chunking
+does not alter record identity or split one writing session into public segments.
+
+See [the API protocol](../apps/ingest-api/README.md) and
+[long-session invariants](long-session-architecture.md).
+
 ### 10.1 `POST /api/records`
 
-Used by producers.
+Bounded compatibility endpoint for legacy producers, with a 10 MB default body
+limit. Current producers use resumable publication instead.
 
 Input:
 
@@ -636,7 +679,7 @@ Input:
 }
 ```
 
-A producer binds `(observed_session_id, token)` only for a session with at least one commitment whose checkpoints the server has not rejected; before upload it flushes a final checkpoint over that session's uncommitted tail (and one more if capture is still active and events arrive while it is in flight). Extension 0.3.0 freezes and persists its signed record before this network flush; Emacs and `/write` retain their existing finalization ordering. A session with no commitment, or one pinned `diverged`, is uploaded as `{ "state": "unobserved" }` so signing still succeeds; the producer tells the writer when that happens because of divergence.
+A producer binds `(observed_session_id, token)` only for a session with at least one commitment whose checkpoints the server has not rejected; before upload it flushes a final checkpoint over that session's uncommitted tail (and one more if capture is still active and events arrive while it is in flight). All producers freeze and persist the signed record before this network flush. Upload retries retain the frozen events, finish time, binding and record hash. A session with no commitment, or one pinned `diverged`, is uploaded as `{ "state": "unobserved" }` so signing still succeeds; the producer tells the writer when that happens because of divergence.
 
 Backend behavior:
 
@@ -665,6 +708,10 @@ Output:
 ```
 
 ### 10.2 `GET /api/records/:short_signature_or_hash`
+
+Returns inline legacy records and chunked records of at most 512 events. Larger
+chunked records return `409 chunked_record_requires_pagination`; clients use the
+summary and event-page endpoints above.
 
 Used by the Vite React record app.
 
@@ -829,7 +876,7 @@ Build/deploy note:
 
 ### 13.1 Browser extension UI
 
-Primary normal-user author UX. The explicit-start requirements below supersede the previous passive/capture-all design. Extension 0.2.0 introduced explicit activation; deployed 0.2.1 adds durable drafts/links and explicit resumption. Candidate 0.3.0 adds the panel and signed-finish changes below. Versions before 0.2.0 use the superseded passive-capture behavior.
+Primary normal-user author UX. The explicit-start requirements below supersede the previous passive/capture-all design. Extension 0.2.0 introduced explicit activation; the last recorded deployment, 0.2.1, added durable drafts/links and explicit resumption. Current source 0.3.3 includes the panel and signed-finish changes below; deployment must be verified separately. Versions before 0.2.0 use the superseded passive-capture behavior.
 
 Surfaces:
 
@@ -853,7 +900,7 @@ Behavior:
 6. Backend returns short URL.
 7. Extension presents a persistent saved-record result and copies the URL only when the user chooses Copy link. Claim copied only after clipboard success, and retain a visible usable URL if copying fails.
 8. Local log is cleared shortly after successful upload.
-9. Continuations must respect explicit activation and truthfully identify their coverage, linking to the uploaded record through `parent_record`; signed sessions stay frozen with their links. Edits missed while capture was stopped must not later appear covered. A failed upload can be retried with the same signed record. Same-document session sharing across deliberately activated tabs remains supported. (`/write` retains its existing behavior: its canvas keeps the text on screen, so it reopens the same session and re-signs the whole process.)
+9. Continuations must respect explicit activation and truthfully identify their coverage, linking to the uploaded record through `parent_record`; signed sessions stay frozen with their links. Edits missed while capture was stopped must not later appear covered. A failed upload can be retried with the same signed record. Same-document session sharing across deliberately activated tabs remains supported. `/write` keeps the canvas text but starts a linked segment containing only further mutations. Emacs also starts a linked segment after publication.
 
 Extension local retention and resumption:
 
@@ -861,9 +908,9 @@ Extension local retention and resumption:
 - Startup/registration/hourly cleanup removes redundant uploaded event logs and checkpoint credentials after the grace period while preserving the saved link.
 - Reload and navigation detach capture. Select an unfinished draft, focus its field and choose **Resume in chosen field**; the field may contain existing text. Resumption is explicit and restricted to the same site origin, without guessing document identity.
 - Resume preserves session identity, event history, checkpoint credentials and original clock. The next real edit includes the intervening pause. If prior edits may have been missed, its position is unknown (`pos: null`), so the viewer does not invent a continuous document-length curve. Reattachment adds no event.
-- Candidate 0.3.0 opts into `signedFinishTime`; active 0.2 drafts finish as 0.3 without changing event/checkpoint prefixes. Elapsed finish includes a pause followed only by publication. Old 0.1 drafts retain last-edit timing and failed legacy uploads retain their frozen version/hash. After resumption, a text check remains unavailable until another real edit; publication of editing activity alone is allowed.
+- The extension and `/write` opt into `signedFinishTime`; active 0.2 drafts finish as 0.3 without changing event/checkpoint prefixes. Elapsed finish includes a pause followed only by publication. Old 0.1 drafts retain last-edit timing and failed legacy uploads retain their frozen version/hash. After resumption, a text check remains unavailable until another real edit; publication of editing activity alone is allowed.
 - Published records cannot be resumed or mutated in place. **Continue in chosen field** explicitly starts a new session with a sealed parent hash and only new mutations. Its clock begins at the prior signed finish; legacy saved anchors use their retained local upload time as an approximate boundary. Saved links remain. Reattachment never infers document identity or claims missed edits were captured.
-- Shared producer-core default TTL and `/write` reload behavior are unchanged; this indefinite-retention policy applies to the extension. `/write` and Emacs have not opted into format 0.3 signed finish.
+- Producer-core retains its configurable default TTL. The extension and `/write` disable automatic draft/link expiry. `/write` recovers logs and frozen uploads on reload without restoring writing, and serializes local storage ownership across tabs. Emacs uses durable private recovery files. All three producers now create format 0.3 signed finishes.
 
 ### 13.2 Emacs UI
 
@@ -874,6 +921,7 @@ pmbah-mode
 pmbah-sign-buffer
 pmbah-show-session-status
 pmbah-discard-session
+pmbah-recover-session
 ```
 
 UX:
@@ -881,7 +929,7 @@ UX:
 - mode-line capture indicator: `PMBAH:N` plus `✓` (server has stamped every event), `·` (some events not yet stamped), or `✗` (diverged) when observation is on
 - session status reports event count, duration, observation state with the last checkpoint failure, and API URL
 - several buffers record at once, each in its own session; a file buffer resumes its saved session when the mode is re-enabled, and a message explains when saved state is set aside as `.stale`
-- sign-buffer command, flushing the final checkpoint first
+- sign-buffer command, freezing and saving the record before flushing the final checkpoint and uploading
 - capture-context review/redaction before upload
 - upload returns and copies short URL
 

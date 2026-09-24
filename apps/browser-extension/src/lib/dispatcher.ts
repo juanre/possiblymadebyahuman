@@ -146,7 +146,7 @@ export class BackgroundDispatcher {
     const resumable = message.activation_id || message.field_is_empty ? null : findResumableSession(origin, message.descriptor, this.registry.list());
     const session = resumable?.state === "uploaded"
       ? this.registry.continueFrom(resumable.session_id, { origin, descriptor: message.descriptor })
-      : this.registry.findOrCreate(origin, message.descriptor, capture, { fresh: !!message.activation_id, initial_content_unknown: !!message.activation_id && !message.field_is_empty });
+      : this.registry.findOrCreate(origin, message.descriptor, capture, { fresh: !!message.activation_id, initial_content_unknown: !!message.activation_id && !message.field_is_empty, started_at_wall_ms: message.started_at_wall_ms });
     await this.registry.persist();
     return {
       kind: "register_field_result",
@@ -160,13 +160,13 @@ export class BackgroundDispatcher {
     // record would leak `observation.last_observed_token` (the bearer token)
     // into the page's content-script context, where it has no business being.
     try {
-      this.registry.appendMutation(message.session_id, message.mutation);
+      this.registry.appendMutation(message.session_id, message.mutation, { captured_at_wall_ms: message.captured_at_wall_ms, snapshot: false });
     } catch (error) {
       // Editing a field after its session was signed and uploaded starts a
       // continuation session that names the uploaded record as its parent.
       if (!(error instanceof SessionFrozenError) || error.state !== "uploaded") throw error;
       const continuation = this.registry.continueFrom(message.session_id);
-      this.registry.appendMutation(continuation.session_id, message.mutation);
+      this.registry.appendMutation(continuation.session_id, message.mutation, { captured_at_wall_ms: message.captured_at_wall_ms, snapshot: false });
       await this.registry.persist();
       return { kind: "append_mutation_result", session_id: continuation.session_id };
     }
@@ -187,6 +187,9 @@ export class BackgroundDispatcher {
 
   async #handleRetry(message: Extract<ContentToBackground, { kind: "retry_failed_upload" }>): Promise<BackgroundResponse> {
     const existing = this.registry.get(message.session_id);
+    if (existing?.state === "uploaded" && existing.uploaded_response) {
+      return { kind: "retry_result", result: await this.#persistUploadedResult(message.session_id) };
+    }
     if (!existing || existing.state !== "failed_upload") {
       return { kind: "retry_result", result: { kind: "failed", reason: "no_failed_upload_in_session" } };
     }
@@ -206,27 +209,22 @@ export class BackgroundDispatcher {
       await this.registry.persist();
       await this.registry.flushObservation(session_id);
       const observation = this.registry.getObservationEnvelope(session_id);
-      const diverged = this.registry.getObservationState(session_id) === "diverged";
       this.registry.markUploading(session_id);
       // Save the frozen events and binding before a request can reach the
       // server. A terminated worker must retry this exact record, never offer
       // its already-submitted session for further editing.
       await this.registry.persist();
-      const response = await this.#upload.postRecord({
-        manifest: draft.manifest,
-        events: draft.events,
-        ...(observation ? { observation } : {}),
-      });
+      const response = draft.upload_id
+        ? await (() => {
+          if (!this.#upload.postJournalRecord) throw new Error("Journal publication adapter is unavailable");
+          return this.#upload.postJournalRecord({ upload_id: draft.upload_id!, manifest: draft.manifest, ...(observation ? { observation } : {}) },
+            (start, count) => this.registry.readEvents(session_id, start, count));
+        })()
+        : await this.#upload.postRecord({ manifest: draft.manifest, events: draft.events, ...(observation ? { observation } : {}) });
       this.registry.markUploaded(session_id, response);
-      await this.registry.persist();
-      return {
-        kind: "uploaded",
-        response,
-        ...(draft.manifest.text_binding ? { text_binding: draft.manifest.text_binding } : {}),
-        ...(diverged ? { observation_note: DIVERGED_OBSERVATION_NOTE } : {}),
-      };
+      return await this.#persistUploadedResult(session_id);
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      let reason = error instanceof Error ? error.message : String(error);
       const live = this.registry.get(session_id);
       if (live && (live.state === "uploading" || live.state === "signing")) {
         this.registry.markFailedUpload(session_id, reason);
@@ -234,9 +232,27 @@ export class BackgroundDispatcher {
           this.registry.markObservationRejected(session_id, error.code);
         }
       }
-      await this.registry.persist();
+      try { await this.registry.persist(); }
+      catch { reason += " Local saving also failed. Keep this browser open and retry when local storage is available."; }
       return { kind: "failed", reason };
     }
+  }
+
+  async #persistUploadedResult(session_id: SessionRecord["session_id"]): Promise<SignSessionResult> {
+    const record = this.registry.get(session_id);
+    if (!record?.uploaded_response) throw new Error("uploaded response is unavailable");
+    let persistence_note: string | undefined;
+    try { await this.registry.persist(); }
+    catch {
+      persistence_note = "The public record was saved, but its link could not be saved in this browser. Copy the displayed link now; the frozen upload can be recovered after restarting.";
+    }
+    return {
+      kind: "uploaded",
+      response: record.uploaded_response,
+      ...(record.signed_text_binding ? { text_binding: record.signed_text_binding } : {}),
+      ...(record.observation.state === "diverged" ? { observation_note: DIVERGED_OBSERVATION_NOTE } : {}),
+      ...(persistence_note ? { persistence_note } : {}),
+    };
   }
 
 }

@@ -1,17 +1,7 @@
-import { measureRichText, richMutation, type RichChange } from "../lib/richtext.ts";
-import {
-  buildTextFieldMutation,
-  codepointCount,
-  codepointOffsetOf,
-  collapsedDeletionMutation,
-  compositionMutation,
-  insertedCodepointsForInput,
-  isDeletionInputType,
-  isNetChangeInputType,
-  measuredReplacementMutation,
-  netLengthChangeMutation,
-  sourceFromInputType,
-} from "../lib/codepoint.ts";
+import { NumericTextIndex, applyNumericTextInput, type NumericTextIntent } from "../../../../packages/browser-capture/src/numeric-text-index.ts";
+import { measureRichText, richTextIndex, releaseRichTextIndex, richMutation, type RichChange } from "../lib/richtext.ts";
+import { codepointCount, codepointOffsetOf, isDeletionInputType, sourceFromInputType } from "../lib/codepoint.ts";
+import { deriveMutationFromMeasuredInput, unknownMutation, type MeasuredInputIntent } from "../../../../packages/producer-core/src/measured-input.ts";
 import { extractDescriptor, isEligibleTag } from "../lib/descriptor.ts";
 import {
   type BackgroundResponse,
@@ -20,7 +10,7 @@ import {
   type ContentToBackground,
 } from "../lib/messages.ts";
 import type { PendingMutation } from "../../../../packages/producer-core/src/index.ts";
-import { canonicalizeTextForBinding, createTextBinding, type Source } from "../../../../packages/format/src/index.ts";
+import { canonicalizeTextForBinding, createTextBinding } from "../../../../packages/format/src/index.ts";
 
 declare const chrome: {
   runtime: {
@@ -43,6 +33,7 @@ type FieldEntry = {
   session_id: string | null;
   state: "pending" | "recording" | "ineligible" | "signed" | "error";
   sending: Promise<void>;
+  queued_count?: number;
   finish_binding?: ComputeBindingResponse;
 };
 
@@ -63,17 +54,21 @@ let focusedTarget: WeakRef<HTMLElement> | null = null;
 // the browser applies it, the span an IME composition started over, and
 // mutations captured while the field's registration round-trip is pending.
 // Holding numbers across events is content-blind; holding text is not.
-type MeasuredChangeKind = "deletion" | "net_change" | "replacement";
+type CapturedMutation = { mutation: PendingMutation; captured_at_wall_ms: number };
 
 type FieldTransient = {
-  pending: PendingMutation | null;
-  measuring: { length_before: number; ins_len: number | null; kind: MeasuredChangeKind; source: Source } | null;
-  composition: { pos: number | null; del_len: number | null; rich?: RichChange } | null;
+  pending: MeasuredInputIntent | null;
+  composition: { text?: Omit<MeasuredInputIntent, "inputType" | "dataCodepoints">; rich?: RichChange } | null;
+  composition_commit: { length: number | null; caret: number | null } | null;
+  text_length: number | null;
+  text_index: NumericTextIndex | null;
+  text_intent: NumericTextIntent | null;
+  text_gap: boolean;
   rich_before: RichChange | null;
   rich_length: number | null;
   rich_gap: boolean;
   cycle: number;
-  queue: PendingMutation[];
+  queue: CapturedMutation[];
 };
 
 const transients = new WeakMap<HTMLElement, FieldTransient>();
@@ -82,7 +77,7 @@ const listening = new WeakSet<HTMLElement>();
 function transientFor(element: HTMLElement): FieldTransient {
   let transient = transients.get(element);
   if (!transient) {
-    transient = { pending: null, measuring: null, composition: null, rich_before: null, rich_length: null, rich_gap: false, cycle: 0, queue: [] };
+    transient = { pending: null, composition: null, composition_commit: null, text_length: null, text_index: null, text_intent: null, text_gap: false, rich_before: null, rich_length: null, rich_gap: false, cycle: 0, queue: [] };
     transients.set(element, transient);
   }
   return transient;
@@ -91,14 +86,32 @@ function transientFor(element: HTMLElement): FieldTransient {
 // beforeinput may be canceled, or a no-op delete may never produce input.
 // Expire only numeric metadata after that browser task, so finish does not
 // mistake an abandoned cycle for an edit in progress. New cycles supersede it.
-function expireCaptureCycle(transient: FieldTransient): void {
+function expireCaptureCycle(transient: FieldTransient, element: HTMLElement): void {
   const cycle = ++transient.cycle;
   setTimeout(() => {
     if (transient.cycle !== cycle) return;
     transient.pending = null;
-    transient.measuring = null;
+    if (!transient.composition) { transient.text_intent = null; if (isContentEditable(element)) richTextIndex(element).clearPending(); }
     transient.rich_before = null;
   }, 0);
+}
+
+function releaseCaptureIndex(entry: FieldEntry): void {
+  releaseRichTextIndex(entry.element);
+  const transient = transients.get(entry.element);
+  if (transient) {
+    ++transient.cycle; // Cancel cleanup timers without recreating an observer.
+    transient.text_index = null;
+    transient.text_intent = null;
+    transient.pending = null;
+    transient.rich_before = null;
+    transient.composition = null;
+    transient.composition_commit = null;
+  }
+}
+function captureError(entry: FieldEntry): void {
+  entry.state = "error";
+  releaseCaptureIndex(entry);
 }
 
 function isTextField(element: Element): element is HTMLTextAreaElement | HTMLInputElement {
@@ -168,183 +181,185 @@ async function registerField(element: HTMLElement, activation_id: string, share_
   transients.delete(element);
   const transient = transientFor(element);
   transient.rich_length = isContentEditable(element) ? measureRichText(element).length : null;
+  transient.text_index = isTextField(element) ? new NumericTextIndex(element.value) : null;
+  transient.text_length = transient.text_index?.length ?? null;
+  const started_at_wall_ms = Date.now();
   attachListeners(element);
   const response = await chrome.runtime.sendMessage({
     kind: "register_field", tab_id: -1, frame_id: -1,
     origin_url: window.location.origin, page_path: window.location.pathname,
     page_title: document.title, descriptor, field_is_empty: isFieldEmpty(element),
+    started_at_wall_ms,
     activation_id, ...(share_session_id ? { share_session_id } : {}), ...(resume_session_id ? { resume_session_id } : {}), ...(continue_session_id ? { continue_session_id } : {}),
   }).catch((error): BackgroundResponse => ({ kind: "error", reason: `The editor could not be started. ${String(error)}` }));
   if (response.kind !== "register_field_result" || response.result.kind !== "registered") {
-    entry.state = "error";
+    captureError(entry);
     transient.queue.length = 0;
     activeEntries.delete(entryRef);
     return { kind: "start_editor_result", reason: response.kind === "error" ? response.reason : "The writing record could not be started. Try again." };
   }
   entry.session_id = response.result.session_id;
+  if ((entry.state as string) === "error") {
+    transient.queue.length = 0;
+    return { kind: "start_editor_result", reason: "Capture stopped because local saving could not keep up. Start a new recording for future edits." };
+  }
   for (const mutation of transient.queue.splice(0)) void sendMutation(entry, mutation);
   entry.state = "recording";
   return { kind: "start_editor_result", session_id: entry.session_id };
 }
 
-/**
- * beforeinput is the canonical content-blind capture point: it fires BEFORE
- * the browser applies the change, so `target.value`, `target.selectionStart`,
- * and `target.selectionEnd` reflect the pre-change state. We read those three
- * values inline, compute codepoint-anchored numeric metadata via
- * `buildTextFieldMutation`, and the string references die when this handler
- * returns. No text crosses event boundaries.
- *
- * If the selection is empty AND there is no inserted text AND no inputType is
- * provided, the cycle is ambiguous (e.g. a programmatic format change) and we
- * emit nulls rather than retain text to disambiguate.
- */
+// Text is inspected only within this call; only numeric facts survive.
+function measureTextField(target: HTMLInputElement | HTMLTextAreaElement): Omit<MeasuredInputIntent, "inputType" | "dataCodepoints"> {
+  const transient = transientFor(target);
+  const index = transient.text_index ??= new NumericTextIndex(target.value);
+  if (index.utf16Length !== target.value.length) index.reset(target.value);
+  const start = target.selectionStart, end = target.selectionEnd;
+  return { lengthBefore: index.length, selectionStartCodepoints: start === null ? null : index.offset(start),
+    selectedCodepoints: start === null || end === null ? null : index.offset(Math.max(start, end)) - index.offset(Math.min(start, end)) };
+}
+function beginTextIndex(target: HTMLInputElement | HTMLTextAreaElement, transient: FieldTransient, inputType: string, dataLength: number | null): void {
+  transient.text_intent = { length: target.value.length, start: target.selectionStart, end: target.selectionEnd, inputType, dataLength };
+}
+function applyTextIndex(target: HTMLInputElement | HTMLTextAreaElement, transient: FieldTransient): void {
+  const index = transient.text_index ??= new NumericTextIndex(target.value);
+  applyNumericTextInput(index, target.value, target.selectionStart, transient.text_intent);
+  transient.text_intent = null;
+}
+
 function handleBeforeInput(event: InputEvent): void {
-  const target = event.target as Element | null;
-  if (!target || !(target instanceof HTMLElement)) return;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
   const entry = fields.get(target);
   if (!entry || (entry.state !== "recording" && entry.state !== "pending")) return;
   const transient = transientFor(target);
-  // A new beforeinput means the previous measured change never produced an
-  // input event (a Backspace with nothing to delete, or the page cancelled it);
-  // its stale measurement must not be applied to this change.
-  transient.measuring = null;
   transient.pending = null;
   transient.rich_before = null;
-  expireCaptureCycle(transient);
-  // Composition keystrokes are recorded once, at compositionend.
+  expireCaptureCycle(transient, target);
   if (transient.composition) return;
-  const inputType = event.inputType ?? null;
-  const insertedText = event.data ?? "";
-  const insertedCodepoints = insertedCodepointsForInput(inputType, insertedText);
-
+  if (transient.composition_commit && event.inputType?.includes("Composition")) return;
+  transient.composition_commit = null;
+  const inputType = event.inputType ?? "";
   if (isTextField(target)) {
-    const start = target.selectionStart ?? 0;
-    const end = target.selectionEnd ?? 0;
-    const collapsed = start === end;
-    // Collapsed deletes, undo/redo, formatting and spellcheck replacements are
-    // sized by comparing the field length before and after the browser
-    // applies them; only the numeric length crosses to the input handler.
-    if (isNetChangeInputType(inputType) || (collapsed && isDeletionInputType(inputType)) || inputType === "insertReplacementText") {
-      transient.measuring = {
-        length_before: codepointCount(target.value),
-        ins_len: inputType === "insertReplacementText" ? insertedCodepoints : null,
-        kind: inputType === "insertReplacementText" ? "replacement" : isDeletionInputType(inputType) ? "deletion" : "net_change",
-        source: sourceFromInputType(inputType),
-      };
-      return;
-    }
-    if (insertedCodepoints === 0 && collapsed && !inputType) {
-      transient.pending = ambiguousMutation(insertedText, inputType);
-      return;
-    }
-    transient.pending = buildTextFieldMutation({
-      text: target.value,
-      selectionStartUtf16: start,
-      selectionEndUtf16: end,
-      insertedText,
-      inputType,
-    });
+    const measured = measureTextField(target);
+    if (transient.text_length !== null && measured.lengthBefore !== transient.text_length) transient.text_gap = true;
+    beginTextIndex(target, transient, inputType, typeof event.data === "string" ? event.data.length : null);
+    transient.pending = { ...measured, inputType,
+      dataCodepoints: typeof event.data === "string" ? codepointCount(event.data) : null };
     return;
   }
-
   const ranges = event.getTargetRanges?.() ?? [];
-  const before = measureRichText(target, ranges.length === 1 ? ranges[0] : undefined);
-  transient.rich_gap = transient.rich_length !== null && before.length !== transient.rich_length;
+  const range = ranges.length === 1 ? ranges[0] : undefined;
+  const before = measureRichText(target, range);
+  const selection = target.ownerDocument.getSelection();
+  richTextIndex(target).prepare(range ?? (selection?.rangeCount === 1 ? selection.getRangeAt(0) : null), inputType, typeof event.data === "string" ? event.data.length : null);
+  transient.rich_gap ||= transient.rich_length !== null && before.length !== transient.rich_length;
   transient.rich_before = {
     ...before,
     source: sourceFromInputType(inputType),
-    kind: inputType?.startsWith("format") ? "format" : inputType?.startsWith("history") ? "history"
-      : isDeletionInputType(inputType) ? "delete" : inputType?.startsWith("insert") ? "insert" : "unknown",
+    kind: inputType.startsWith("format") ? "format" : inputType.startsWith("history") ? "history"
+      : isDeletionInputType(inputType) ? "delete" : inputType.startsWith("insert") ? "insert" : "unknown",
   };
 }
 
-// Completes a mutation whose size was only measurable after the browser applied
-// it. Reads the field length and caret once, numerically, and discards the
-// reference when the handler returns.
 function handleInput(event: Event): void {
-  const target = event.target as Element | null;
-  if (!target || !(target instanceof HTMLElement)) return;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
   const entry = fields.get(target);
   const transient = transients.get(target);
   if (!entry || !transient || transient.composition || (entry.state !== "recording" && entry.state !== "pending")) return;
+  const inputEvent = event as InputEvent;
+  if (transient.composition_commit && (inputEvent.inputType?.includes("Composition") || inputEvent.isComposing)) {
+    const after = isTextField(target) ? measureTextField(target) : null;
+    const rich = after ? null : measureRichText(target);
+    const matches = transient.composition_commit.length === (after?.lengthBefore ?? rich?.length) &&
+      transient.composition_commit.caret === (after ? after.selectionStartCodepoints : rich?.start);
+    transient.composition_commit = null;
+    transient.pending = null;
+    if (matches) return;
+  } else transient.composition_commit = null;
   if (!isTextField(target)) {
     const after = measureRichText(target);
-    if (transient.rich_gap) queueOrSend(entry, { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
-    const mutation = transient.rich_before ? richMutation(transient.rich_before, after)
-      : { op: "replace" as const, pos: null, del_len: null, ins_len: null, source: "unknown" as const };
+    richTextIndex(target).clearPending();
+    const mutation = transient.rich_before ? richMutation(transient.rich_before, after) : unknownMutation();
     transient.rich_before = null;
-    transient.rich_gap = false;
     transient.rich_length = after.length;
-    if (mutation) queueOrSend(entry, mutation);
+    if (mutation) {
+      queueOrSend(entry, transient.rich_gap ? { ...mutation, pos: null } : mutation);
+      transient.rich_gap = false;
+    }
     return;
   }
-  if (transient.pending) {
-    const mutation = transient.pending;
-    transient.pending = null;
-    queueOrSend(entry, mutation);
-    return;
-  }
-  if (!transient.measuring) return;
-  const { length_before, ins_len, kind, source } = transient.measuring;
-  transient.measuring = null;
+  const intent = transient.pending;
+  transient.pending = null;
+  applyTextIndex(target, transient);
+  const after = measureTextField(target);
+  const mutation = intent ? deriveMutationFromMeasuredInput(intent, after.lengthBefore, after.selectionStartCodepoints) : unknownMutation();
+  emitTextMutation(entry, transient, mutation, after.lengthBefore);
+}
 
-  if (isTextField(target)) {
-    const lengthAfter = codepointCount(target.value);
-    const caretAfter = codepointOffsetOf(target.value, target.selectionStart ?? lengthAfter);
-    const mutation = kind === "replacement" && ins_len !== null
-      ? measuredReplacementMutation({ lengthBefore: length_before, lengthAfter, insLen: ins_len, caretAfterCodepoints: caretAfter, source })
-      : kind === "deletion"
-        ? collapsedDeletionMutation({ lengthBefore: length_before, lengthAfter, caretAfterCodepoints: caretAfter, source })
-        : netLengthChangeMutation({ lengthBefore: length_before, lengthAfter });
-    if (mutation) queueOrSend(entry, mutation);
-    return;
+function emitTextMutation(entry: FieldEntry, transient: FieldTransient, mutation: PendingMutation | null, lengthAfter: number): void {
+  if (mutation) {
+    queueOrSend(entry, transient.text_gap ? { ...mutation, pos: null } : mutation);
+    transient.text_gap = false;
   }
-
+  transient.text_length = lengthAfter;
 }
 
 function handleCompositionStart(event: CompositionEvent): void {
-  const target = event.target as Element | null;
-  if (!target || !(target instanceof HTMLElement)) return;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
   const entry = fields.get(target);
   if (!entry || (entry.state !== "recording" && entry.state !== "pending")) return;
   const transient = transientFor(target);
+  transient.pending = null;
+  transient.composition_commit = null;
   if (isTextField(target)) {
-    const start = target.selectionStart ?? 0;
-    const end = target.selectionEnd ?? 0;
-    transient.composition = {
-      pos: codepointOffsetOf(target.value, Math.min(start, end)),
-      del_len: codepointCount(target.value.slice(Math.min(start, end), Math.max(start, end))),
-    };
+    const measured = measureTextField(target);
+    if (transient.text_length !== null && measured.lengthBefore !== transient.text_length) transient.text_gap = true;
+    beginTextIndex(target, transient, "insertFromComposition", null);
+    transient.composition = { text: measured };
     return;
   }
   const before = measureRichText(target);
-  transient.rich_gap = transient.rich_length !== null && before.length !== transient.rich_length;
+  transient.rich_gap ||= transient.rich_length !== null && before.length !== transient.rich_length;
   transient.rich_before = null;
-  transient.composition = {
-    pos: before.start,
-    del_len: before.start !== null && before.end !== null ? before.end - before.start : null,
-    rich: { ...before, source: "ime", kind: "insert" },
-  };
+  const selection = target.ownerDocument.getSelection();
+  richTextIndex(target).prepare(selection?.rangeCount === 1 ? selection.getRangeAt(0) : null, "insertFromComposition", null, true);
+  transient.composition = { rich: { ...before, source: "ime", kind: "insert" } };
 }
 
 function handleCompositionEnd(event: CompositionEvent): void {
-  const target = event.target as Element | null;
-  if (!target || !(target instanceof HTMLElement)) return;
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) return;
   const entry = fields.get(target);
   const transient = transients.get(target);
   if (!entry || !transient?.composition || (entry.state !== "recording" && entry.state !== "pending")) return;
   const composition = transient.composition;
   transient.composition = null;
-  let mutation: PendingMutation | null;
+  transient.pending = null;
+  let mutation: PendingMutation | null = null;
   if (composition.rich) {
     const after = measureRichText(target);
-    if (transient.rich_gap) queueOrSend(entry, { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
-    mutation = richMutation(composition.rich, after);
+    richTextIndex(target).clearPending();
+    transient.composition_commit = { length: after.length, caret: after.start };
+    mutation = event.data === "" && after.length === composition.rich.length ? null : richMutation(composition.rich, after);
     transient.rich_length = after.length;
+  } else if (composition.text && isTextField(target)) {
+    applyTextIndex(target, transient);
+    const after = measureTextField(target);
+    transient.composition_commit = { length: after.lengthBefore, caret: after.selectionStartCodepoints };
+    const inserted = codepointCount(event.data ?? "");
+    if (inserted !== 0 || after.lengthBefore !== composition.text.lengthBefore) {
+      mutation = deriveMutationFromMeasuredInput({ ...composition.text, inputType: "insertFromComposition", dataCodepoints: inserted },
+        after.lengthBefore, after.selectionStartCodepoints);
+    }
+    emitTextMutation(entry, transient, mutation, after.lengthBefore);
+    return;
+  }
+  if (mutation) {
+    queueOrSend(entry, transient.rich_gap ? { ...mutation, pos: null } : mutation);
     transient.rich_gap = false;
-  } else mutation = compositionMutation({ ...composition, committedText: event.data ?? "" });
-  if (mutation) queueOrSend(entry, mutation);
+  }
 }
 
 // Mutations captured while the registration round-trip is still pending (the
@@ -352,33 +367,33 @@ function handleCompositionEnd(event: CompositionEvent): void {
 // once the session id arrives, so the first keystrokes are not lost.
 function queueOrSend(entry: FieldEntry, mutation: PendingMutation): void {
   if (entry.state !== "recording" && entry.state !== "pending") return;
+  const captured = { mutation, captured_at_wall_ms: Date.now() };
   if (entry.state === "pending") {
-    transientFor(entry.element).queue.push(mutation);
+    if (transientFor(entry.element).queue.length >= 4096) { captureError(entry); return; }
+    transientFor(entry.element).queue.push(captured);
     return;
   }
-  void sendMutation(entry, mutation);
+  void sendMutation(entry, captured);
 }
 
-function ambiguousMutation(insertedText: string, inputType: string | null): PendingMutation {
-  const insertedCodepoints = insertedCodepointsForInput(inputType, insertedText);
-  return {
-    op: insertedCodepoints > 0 ? "insert" : "delete",
-    pos: null,
-    del_len: null,
-    ins_len: insertedCodepoints,
-    source: sourceFromInputType(inputType),
-  };
-}
-
-function sendMutation(entry: FieldEntry, mutation: PendingMutation): Promise<void> {
+function sendMutation(entry: FieldEntry, captured: CapturedMutation): Promise<void> {
+  if ((entry.queued_count ?? 0) >= 4096) {
+    captureError(entry);
+    const failed = Promise.reject(new Error("Capture stopped because local saving cannot keep up. Finish is disabled; restart capture to record future edits."));
+    void failed.catch(() => undefined);
+    entry.sending = failed;
+    return failed;
+  }
+  entry.queued_count = (entry.queued_count ?? 0) + 1;
   entry.sending = entry.sending.then(async () => {
     if (!entry.session_id) return;
-    const response = await chrome.runtime.sendMessage({ kind: "append_mutation", session_id: entry.session_id, mutation });
-    if (response.kind === "error") { entry.state = "error"; throw new Error(response.reason); }
+    const response = await chrome.runtime.sendMessage({ kind: "append_mutation", session_id: entry.session_id, ...captured });
+    if (response.kind === "error") { captureError(entry); throw new Error(response.reason); }
   });
+  entry.sending = entry.sending.finally(() => { entry.queued_count = Math.max(0, (entry.queued_count ?? 1) - 1); });
   // Retain the rejection for finish/flush, while handling it here to avoid an
   // unhandled rejection when capture is sending without an open panel.
-  void entry.sending.catch(() => { entry.state = "error"; });
+  void entry.sending.catch(() => { captureError(entry); });
   return entry.sending;
 }
 
@@ -427,7 +442,8 @@ async function freezeSession(session_id: string, bind = false, expected_scope_to
     try { result = computeBindingForSession(session_id); }
     catch (error) { result = { kind: "binding_error", reason: String(error) }; }
   }
-  if (transient) { transient.pending = null; transient.measuring = null; transient.composition = null; transient.rich_before = null; transient.rich_gap = false; }
+  releaseCaptureIndex(entry);
+  if (transient) transient.rich_gap = false;
   try { await entry.sending; }
   catch { result = { kind: "binding_error", reason: "An edit could not be saved. Text binding is unavailable." }; }
   entry.finish_binding = result;
@@ -442,6 +458,14 @@ async function freezeSession(session_id: string, bind = false, expected_scope_to
 function computeBindingForSession(session_id: string): ComputeBindingResponse {
   const element = entries().find((entry) => entry.session_id === session_id)?.element;
   if (!(element instanceof HTMLElement)) return { kind: "binding_result", text_binding: null };
+  const transient = transients.get(element);
+  if (transient) {
+    if (isTextField(element)) transient.text_gap ||= codepointCount(element.value) !== transient.text_length;
+    else transient.rich_gap ||= measureRichText(element).length !== transient.rich_length;
+    if (transient.text_gap || transient.rich_gap) {
+      return { kind: "binding_error", reason: "Capture has a gap. The record has stopped; a text binding is unavailable. You can publish its recorded editing activity without a text binding." };
+    }
+  }
   const text = bindingTextForElement(element);
   if (canonicalizeTextForBinding(text).length === 0) return { kind: "binding_result", text_binding: null };
   return { kind: "binding_result", text_binding: createTextBinding(text, session_id) };
@@ -552,7 +576,6 @@ start();
 
 export const __test = {
   isEligibleElement,
-  ambiguousMutation,
   bindingTextForElement,
 };
 

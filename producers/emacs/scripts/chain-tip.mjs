@@ -1,24 +1,21 @@
 #!/usr/bin/env node
 // Computes the public hash-chain tip of a session's event prefix for a
-// server-observed checkpoint. Input on stdin: {session_id, format_version,
-// events} for a full recompute, or additionally {previous_chain_tip,
-// previous_event_count} with only the events after that prefix to advance an
-// earlier tip. Output: {event_count, chain_tip}. Nothing else is accepted, so
-// no text can reach this helper, and nothing from the input is echoed back.
+// server-observed checkpoint. Normal input is a private journal descriptor with
+// a cached tip/count/byte cursor; only its new numeric suffix is read. Legacy
+// array input remains for older installations. Output contains only the public
+// tip/count and the new private cursor, never document text.
 import { stdin, stdout, stderr, exit } from "node:process";
+import { inspectJournal } from "./event-journal.mjs";
 
 import {
   FORMAT_VERSION,
   FORMAT_VERSIONS,
-  b3HashBytes,
-  b3HashToBytes,
-  canonicalizeEventBytes,
-  computeEventHashChain,
+  advanceEventHash,
   isB3Hash,
   validateEvent,
 } from "../../../packages/format/src/index.ts";
 
-const ACCEPTED_FIELDS = new Set(["session_id", "format_version", "events", "previous_chain_tip", "previous_event_count"]);
+const ACCEPTED_FIELDS = new Set(["session_id", "format_version", "events", "previous_chain_tip", "previous_event_count", "journal_path", "event_count", "end_byte", "previous_byte_offset", "previous_t"]);
 
 async function readStdin() {
   const chunks = [];
@@ -39,14 +36,16 @@ function parseInput(raw) {
   }
 }
 
-// Mirrors packages/producer-core advanceChain: each event's hash is the BLAKE3
-// of the previous tip's bytes followed by the event's canonical bytes.
-function advanceChain(previousTip, events, previousEventCount) {
+// Array input remains only for older producer installations using this helper.
+function advanceChain(previousTip, events, previousEventCount, sessionId, formatVersion) {
   let tip = previousTip;
+  let lastTime = null;
   events.forEach((event, index) => {
     const errors = validateEvent(event, previousEventCount + index);
     if (errors.length > 0) fail(`event ${previousEventCount + index} is invalid: ${errors.join("; ")}`);
-    tip = b3HashBytes(Buffer.concat([b3HashToBytes(tip), canonicalizeEventBytes(event)]));
+    if (lastTime !== null && event.t < lastTime) fail("event times must be nondecreasing");
+    tip = advanceEventHash(tip, event, sessionId, formatVersion);
+    lastTime = event.t;
   });
   return tip;
 }
@@ -56,6 +55,11 @@ try {
   if (typeof input !== "object" || input === null || Array.isArray(input)) fail("input must be an object");
   const unexpected = Object.keys(input).filter((key) => !ACCEPTED_FIELDS.has(key));
   if (unexpected.length > 0) fail(`unexpected field ${unexpected.join(", ")}`);
+  if (typeof input.journal_path === "string") {
+    const result = await inspectJournal(input);
+    stdout.write(JSON.stringify({ event_count: result.event_count, chain_tip: result.chain_tip, byte_length: result.byte_length, last_t: result.last_t }) + "\n");
+    exit(0);
+  }
   if (typeof input.session_id !== "string") fail("session_id must be a string");
   if (!Array.isArray(input.events) || input.events.length === 0) fail("events must be a non-empty array");
   const formatVersion = input.format_version ?? FORMAT_VERSION;
@@ -73,11 +77,11 @@ try {
     if (input.events[0].seq !== input.previous_event_count) {
       fail(`previous_event_count ${input.previous_event_count} does not match the first event seq ${input.events[0].seq}`);
     }
-    const chainTip = advanceChain(input.previous_chain_tip, input.events, input.previous_event_count);
+    const chainTip = advanceChain(input.previous_chain_tip, input.events, input.previous_event_count, input.session_id, formatVersion);
     stdout.write(JSON.stringify({ event_count: input.previous_event_count + input.events.length, chain_tip: chainTip }) + "\n");
   } else {
-    const chain = computeEventHashChain(input.events, input.session_id, formatVersion);
-    stdout.write(JSON.stringify({ event_count: input.events.length, chain_tip: chain.at(-1) }) + "\n");
+    const chainTip = advanceChain(null, input.events, 0, input.session_id, formatVersion);
+    stdout.write(JSON.stringify({ event_count: input.events.length, chain_tip: chainTip }) + "\n");
   }
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));

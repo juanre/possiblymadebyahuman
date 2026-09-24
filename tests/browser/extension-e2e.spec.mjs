@@ -16,6 +16,32 @@ const SKIP_REASON = "PMBAH_LOCAL_BASE_URL is not set. Start the local stack (mak
 // The list reporter shows skips without their reason, so say it once here.
 if (!localBaseUrl) console.warn(`Skipping extension e2e: ${SKIP_REASON}`);
 
+// Inspect both small routing metadata and the actual event journal for privacy.
+// This helper is deliberately restricted to small integration fixtures.
+async function durableExtensionState(panel) {
+  return panel.evaluate(async () => {
+    const local = await chrome.storage.local.get(null);
+    const database = await new Promise((resolve, reject) => {
+      const request = indexedDB.open("pmbah.extension.journal.v1");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      const transaction = database.transaction(["sessions", "events"], "readonly");
+      const read = request => new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const [sessions, events] = await Promise.all([
+        read(transaction.objectStore("sessions").getAll()),
+        read(transaction.objectStore("events").getAll()),
+      ]);
+      if (events.length > 10000) throw new Error("privacy fixture exceeded its small-record bound");
+      return { local, sessions, events };
+    } finally { database.close(); }
+  });
+}
+
 test.describe("browser extension against the local service", () => {
   test.skip(!localBaseUrl, SKIP_REASON);
   test.setTimeout(120_000);
@@ -174,7 +200,7 @@ test.describe("browser extension against the local service", () => {
       await page.keyboard.press("Backspace");
       await expect(field).toHaveJSProperty(fieldLabel === "plain field" ? "value" : "textContent", existingText + addedText.slice(0, -1));
       await expect(draft).toContainText(`${addedText.length + 1} editing events`);
-      const storedDrafts = JSON.stringify(await panel.evaluate(() => chrome.storage.local.get(null)));
+      const storedDrafts = JSON.stringify(await durableExtensionState(panel));
       for (const canary of [existingText, addedText, "Uncaptured juniper", "Saffro"]) {
         expect(storedDrafts, "extension storage must not contain editor plaintext").not.toContain(canary);
       }
@@ -198,7 +224,7 @@ test.describe("browser extension against the local service", () => {
       expect(record.stats.observed_final_length).toBeNull();
       expect(verifyRecord({ manifest: record.manifest, events: record.events }).valid).toBe(true);
       const serialized = JSON.stringify(record);
-      const storedAfterSave = JSON.stringify(await panel.evaluate(() => chrome.storage.local.get(null)));
+      const storedAfterSave = JSON.stringify(await durableExtensionState(panel));
       for (const canary of [existingText, addedText, "Uncaptured juniper", "Saffro"]) {
         expect(serialized, "public record must not contain editor plaintext").not.toContain(canary);
         expect(requests.join("\n"), "extension requests must not contain editor plaintext").not.toContain(canary);

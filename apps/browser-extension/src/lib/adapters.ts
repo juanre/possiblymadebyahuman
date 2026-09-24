@@ -1,4 +1,6 @@
-import { IngestUploadError } from "../../../../packages/producer-core/src/index.ts";
+import { IndexedDbSessionStorage } from "../../../../packages/browser-storage/src/index.ts";
+import { uploadJournal } from "../../../../packages/browser-storage/src/upload.ts";
+import { IngestUploadError, withUploadDeadline, validateUploadResponse } from "../../../../packages/producer-core/src/index.ts";
 import type {
   CheckpointAdapter,
   CheckpointRequest,
@@ -23,30 +25,16 @@ export interface ChromeStorageLocalSlice {
 }
 
 export function createChromeStorageAdapter(storage: ChromeStorageLocalSlice): StorageAdapter {
-  return {
-    async read(): Promise<SessionRecord[]> {
-      const result = await storage.get([SESSION_STORAGE_KEY]);
-      const raw = result[SESSION_STORAGE_KEY];
-      if (!Array.isArray(raw)) return [];
+  return new IndexedDbSessionStorage({
+    name: "pmbah.extension.journal.v1",
+    async legacyRead() {
+      const raw = (await storage.get([SESSION_STORAGE_KEY]))[SESSION_STORAGE_KEY];
+      if (raw === undefined) return [];
+      if (!Array.isArray(raw)) throw new Error("Legacy session storage is invalid; it has been preserved");
       return raw as SessionRecord[];
     },
-    async write(snapshot: SessionRecord[]): Promise<void> {
-      const safe = snapshot.map(scrubTransientFlagsForPersist);
-      await storage.set({ [SESSION_STORAGE_KEY]: safe });
-    },
-  };
-}
-
-function scrubTransientFlagsForPersist(record: SessionRecord): SessionRecord {
-  return {
-    ...record,
-    observation: {
-      ...record.observation,
-      in_flight: false,
-      queued: false,
-      next_backoff_ms: 0,
-    },
-  };
+    legacyRemove: () => storage.remove([SESSION_STORAGE_KEY]),
+  });
 }
 
 export function createDateClockAdapter(): ClockAdapter {
@@ -75,9 +63,13 @@ export function createNavigatorClipboardAdapter(clipboard: NavigatorClipboardSli
 
 export type FetchLike = (input: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; text: () => Promise<string>; json: () => Promise<unknown> }>;
 
-export function createFetchUploadAdapter(args: { records_endpoint: string; fetch: FetchLike }): UploadAdapter {
+export function createFetchUploadAdapter(args: { records_endpoint: string; fetch: FetchLike; timeout_ms?: number }): UploadAdapter {
   return {
+    postJournalRecord(payload, readEvents) {
+      return uploadJournal({ endpoint: args.records_endpoint.replace(/\/records$/, "/record-uploads"), fetch: args.fetch, payload, readEvents, timeout_ms: args.timeout_ms });
+    },
     async postRecord(payload: IngestRecordInput): Promise<IngestRecordResponse> {
+      return withUploadDeadline(async signal => {
       const body = JSON.stringify({
         manifest: payload.manifest,
         events: payload.events,
@@ -87,13 +79,14 @@ export function createFetchUploadAdapter(args: { records_endpoint: string; fetch
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
+        signal,
       });
       if (!response.ok) {
         const text = await response.text();
         throw new IngestUploadError(response.status, ingestErrorCode(text), `ingest_failed status=${response.status} reason=${text}`);
       }
-      const json = (await response.json()) as IngestRecordResponse;
-      return json;
+      return validateUploadResponse(await response.json(), payload.manifest.record_hash);
+      }, args.timeout_ms);
     },
   };
 }

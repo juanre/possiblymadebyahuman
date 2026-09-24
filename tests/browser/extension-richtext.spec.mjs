@@ -91,7 +91,31 @@ test("uncaptured programmatic edits cannot produce a fabricated exact length", a
   await rich.evaluate(el => { el.append("UNOBSERVED"); const selection = getSelection(); selection.selectAllChildren(el); selection.collapseToEnd(); });
   await page.keyboard.type("b");
   const log = await events(page);
-  expect(log.some(e => e.source === "unknown" && e.del_len === null)).toBe(true);
+  expect(log).toHaveLength(2);
+  expect(log[1]).toMatchObject({ pos: null, del_len: 0, ins_len: 1, source: "typing" });
+  expect(computeObservedLength(log)).toBeNull();
+});
+
+test("rich capture gaps survive formatting and canceled compositions without synthetic events", async ({ page }) => {
+  const rich = await start(page);
+  await page.keyboard.type("a");
+  await rich.evaluate(element => {
+    element.textContent = "hidden";
+    const selection = getSelection();
+    selection.selectAllChildren(element);
+    selection.collapseToStart();
+    element.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertText", data: "canceled" }));
+    element.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "formatBold" }));
+    element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "formatBold" }));
+    element.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
+    element.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "" }));
+  });
+  expect(await events(page)).toHaveLength(1);
+  await page.keyboard.type("zx");
+  const log = await events(page);
+  expect(log).toHaveLength(3);
+  expect(log[1]).toMatchObject({ pos: null, del_len: 0, ins_len: 1, source: "typing" });
+  expect(log[2]).toMatchObject({ pos: 1, del_len: 0, ins_len: 1, source: "typing" });
   expect(computeObservedLength(log)).toBeNull();
 });
 
@@ -183,4 +207,30 @@ test("finish still refuses wording binding during a native composition", async (
   expect(result).toEqual({ kind: "binding_error", reason: "An edit was still incomplete. The record has stopped; a text binding is unavailable." });
   await cdp.send("Input.insertText", { text: "日本" });
   expect((await events(page)).length).toBe(1);
+});
+
+test('finished rich editors release observers and a later start measures a fresh baseline', async ({ page }) => {
+  const rich = await start(page);
+  await page.keyboard.type('a');
+  const stopped = await rich.evaluate(async element => {
+    element.dispatchEvent(new InputEvent('beforeinput', {bubbles:true,inputType:'insertText',data:'canceled'}));
+    const session_id=window.__pmbah.messages.find(message=>message.kind==='append_mutation').session_id;
+    await new Promise(resolve=>window.__pmbah.listeners.forEach(listener=>listener({kind:'freeze_session',session_id,bind:false},{},resolve)));
+    let reads=0;const native=String.prototype.charCodeAt;
+    String.prototype.charCodeAt=function(...args){reads++;return native.apply(this,args);};
+    try{
+      await new Promise(resolve=>setTimeout(resolve,10));
+      element.textContent='xx🙂';
+      await new Promise(resolve=>setTimeout(resolve,0));
+      return reads;
+    }finally{String.prototype.charCodeAt=native;}
+  });
+  expect(stopped).toBe(0);
+  await rich.focus();
+  await page.evaluate(()=>window.__pmbah.activate());
+  await page.keyboard.press('End');
+  await page.keyboard.type('b');
+  const log=await events(page);
+  expect(log).toHaveLength(2);
+  expect(log.at(-1)).toMatchObject({pos:3,ins_len:1,del_len:0});
 });

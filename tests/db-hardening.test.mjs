@@ -327,6 +327,8 @@ test("pool config and body-limit defaults are conservative release defaults", ()
     max: 5,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
+    statement_timeout: 15_000,
+    query_timeout: 15_000,
   });
   assert.deepEqual(createPoolConfig({
     DATABASE_POOL_MAX: "3",

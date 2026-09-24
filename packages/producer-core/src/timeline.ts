@@ -1,23 +1,22 @@
 import {
-  b3HashBytes,
-  b3HashToBytes,
-  canonicalizeEventBytes,
-  eventChainFormatVersion,
-  type B3Hash,
+  advanceEventHash,
+  validateEvent,
   type BufferMutation,
-  type FormatVersion,
 } from "../../format/src/index.ts";
-import type { PendingMutation, SessionId } from "./types.ts";
+import type { PendingMutation } from "./types.ts";
 
-export function appendBufferMutation(
+export function buildBufferMutation(
   events: BufferMutation[],
   pending: PendingMutation,
   wall_ms: number,
   base_wall_ms: number,
 ): BufferMutation {
-  const seq = events.length;
+  return buildNextMutation(pending, events.length, events.at(-1)?.t ?? 0, wall_ms, base_wall_ms);
+}
+
+export function buildNextMutation(pending: PendingMutation, seq: number, previous_t: number, wall_ms: number, base_wall_ms: number): BufferMutation {
   // A wall-clock correction must not make a resumed history run backwards.
-  const t = Math.max(0, events.at(-1)?.t ?? 0, wall_ms - base_wall_ms);
+  const t = Math.max(0, previous_t, wall_ms - base_wall_ms);
   const event: BufferMutation = {
     seq,
     t,
@@ -27,6 +26,15 @@ export function appendBufferMutation(
     ins_len: pending.ins_len,
     source: pending.source,
   };
+  const errors = validateEvent(event, seq);
+  if (errors.length) throw new Error(errors.join("; "));
+  return event;
+}
+
+export function appendBufferMutation(
+  events: BufferMutation[], pending: PendingMutation, wall_ms: number, base_wall_ms: number,
+): BufferMutation {
+  const event = buildBufferMutation(events, pending, wall_ms, base_wall_ms);
   events.push(event);
   return event;
 }
@@ -36,32 +44,4 @@ export function durationMs(events: BufferMutation[]): number {
   return events[events.length - 1]!.t;
 }
 
-const TEXT_ENCODER = new TextEncoder();
-
-function utf8(value: string): Uint8Array {
-  return TEXT_ENCODER.encode(value);
-}
-
-function concatBytes(...parts: Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const part of parts) {
-    out.set(part, offset);
-    offset += part.length;
-  }
-  return out;
-}
-
-export function advanceChain(
-  previous_chain_tip: B3Hash | null,
-  next_event: BufferMutation,
-  session_id: SessionId,
-  format_version: FormatVersion,
-): B3Hash {
-  const event_bytes = canonicalizeEventBytes(next_event);
-  if (previous_chain_tip === null) {
-    return b3HashBytes(concatBytes(utf8(eventChainFormatVersion(format_version)), utf8(session_id), event_bytes));
-  }
-  return b3HashBytes(concatBytes(b3HashToBytes(previous_chain_tip), event_bytes));
-}
+export const advanceChain = advanceEventHash;

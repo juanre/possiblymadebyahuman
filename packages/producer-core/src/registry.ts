@@ -1,5 +1,7 @@
 import {
   computeRecordHash,
+  sealRecordHash,
+  validateManifest,
   FORMAT_VERSION,
   FORMAT_VERSION_0_2,
   FORMAT_VERSION_0_3,
@@ -16,6 +18,7 @@ import type {
 } from "../../format/src/index.ts";
 import type {
   CheckpointAdapter,
+  JournalCommit,
   CheckpointResult,
   ClockAdapter,
   StorageAdapter,
@@ -23,8 +26,9 @@ import type {
 } from "./adapters.ts";
 import { redactCaptureContext as applyCaptureContextRedactions, type CaptureContextRedactions } from "./capture-context.ts";
 import { resolveSession } from "./session-id.ts";
-import { advanceChain, appendBufferMutation, durationMs } from "./timeline.ts";
+import { advanceChain, buildNextMutation } from "./timeline.ts";
 import { DEFAULT_TTL_MS, DEFAULT_UPLOADED_GRACE_MS, sweepExpired } from "./ttl.ts";
+import { sessionEventCount, sessionLastEventTime } from "./types.ts";
 import type {
   FieldDescriptor,
   FieldOrigin,
@@ -90,7 +94,17 @@ export type SessionRegistryOptions = {
 
 export type AppendOptions = {
   reset_idle?: boolean;
+  /** Skip the full defensive copy when the caller only needs acknowledgement. */
+  snapshot?: boolean;
+  /** Time the producer observed the edit, before transport/storage queues. */
+  captured_at_wall_ms?: number;
 };
+
+function validateCaptureWallTime(value: number | undefined): void {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+    throw new RangeError("capture wall time must be a nonnegative safe integer");
+  }
+}
 
 export class SessionRegistry {
   readonly #clock: ClockAdapter;
@@ -105,7 +119,12 @@ export class SessionRegistry {
   readonly #commitment_retention: number;
   readonly #checkpoint_timeout_ms: number;
   readonly #signedFinishTime: boolean;
-  #persistTail: Promise<void> = Promise.resolve();
+  #persistRunning = false;
+  #persistWaiters: Array<{ resolve: () => void; reject: (error: unknown) => void }> = [];
+  #dirty = new Set<SessionId>();
+  #deleted = new Set<SessionId>();
+  #clearEvents = new Set<SessionId>();
+  #pendingEvents = new Map<SessionId, BufferMutation[]>();
   #flushing = new Set<SessionId>();
   #sessions = new Map<SessionId, SessionRecord>();
   #inFlight = new Map<SessionId, Promise<void>>();
@@ -132,9 +151,14 @@ export class SessionRegistry {
 
   load(snapshot: SessionRecord[]): void {
     this.#sessions = new Map();
+    this.#pendingEvents.clear();
+    this.#dirty.clear();
+    this.#deleted.clear();
+    this.#clearEvents.clear();
     for (const record of snapshot) {
       const normalised = this.#normaliseLoadedRecord(record);
       this.#sessions.set(normalised.session_id, normalised);
+      this.#dirty.add(normalised.session_id);
     }
   }
 
@@ -176,8 +200,9 @@ export class SessionRegistry {
     origin: FieldOrigin,
     descriptor: FieldDescriptor,
     capture: CaptureContext,
-    options: { fresh?: boolean; initial_content_unknown?: boolean } = {},
+    options: { fresh?: boolean; initial_content_unknown?: boolean; started_at_wall_ms?: number } = {},
   ): SessionRecord {
+    validateCaptureWallTime(options.started_at_wall_ms);
     const resolution = resolveSession(
       origin,
       descriptor,
@@ -191,10 +216,11 @@ export class SessionRegistry {
       existing.descriptor = descriptor;
       existing.origin = { ...origin };
       existing.last_edit_wall_ms = this.#clock.now();
+      this.#dirty.add(existing.session_id);
       return cloneSession(existing);
     }
 
-    const now = this.#clock.now();
+    const now = options.started_at_wall_ms ?? this.#clock.now();
     const record: SessionRecord = {
       session_id: resolution.session_id,
       format_version: this.#signedFinishTime ? FORMAT_VERSION_0_3 : FORMAT_VERSION,
@@ -206,12 +232,14 @@ export class SessionRegistry {
       producer: { ...this.#producer, capabilities: [...this.#producer.capabilities] },
       capture_context: capture,
       events: [],
+      ...(this.#storage.journal ? { journaled: true as const, event_count: 0, last_event_t: 0 } : {}),
       last_event_chain_tip: null,
       state: "active",
       observation: emptyObservation(this.#checkpoint !== null),
       ...(options.initial_content_unknown ? { pending_observation_gap: true } : {}),
     };
     this.#sessions.set(record.session_id, record);
+    this.#dirty.add(record.session_id);
     return cloneSession(record);
   }
 
@@ -221,26 +249,38 @@ export class SessionRegistry {
     record.origin = { ...origin };
     record.descriptor = { ...descriptor };
     record.identity_certainty = "resumed";
-    record.pending_observation_gap = record.events.length > 0 || options.field_is_empty !== true;
+    record.pending_observation_gap = sessionEventCount(record) > 0 || options.field_is_empty !== true;
     return cloneSession(record);
   }
 
-  appendMutation(session_id: SessionId, mutation: PendingMutation, _options: AppendOptions = {}): SessionRecord {
+  appendMutation(session_id: SessionId, mutation: PendingMutation, options: AppendOptions & { snapshot: false }): void;
+  appendMutation(session_id: SessionId, mutation: PendingMutation, options?: AppendOptions & { snapshot?: true }): SessionRecord;
+  appendMutation(session_id: SessionId, mutation: PendingMutation, options: AppendOptions = {}): SessionRecord | void {
+    validateCaptureWallTime(options.captured_at_wall_ms);
     const record = this.#requireMutable(session_id);
-    const now = this.#clock.now();
+    const now = options.captured_at_wall_ms ?? this.#clock.now();
     const observedMutation = record.pending_observation_gap ? { ...mutation, pos: null } : mutation;
-    const event = appendBufferMutation(record.events, observedMutation, now, record.base_wall_ms);
-    delete record.pending_observation_gap;
-    record.last_event_chain_tip = advanceChain(
+    const pending = this.#pendingEvents.get(session_id) ?? [];
+    if (this.#storage.journal && pending.length >= 4096) throw new Error("Local journal is not keeping up. Capture stopped before accepting more events; save the pending edits before continuing.");
+    const event = buildNextMutation(observedMutation, sessionEventCount(record), sessionLastEventTime(record), now, record.base_wall_ms);
+    const chainTip = advanceChain(
       record.last_event_chain_tip,
       event,
       record.session_id,
       record.format_version,
     );
-    record.last_edit_wall_ms = now;
+    if (this.#storage.journal) {
+      pending.push(event);
+      this.#pendingEvents.set(session_id, pending);
+      record.event_count = event.seq + 1;
+      record.last_event_t = event.t;
+    } else record.events.push(event);
+    record.last_event_chain_tip = chainTip;
+    delete record.pending_observation_gap;
+    record.last_edit_wall_ms = Math.max(record.last_edit_wall_ms, now);
     this.#recomputeObservationState(record);
     this.#maybeTriggerCheckpoint(record);
-    return cloneSession(record);
+    if (options.snapshot !== false) return cloneSession(record);
   }
 
   #recomputeObservationState(record: SessionRecord): void {
@@ -250,7 +290,7 @@ export class SessionRegistry {
       record.observation.state = "unknown";
       return;
     }
-    record.observation.state = record.observation.last_committed_event_count >= record.events.length
+    record.observation.state = record.observation.last_committed_event_count >= sessionEventCount(record)
       ? "known"
       : "partial";
   }
@@ -261,10 +301,10 @@ export class SessionRegistry {
    */
   sign(session_id: SessionId, options: SignOptions = {}): SignedRecordDraft {
     const record = this.#requireInState(session_id, ["active", "failed_upload"]);
-    if (record.events.length === 0) {
+    if (sessionEventCount(record) === 0) {
       throw new Error(`cannot sign session ${session_id} with no events`);
     }
-    const events: BufferMutation[] = record.events.map((event) => ({ ...event }));
+    const events: BufferMutation[] = this.#storage.journal ? [] : record.events.map((event) => ({ ...event }));
     const retry = record.state === "failed_upload";
     const textBinding = retry ? record.signed_text_binding : options.textBinding;
     // Upgrade unsigned 0.2 drafts without replacing their event-chain or any
@@ -272,11 +312,13 @@ export class SessionRegistry {
     const formatVersion = this.#signedFinishTime && !retry && record.format_version === FORMAT_VERSION_0_2
       ? FORMAT_VERSION_0_3 : record.format_version;
     const duration = retry && record.signed_duration_ms !== undefined ? record.signed_duration_ms
-      : formatVersion === FORMAT_VERSION_0_3 ? Math.max(durationMs(events), this.#clock.now() - record.base_wall_ms)
-      : durationMs(events);
+      : formatVersion === FORMAT_VERSION_0_3 ? Math.max(sessionLastEventTime(record), this.#clock.now() - record.base_wall_ms)
+      : sessionLastEventTime(record);
     // When a binding is present the record hash is sealed over it; otherwise
     // it is the plain event-chain tip (the cached tip when available).
-    const record_hash = textBinding || formatVersion === FORMAT_VERSION_0_3
+    const record_hash = this.#storage.journal
+      ? sealRecordHash(record.last_event_chain_tip!, formatVersion, textBinding, { duration_ms: duration, parent_record: record.parent_record })
+      : textBinding || formatVersion === FORMAT_VERSION_0_3
       ? computeRecordHash(events, record.session_id, formatVersion, textBinding, { duration_ms: duration, parent_record: record.parent_record })
       : record.last_event_chain_tip ?? this.#chainHeadFromEvents(events, record.session_id, formatVersion);
     const attestations: Attestation[] = [];
@@ -287,7 +329,7 @@ export class SessionRegistry {
       producer: { ...record.producer, capabilities: [...record.producer.capabilities] },
       capture_context: record.capture_context,
       ...(textBinding ? { text_binding: textBinding } : {}),
-      event_count: events.length,
+      event_count: sessionEventCount(record),
       duration_ms: duration,
       created_client_t: new Date(record.base_wall_ms).toISOString(),
       ingested_server_t: null,
@@ -295,7 +337,9 @@ export class SessionRegistry {
       attestations,
     };
 
-    const verification = verifyEventHashChain({ manifest, events });
+    const verification = this.#storage.journal
+      ? { valid: validateManifest(manifest).length === 0, errors: validateManifest(manifest) }
+      : verifyEventHashChain({ manifest, events });
     if (!verification.valid) {
       throw new Error(`signed record failed self-verification: ${verification.errors.join("; ")}`);
     }
@@ -304,12 +348,13 @@ export class SessionRegistry {
     record.format_version = formatVersion;
     record.signed_text_binding = textBinding;
     record.signed_duration_ms = duration;
-    return { manifest, events };
+    if (this.#storage.journal) record.upload_id ??= this.#uuid.uuid();
+    return { manifest, events, ...(record.upload_id ? { upload_id: record.upload_id } : {}) };
   }
 
   /** Applies the signer's capture-context choices before the record is signed. */
   redactCaptureContext(session_id: SessionId, redactions: CaptureContextRedactions): SessionRecord {
-    const record = this.#requireInState(session_id, ["active", "failed_upload"]);
+    const record = this.#requireInState(session_id, ["active"]);
     record.capture_context = applyCaptureContextRedactions(record.capture_context, redactions);
     return cloneSession(record);
   }
@@ -376,6 +421,7 @@ export class SessionRegistry {
       if (location.origin) existing.origin = { ...location.origin };
       if (location.descriptor) existing.descriptor = { ...location.descriptor };
       existing.last_edit_wall_ms = this.#clock.now();
+      this.#dirty.add(existing.session_id);
       return cloneSession(existing);
     }
     const now = this.#clock.now();
@@ -395,6 +441,7 @@ export class SessionRegistry {
       producer: { ...this.#producer, capabilities: [...this.#producer.capabilities] },
       capture_context: JSON.parse(JSON.stringify(previous.capture_context)),
       events: [],
+      ...(this.#storage.journal ? { journaled: true as const, event_count: 0, last_event_t: 0 } : {}),
       last_event_chain_tip: null,
       state: "active",
       parent_record: parentHash,
@@ -402,24 +449,7 @@ export class SessionRegistry {
       observation: emptyObservation(this.#checkpoint !== null),
     };
     this.#sessions.set(record.session_id, record);
-    return cloneSession(record);
-  }
-
-  /**
-   * Resume editing a session that was already signed and uploaded. The recorded
-   * events are kept, so continuing to write and signing again produces a record
-   * of the whole writing process so far, not just the new edits. The previously
-   * uploaded record is unaffected; observation restarts for the resumed pass.
-   */
-  reopen(session_id: SessionId): SessionRecord {
-    const record = this.#requireInState(session_id, ["uploaded"]);
-    record.state = "active";
-    record.uploaded_response = undefined;
-    record.last_failure_reason = undefined;
-    record.signed_text_binding = undefined;
-    record.signed_duration_ms = undefined;
-    record.observation = emptyObservation(this.#checkpoint !== null);
-    record.last_edit_wall_ms = this.#clock.now();
+    this.#dirty.add(record.session_id);
     return cloneSession(record);
   }
 
@@ -442,12 +472,19 @@ export class SessionRegistry {
     if (!existing) return null;
     const cloned = cloneSession(existing);
     this.#sessions.delete(session_id);
+    this.#deleted.add(session_id);
+    this.#dirty.delete(session_id);
+    this.#pendingEvents.delete(session_id);
     this.#inFlight.delete(session_id);
     return cloned;
   }
 
   /** Remove local records only after storage accepts the change; retain links on failure. */
   async discardPersisted(session_ids: SessionId[]): Promise<void> {
+    // Settle accepted prefixes before detaching their queues. Rollback must
+    // never reintroduce events whose earlier transaction already committed.
+    await this.persist();
+    const pending = new Map(session_ids.map(id => [id, this.#pendingEvents.get(id)]));
     const removed = session_ids.map((id) => this.discard(id)).filter((record): record is SessionRecord => record !== null);
     try {
       await this.persist();
@@ -455,7 +492,13 @@ export class SessionRegistry {
       // Restore only the removed records. Edits to other sessions that arrived
       // while storage was pending must not be overwritten by an old snapshot.
       for (const record of removed) {
-        if (!this.#sessions.has(record.session_id)) this.#sessions.set(record.session_id, record);
+        if (!this.#sessions.has(record.session_id)) {
+          this.#sessions.set(record.session_id, record);
+          this.#deleted.delete(record.session_id);
+          this.#dirty.add(record.session_id);
+          const events = pending.get(record.session_id);
+          if (events) this.#pendingEvents.set(record.session_id, events);
+        }
       }
       // A concurrent checkpoint may have queued a snapshot while the records
       // were absent. Queue the restored view after it before surfacing failure.
@@ -484,21 +527,83 @@ export class SessionRegistry {
           last_event_chain_tip: null,
           observation: emptyObservation(this.#checkpoint !== null),
         });
+        this.#clearEvents.add(removed.session_id);
+        this.#dirty.add(removed.session_id);
         continue;
       }
       removedLogs.push(removed);
       this.#sessions.delete(removed.session_id);
+      this.#deleted.add(removed.session_id);
+      this.#dirty.delete(removed.session_id);
+      this.#pendingEvents.delete(removed.session_id);
       this.#inFlight.delete(removed.session_id);
     }
     return removedLogs;
   }
 
-  async persist(): Promise<void> {
-    const snapshot = this.snapshot();
-    const write = this.#persistTail.catch(() => undefined).then(() => this.#storage.write(snapshot));
-    this.#persistTail = write;
-    await write;
+  persist(): Promise<void> {
+    const result = new Promise<void>((resolve, reject) => { this.#persistWaiters.push({ resolve, reject }); });
+    if (!this.#persistRunning) {
+      this.#persistRunning = true;
+      void this.#drainPersistence();
+    }
+    return result;
   }
+
+  async #drainPersistence(): Promise<void> {
+    try {
+      while (this.#persistWaiters.length) {
+        const waiters = this.#persistWaiters.splice(0);
+        try {
+          // Snapshot when the serialized write starts. Calls arriving during
+          // it share the next snapshot, never retain queued history copies.
+          if (this.#storage.journal) await this.#persistJournal();
+          else await this.#storage.write(this.snapshot());
+          for (const waiter of waiters) waiter.resolve();
+        } catch (error) {
+          for (const waiter of waiters) waiter.reject(error);
+        }
+      }
+    } finally { this.#persistRunning = false; }
+  }
+
+  async #persistJournal(): Promise<void> {
+    const ids = [...this.#dirty];
+    const deleted = [...this.#deleted];
+    const clear_events = [...this.#clearEvents];
+    if (!ids.length && !deleted.length && !clear_events.length) return;
+    const batch: JournalCommit = {
+      sessions: ids.flatMap(id => { const session = this.#sessions.get(id); return session ? [cloneSession(session)] : []; }),
+      appends: ids.flatMap(id => { const events = this.#pendingEvents.get(id); return events?.length ? [{ session_id: id, events: events.slice() }] : []; }),
+      deleted, clear_events,
+    };
+    for (const id of ids) this.#dirty.delete(id);
+    for (const id of deleted) this.#deleted.delete(id);
+    for (const id of clear_events) this.#clearEvents.delete(id);
+    try {
+      await this.#storage.journal!.commit(batch);
+      for (const append of batch.appends) this.#pendingEvents.get(append.session_id)?.splice(0, append.events.length);
+    } catch (error) {
+      for (const id of ids) this.#dirty.add(id);
+      for (const id of deleted) this.#deleted.add(id);
+      for (const id of clear_events) this.#clearEvents.add(id);
+      throw error;
+    }
+  }
+
+  /** Bounded history access for publication/export. UI uses metadata get/list. */
+  async readEvents(session_id: SessionId, start_seq: number, limit = 512): Promise<BufferMutation[]> {
+    if (!Number.isSafeInteger(start_seq) || start_seq < 0 || !Number.isInteger(limit) || limit < 1 || limit > 4096) throw new RangeError("invalid event page");
+    const record = this.#sessions.get(session_id);
+    if (!record) throw new UnknownSessionError(session_id);
+    if (this.#storage.journal) {
+      await this.persist();
+      return this.#storage.journal.readEvents(session_id, start_seq, limit);
+    }
+    return record.events.slice(start_seq, start_seq + limit).map(event => ({ ...event }));
+  }
+
+  get journaled(): boolean { return !!this.#storage.journal; }
 
   /** Awaits all checkpoint work currently in-flight or queued for a session. Test helper. */
   async awaitObservationIdle(session_id: SessionId): Promise<void> {
@@ -532,7 +637,7 @@ export class SessionRegistry {
         if (kicked && record.observation.last_failure) return;
         if (!record.observation.in_flight) {
           if (record.observation.last_committed_event_count === 0) return;
-          if (record.events.length <= record.observation.last_committed_event_count) return;
+          if (sessionEventCount(record) <= record.observation.last_committed_event_count) return;
           record.observation.next_backoff_ms = 0;
           this.#kickCheckpoint(record);
           kicked = true;
@@ -586,7 +691,7 @@ export class SessionRegistry {
   }
 
   #shouldTrigger(record: SessionRecord, now: number): boolean {
-    const delta = record.events.length - record.observation.last_committed_event_count;
+    const delta = sessionEventCount(record) - record.observation.last_committed_event_count;
     if (delta <= 0) return false;
     // Honour backoff: do not retry transient failures faster than the schedule.
     if (
@@ -606,6 +711,7 @@ export class SessionRegistry {
   }
 
   #kickCheckpoint(record: SessionRecord): void {
+    this.#dirty.add(record.session_id);
     record.observation.in_flight = true;
     record.observation.queued = false;
     record.observation.last_attempt_at_wall_ms = this.#clock.now();
@@ -624,7 +730,7 @@ export class SessionRegistry {
       const record = this.#sessions.get(session_id);
       if (!record) return;
       const observed_session_id = record.observation.observed_session_id ?? this.#uuid.uuid();
-      const event_count = record.events.length;
+      const event_count = sessionEventCount(record);
       const chain_tip = record.last_event_chain_tip;
       if (!chain_tip) {
         record.observation.in_flight = false;
@@ -649,6 +755,7 @@ export class SessionRegistry {
       }
       const liveRecord = this.#sessions.get(session_id);
       if (!liveRecord) return;
+      this.#dirty.add(session_id);
       this.#applyCheckpointResult(liveRecord, observed_session_id, event_count, chain_tip, result);
       if (!result.ok) {
         // Failure (transient, rate_limited, conflict, client_bug, unavailable): do not
@@ -659,7 +766,7 @@ export class SessionRegistry {
         await this.persist();
         return;
       }
-      if (!this.#flushing.has(session_id) && liveRecord.observation.queued && (liveRecord.events.length - liveRecord.observation.last_committed_event_count) > 0) {
+      if (!this.#flushing.has(session_id) && liveRecord.observation.queued && (sessionEventCount(liveRecord) - liveRecord.observation.last_committed_event_count) > 0) {
         liveRecord.observation.queued = false;
         liveRecord.observation.last_attempt_at_wall_ms = this.#clock.now();
         await this.persist();
@@ -710,7 +817,7 @@ export class SessionRegistry {
         chain_tip: result.response.chain_tip,
         observed_at: result.response.server_t,
       });
-      record.observation.state = record.observation.last_committed_event_count >= record.events.length
+      record.observation.state = record.observation.last_committed_event_count >= sessionEventCount(record)
         ? "known"
         : "partial";
       return;
@@ -732,7 +839,7 @@ export class SessionRegistry {
       : Math.min(this.#backoff_max_ms, record.observation.next_backoff_ms * 2);
     if (record.observation.last_committed_event_count === 0) {
       record.observation.state = "unknown";
-    } else if (record.observation.last_committed_event_count < record.events.length) {
+    } else if (record.observation.last_committed_event_count < sessionEventCount(record)) {
       record.observation.state = "partial";
     }
     // ignore sent values when failed
@@ -777,6 +884,7 @@ export class SessionRegistry {
   #require(session_id: SessionId): SessionRecord {
     const record = this.#sessions.get(session_id);
     if (!record) throw new UnknownSessionError(session_id);
+    this.#dirty.add(session_id);
     return record;
   }
 

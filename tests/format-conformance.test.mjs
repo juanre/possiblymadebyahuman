@@ -292,3 +292,19 @@ test("0.3 finalization canonical vector remains stable", () => {
   assert.equal(computeRecordHash(events, "00000000-0000-4000-8000-000000000001", "0.3", undefined, { duration_ms: 5184000000, parent_record: null }),
     "b3:91e988e0a466dfaf60be4864ed3b69cc26421f28474fc7c9df9841c1ea50662c");
 });
+
+test("known operation sizes remain constrained when other measurements are unknown", () => {
+  const base = { seq: 0, t: 0, pos: null, source: "unknown" };
+  for (const sizes of [
+    { op: "insert", del_len: 100, ins_len: 0 },
+    { op: "insert", del_len: 1, ins_len: null },
+    { op: "insert", del_len: null, ins_len: 0 },
+    { op: "delete", del_len: null, ins_len: 1 },
+    { op: "delete", del_len: 0, ins_len: null },
+    { op: "replace", del_len: 0, ins_len: null },
+    { op: "replace", del_len: null, ins_len: 0 },
+  ]) assert.ok(validateEvent({ ...base, ...sizes }).length, JSON.stringify(sizes));
+  for (const op of ["insert", "delete", "replace"]) {
+    assert.deepEqual(validateEvent({ ...base, op, del_len: null, ins_len: null }), []);
+  }
+});

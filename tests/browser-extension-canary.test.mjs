@@ -278,7 +278,7 @@ test("FieldEntry type carries no text-bearing string field", async () => {
   const declaration = fieldEntryMatch[1];
   // DOM reference and UUID/state, an append-drain promise, and a sealed binding
   // response are allowed. No plaintext or text-producing closures are allowed.
-  const expectedFields = ["element", "session_id", "state", "sending", "finish_binding"];
+  const expectedFields = ["element", "session_id", "state", "sending", "queued_count", "finish_binding"];
   const declaredFields = (declaration.match(/^\s*(\w+)\s*[:?]/gm) ?? [])
     .map((line) => line.trim().replace(/[:?].*$/, ""));
   assert.deepEqual(
@@ -349,5 +349,22 @@ test("source files outside the content script never read DOM text", async () => 
     for (const pattern of bannedSourcePatterns) {
       assert.doesNotMatch(body, pattern, `${path} matches ${pattern}; only the content script may read DOM text`);
     }
+  }
+});
+
+test('incremental capture indexes retain only numeric coordinates and DOM identities', async () => {
+  const ts = await import('typescript');
+  for (const [path, className, expected] of [
+    ['packages/browser-capture/src/numeric-text-index.ts', 'NumericTextIndex', ['#root', '#seed', 'utf16Length']],
+    ['apps/browser-extension/src/lib/richtext-index.ts', 'RichTextIndex', ['#root', '#entries', '#observer', '#seed', '#pending']],
+  ]) {
+    const body = await readFile(path, 'utf8');
+    const source = ts.createSourceFile(path, body, ts.ScriptTarget.Latest, true);
+    const declaration = source.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === className);
+    assert.ok(declaration);
+    const properties = declaration.members.filter(ts.isPropertyDeclaration).map(member => member.name.getText(source));
+    assert.deepEqual(properties.sort(), expected.sort(), `${className} state additions require a retention review`);
+    assert.doesNotMatch(body, /\.oldValue\b|characterDataOldValue\s*:\s*true/, 'capture must not ask MutationObserver to retain replaced text');
+    assert.doesNotMatch(body, /(?:this\.)?#\w+\s*=\s*(?:textAfter|text|.*\.textContent)\s*;/, 'source text must not become class state');
   }
 });

@@ -30,6 +30,7 @@ export type ContentToBackground =
       page_title: string;
       descriptor: FieldDescriptor;
       field_is_empty: boolean;
+      started_at_wall_ms?: number;
       activation_id?: string;
       share_session_id?: string;
       resume_session_id?: string;
@@ -39,6 +40,7 @@ export type ContentToBackground =
       kind: "append_mutation";
       session_id: SessionId;
       mutation: PendingMutation;
+      captured_at_wall_ms?: number;
     }
   | { kind: "list_sessions" }
   | { kind: "list_panel_sessions"; window_id: number; history_query?: string; history_offset?: number; history_limit?: number }
@@ -91,7 +93,7 @@ export type RegisterFieldResult =
 export type SignSessionResult =
   // observation_note explains, for the signer, when the record was uploaded
   // without server observation although observation had been requested.
-  | { kind: "uploaded"; response: IngestRecordResponse; observation_note?: string; text_binding?: TextBinding }
+  | { kind: "uploaded"; response: IngestRecordResponse; observation_note?: string; persistence_note?: string; text_binding?: TextBinding }
   | { kind: "failed"; reason: string };
 
 export type BackgroundResponse =

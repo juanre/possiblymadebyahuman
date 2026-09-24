@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 import { stdin, stdout, stderr, exit } from "node:process";
+import { runJournalOperation } from "./event-journal.mjs";
 
 import {
   FORMAT_VERSION,
   FORMAT_VERSION_0_2,
+  FORMAT_VERSION_0_3,
   canonicalizeTextForBinding,
   computeRecordHash,
   createTextBinding,
@@ -34,6 +36,12 @@ function parseInput(raw) {
 try {
   const raw = await readStdin();
   const input = parseInput(raw);
+  // Existing user configurations name this script explicitly. Delegate new
+  // journal descriptors; the array branch below is only the legacy CLI export.
+  if (typeof input.journal_path === "string") {
+    stdout.write(JSON.stringify(await runJournalOperation(input)) + "\n");
+    exit(0);
+  }
 
   if (!Array.isArray(input.events)) fail("events must be an array");
   if (typeof input.session_id !== "string") fail("session_id must be a string");
@@ -50,8 +58,13 @@ try {
       ? createTextBinding(finalText, input.session_id)
       : undefined;
 
-  const formatVersion = textBinding ? FORMAT_VERSION_0_2 : input.format_version ?? FORMAT_VERSION;
-  const recordHash = computeRecordHash(events, input.session_id, formatVersion, textBinding);
+  // An explicit version is authoritative, including frozen legacy retries.
+  const formatVersion = input.format_version ?? (textBinding ? FORMAT_VERSION_0_2 : FORMAT_VERSION);
+  if (formatVersion === "0.1" && textBinding) fail("format 0.1 does not support text binding");
+  const duration = Math.max(0, Number(input.duration_ms ?? events.at(-1)?.t ?? 0));
+  const parentRecord = input.parent_record ?? null;
+  const recordHash = computeRecordHash(events, input.session_id, formatVersion, textBinding,
+    formatVersion === FORMAT_VERSION_0_3 ? { duration_ms: duration, parent_record: parentRecord } : undefined);
 
   const record = {
     manifest: {
@@ -66,10 +79,10 @@ try {
       capture_context: input.capture_context ?? null,
       ...(textBinding ? { text_binding: textBinding } : {}),
       event_count: events.length,
-      duration_ms: Math.max(0, Number(input.duration_ms ?? events.at(-1)?.t ?? 0)),
+      duration_ms: duration,
       created_client_t: input.created_client_t ?? new Date().toISOString(),
       ingested_server_t: null,
-      parent_record: null,
+      parent_record: parentRecord,
       attestations: [],
     },
     events,

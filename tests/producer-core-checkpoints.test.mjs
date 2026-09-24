@@ -839,6 +839,50 @@ test("overlapping persistence never lets an older snapshot overwrite a newer one
   finish[1](); await second;
 });
 
+test("a burst coalesces pending persistence without acknowledging edits before their durable snapshot", async () => {
+  const writes = [], finish = [];
+  const storage = { read: async () => [], write: snapshot => new Promise((resolve, reject) => {
+    writes.push(snapshot); finish.push({ resolve, reject });
+  }) };
+  const { registry } = makeRegistry({ storage });
+  const session = newSession(registry);
+  let snapshots = 0, completed = 0;
+  const snapshot = registry.snapshot.bind(registry);
+  registry.snapshot = () => { snapshots++; return snapshot(); };
+  const first = registry.persist();
+  const pending = [];
+  for (let pos = 0; pos < 100; pos++) {
+    assert.equal(registry.appendMutation(session.session_id, { op: "insert", pos, del_len: 0, ins_len: 1, source: "typing" }, { snapshot: false }), undefined);
+    pending.push(registry.persist().then(() => { completed++; }));
+  }
+  assert.equal(snapshots, 1, "queued callers do not retain full history snapshots");
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0][0].events.length, 0);
+  finish[0].resolve();
+  await first;
+  assert.equal(writes.length, 2);
+  assert.equal(snapshots, 2);
+  assert.equal(writes[1][0].events.length, 100);
+  assert.equal(completed, 0, "an older successful write does not acknowledge queued edits");
+  finish[1].resolve();
+  await Promise.all(pending);
+  assert.equal(completed, 100);
+  assert.equal(writes.length, 2);
+
+  const failedFirst = registry.persist();
+  const rejectedFirst = assert.rejects(failedFirst, /storage full/);
+  const failedBatch = [registry.persist(), registry.persist()];
+  const rejectedBatch = failedBatch.map(promise => assert.rejects(promise, /storage full/));
+  finish[2].reject(new Error("storage full"));
+  await rejectedFirst;
+  finish[3].reject(new Error("storage full"));
+  await Promise.all(rejectedBatch);
+  const retry = registry.persist();
+  finish[4].resolve();
+  await retry;
+  assert.equal(writes[4][0].events.length, 100, "failed batches remain recoverable");
+});
+
 test("pre-sign flush stops after two attempts even when every response queues more edits", async () => {
   const checkpoint = recordingCheckpoint();
   const { registry } = makeRegistry({ checkpoint });

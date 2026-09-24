@@ -28,3 +28,23 @@ Observed-session storage stores only `token_hash`, public chain-tip commitments,
 The public manifest field is `parent_record`; the Postgres/storage column is `parent_record_hash`. Format `0.2` `text_binding` is stored as JSONB commitment metadata only; no plaintext text column exists.
 
 Migration `003_long_session_times` widens elapsed duration, delay and active/idle millisecond columns to `bigint`. Calendar timestamps remain `timestamptz`; counts and positions retain their existing bounds. The adapter decodes PostgreSQL bigint strings into JSON numbers only within JavaScript’s safe integer range, rejecting lossy values. Existing events, hashes and signatures are unchanged.
+
+Migration `004_unknown_size_stats` allows null insertion/deletion totals and largest-insert statistics when a required event size was not measured. Apply it before deploying the updated API. Existing caches remain intact; public read projections derive corrected size facts from the immutable event log. Edit-topology 0.2.0 uses the same uncertainty rules and includes its size thresholds. Historical custom threshold counts are preserved for fully measured logs and shown as unavailable for partially measured logs because their original thresholds were not stored.
+
+Migration `005_chunked_records` adds private upload cursors, immutable event chunks
+of at most 4096 entries and exact delay-frequency counts. Each accepted chunk
+updates its cursor/hash and fixed-size analyzer state in one transaction.
+Finalization locks the upload and observed session, checks all commitments, and
+atomically writes the public record/stats/signals. New records keep their legacy
+`events` column empty and use `event_storage='chunks'`; old inline records remain
+readable. Paged queries use the `(upload_id,start_seq)` index and bounded ranges.
+Exact percentiles use PostgreSQL cumulative counts, so no approximation or
+whole-log allocation is needed in the API process. Public observation summaries
+return at most 32 anchors and exact aggregate count/span.
+
+Only the upload transaction marked `published_owner` supplies public pages;
+other attempts for the same record hash cannot replace that source. Exact delay
+counts are deleted after their statistics are committed, and completed duplicate
+uploads discard their redundant chunks. Canonical chunks retain per-event tips
+for checkpoint validation and arbitrary page-boundary commitments. Event storage
+therefore grows with the log; API working memory stays bounded by one chunk.

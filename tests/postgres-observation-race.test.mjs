@@ -28,6 +28,34 @@ test("Postgres observed-session finalization validates the exact public checkpoi
   const harness = await connectFixtureDatabase(t, "PMBAH_TEST_DATABASE_URL");
   const { api, pool } = harness;
 
+  await t.test("unknown size statistics round-trip as null and legacy caches are corrected without writes", async () => {
+    const record = await freshRecord();
+    record.events = [{ seq: 0, t: 0, op: "replace", pos: null, ins_len: null, del_len: null, source: "unknown" }];
+    record.manifest.event_count = 1;
+    record.manifest.duration_ms = 0;
+    record.manifest.record_hash = computeRecordHash(record.events, record.manifest.session_id, record.manifest.format_version);
+    const uploaded = await api.postRecord(record);
+    assert.equal(uploaded.status, 201, JSON.stringify(uploaded.body));
+    const hash = uploaded.body.record_hash;
+    const raw = await pool.query("select inserted_codepoints_total, deleted_codepoints_total, largest_atomic_insert_codepoints from record_stats where record_hash = $1", [hash]);
+    assert.deepEqual(raw.rows[0], { inserted_codepoints_total: null, deleted_codepoints_total: null, largest_atomic_insert_codepoints: null });
+    const roundTrip = await harness.store.findByRecordHash(hash);
+    assert.equal(roundTrip.stats.inserted_codepoints_total, null);
+    assert.equal(roundTrip.stats.deleted_codepoints_total, null);
+    assert.equal(roundTrip.stats.largest_atomic_insert_codepoints, null);
+    await pool.query("update record_stats set inserted_codepoints_total = 0, deleted_codepoints_total = 0, largest_atomic_insert_codepoints = 0 where record_hash = $1", [hash]);
+    await pool.query("update analysis_results set analyzer_version = '0.1.0', measures = $2 where record_hash = $1 and analyzer_id = 'edit-topology'", [hash, JSON.stringify([{ key: 'inserted_codepoints_total', value: 0 }, { key: 'atomic_insert_max_len', value: 0 }])]);
+    const fetched = await api.getRecord(uploaded.body.short_signature);
+    assert.equal(fetched.body.stats.inserted_codepoints_total, null);
+    assert.equal(fetched.body.stats.deleted_codepoints_total, null);
+    assert.equal(fetched.body.stats.largest_atomic_insert_codepoints, null);
+    assert.equal(fetched.body.signals.find(signal => signal.analyzer_id === 'edit-topology').measures[0].value, null);
+    assert.equal(fetched.body.manifest.record_hash, hash);
+    assert.deepEqual(fetched.body.events, record.events);
+    const cached = await pool.query("select inserted_codepoints_total from record_stats where record_hash = $1", [hash]);
+    assert.equal(Number(cached.rows[0].inserted_codepoints_total), 0);
+  });
+
   await t.test("0.3 seals a finish-only pause and parent while preserving older checkpoints and records", async () => {
     const parent = await freshRecord();
     const savedParent = await api.postRecord(parent);
@@ -256,13 +284,16 @@ test("Postgres forward migration preserves old records and observations, then st
   assert.equal(first.status, 201);
 
   const migrated = await applyMigrations(pool, await loadSqlMigrations());
-  assert.deepEqual(migrated.applied.map(({ version }) => version), ["003"]);
+  assert.deepEqual(migrated.applied.map(({ version }) => version), ["003", "004", "005"]);
   assert.deepEqual(migrated.skipped.map(({ version }) => version), ["001", "002"]);
   assert.deepEqual(await api.getRecord(uploaded.body.short_signature), oldBefore);
   const rawAfter = (await pool.query("select record_hash, events, duration_ms from records where record_hash = $1", [old.manifest.record_hash])).rows[0];
   assert.equal(rawAfter.record_hash, rawBefore.record_hash);
   assert.deepEqual(rawAfter.events, rawBefore.events);
   assert.equal(rawAfter.duration_ms, String(rawBefore.duration_ms));
+  const nullableStats = (await pool.query("select column_name, is_nullable from information_schema.columns where table_name = 'record_stats' and column_name in ('inserted_codepoints_total', 'deleted_codepoints_total', 'largest_atomic_insert_codepoints')")).rows;
+  assert.equal(nullableStats.length, 3);
+  assert.equal(nullableStats.every(column => column.is_nullable === 'YES'), true);
   const schema = (await pool.query("select table_name, column_name, data_type from information_schema.columns where table_schema = 'public' and ((table_name = 'records' and column_name in ('duration_ms', 'event_count', 'created_client_t')) or (table_name = 'record_stats' and (column_name like 'inter_event_delay_%_ms' or column_name in ('active_time_ms', 'idle_time_ms', 'observed_final_length'))))")).rows;
   for (const column of schema) {
     assert.equal(column.data_type, column.column_name.endsWith("_ms") ? "bigint" : column.column_name === "created_client_t" ? "timestamp with time zone" : "integer");

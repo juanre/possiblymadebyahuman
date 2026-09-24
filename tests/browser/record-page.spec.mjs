@@ -304,3 +304,31 @@ test.describe("text binding — bound record", () => {
     }
   });
 });
+
+test("unknown size statistics display unavailable rather than numeric zero or null", async ({ page, request }) => {
+  const record = await (await request.get('/api/records/bound')).json();
+  record.stats.largest_atomic_insert_codepoints = null;
+  record.signals = [{ analyzer_id: 'edit-topology', analyzer_version: '0.2.0', applicable: true,
+    measures: [{ key: 'inserted_codepoints_total', value: null, unit: 'codepoints' }], explanation: 'Required sizes were not captured.' }];
+  await page.route('**/api/records/bound', route => route.fulfill({ json: record }));
+  await page.goto('/bound');
+  await expect(page.getByText('Largest atomic insert', { exact: true }).locator('..')).toContainText('unknown');
+  await expect(page.getByRole('region', { name: 'How this was written', exact: true })).toContainText('largest insert unknown');
+  await expect(page.locator('.signal-card dd')).toHaveText('unavailable');
+});
+
+for (const tamper of ["events", "binding"]) {
+  test(`a tampered ${tamper} record cannot produce a successful document check`, async ({ page, request }) => {
+    const record = await (await request.get('/api/records/bound')).json();
+    if (tamper === 'events') record.events[0].ins_len += 1;
+    else record.manifest.text_binding.canonical_length += 1;
+    await page.route('**/api/records/bound', route => route.fulfill({ json: record }));
+    await page.goto('/bound');
+    const card = page.getByRole('region', { name: 'Check a document', exact: true });
+    await expect(card.getByRole('alert')).toContainText('failed integrity verification');
+    await card.getByLabel('document to check').fill(BOUND_TEXT);
+    await expect(card.getByRole('button', { name: 'Check', exact: true })).toBeDisabled();
+    await expect(card.locator('.binding-result')).toHaveCount(0);
+    await expect(page.locator('.chain-status')).toHaveClass(/error/);
+  });
+}

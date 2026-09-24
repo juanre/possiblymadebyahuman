@@ -3,7 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { createIngestApi, generateShortSignature, isReservedShortSignature } from "../apps/ingest-api/src/index.ts";
-import { computeEventHashChain } from "../packages/format/src/index.ts";
+import { computeEventHashChain, b3HashBytes, b3HashToBytes, canonicalizeEventBytes } from "../packages/format/src/index.ts";
 import { InMemoryRecordStore, PostgresRecordStore } from "../packages/storage/src/index.ts";
 
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
@@ -522,7 +522,9 @@ test("ingest stores explicit-null unknown process measurements", async () => {
   assert.equal(fetched.body.events[1].del_len, null);
   assert.equal(fetched.body.events[1].ins_len, null);
   assert.equal(fetched.body.stats.observed_final_length, null);
-  assert.equal(fetched.body.stats.inserted_codepoints_total, 3);
+  assert.equal(fetched.body.stats.inserted_codepoints_total, null);
+  assert.equal(fetched.body.stats.deleted_codepoints_total, null);
+  assert.equal(fetched.body.stats.largest_atomic_insert_codepoints, null);
   const topology = fetched.body.signals.find((signal) => signal.analyzer_id === "edit-topology");
   assert.equal(topology.measures.find((measure) => measure.key === "unknown_process_measurement_count")?.value, 1);
 });
@@ -758,7 +760,11 @@ test("session_id must be lowercase so the hashed bytes match what Postgres store
   const record = await fixtureRecord();
   const upper = record.manifest.session_id.toUpperCase();
   record.manifest.session_id = upper;
-  record.manifest.record_hash = computeEventHashChain(record.events, upper, record.manifest.format_version).at(-1);
+  let tip = null;
+  for (const event of record.events) tip = b3HashBytes(Buffer.concat([
+    tip ? b3HashToBytes(tip) : Buffer.from(record.manifest.format_version + upper), canonicalizeEventBytes(event),
+  ]));
+  record.manifest.record_hash = tip;
   const result = await api.postRecord(record);
   assert.equal(result.status, 400);
   assert.match(result.body.details.join("\n"), /session_id/);
@@ -901,6 +907,37 @@ test("legacy active-time views exclude endpoints without changing cached data or
   assert.deepEqual(stored, original, "read projection must never rewrite the record or stored cache");
   assert.deepEqual(response.manifest, stored.manifest);
   assert.deepEqual(response.observation, stored.observation);
+});
+
+test("legacy size caches are corrected without rewriting immutable records or guessing custom thresholds", async () => {
+  const { toGetRecordResponse } = await import("../apps/ingest-api/src/index.ts");
+  const { api, store } = makeApi();
+  const record = await fixtureRecord();
+  const uploaded = await api.postRecord(record);
+  const stored = await store.findByRecordHash(uploaded.body.record_hash);
+  stored.signals = [{ record_hash: stored.manifest.record_hash, analyzer_id: "edit-topology", analyzer_version: "0.1.0", applicable: true,
+    measures: [{ key: "large_atomic_insert_count", value: 3 }, { key: "small_edit_count", value: 1 },
+      { key: "atomic_insert_max_len", value: 0 }, { key: "inserted_codepoints_total", value: 0 },
+      { key: "deleted_codepoints_total", value: 0 }], explanation: "Historical custom thresholds" }];
+  const known = toGetRecordResponse(stored);
+  assert.equal(known.signals[0].measures.find(item => item.key === "large_atomic_insert_count").value, 3, "preserve custom threshold count for fully measured logs");
+  stored.events = [{ seq: 0, t: 0, op: "replace", pos: null, ins_len: 8, del_len: null, source: "unknown" }];
+  const original = structuredClone(stored);
+  const response = toGetRecordResponse(stored);
+  assert.equal(response.stats.inserted_codepoints_total, 8);
+  assert.equal(response.stats.deleted_codepoints_total, null);
+  assert.equal(response.stats.largest_atomic_insert_codepoints, 8);
+  const signal = response.signals[0];
+  assert.equal(signal.analyzer_version, "0.2.0");
+  assert.equal(signal.measures.find(item => item.key === "large_atomic_insert_count").value, null);
+  assert.equal(signal.measures.find(item => item.key === "small_edit_count").value, null);
+  assert.equal(signal.measures.find(item => item.key === "atomic_insert_max_len").value, 8);
+  assert.equal(signal.measures.find(item => item.key === "inserted_codepoints_total").value, 8);
+  assert.equal(signal.measures.find(item => item.key === "deleted_codepoints_total").value, null);
+  assert.match(signal.explanation, /custom thresholds were not stored/);
+  assert.deepEqual(stored, original);
+  assert.deepEqual(response.manifest, stored.manifest);
+  assert.deepEqual(response.events, stored.events);
 });
 
 for (const elapsed of [2 ** 31, 60 * 86400000, 5 * 365 * 86400000, Number.MAX_SAFE_INTEGER]) {

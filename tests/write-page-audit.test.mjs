@@ -5,6 +5,7 @@ import test from "node:test";
 const WRITE_FILES = [
   "apps/web/src/write-page.tsx",
   "apps/web/src/write-capture.ts",
+  "packages/producer-core/src/measured-input.ts",
 ];
 
 const BANNED_SOURCE_PATTERNS = [

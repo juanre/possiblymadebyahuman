@@ -16,6 +16,7 @@
 
 ;;; Code:
 
+(require 'cl-lib)
 (require 'json)
 (require 'seq)
 (require 'subr-x)
@@ -30,7 +31,7 @@
 (defcustom pmbah-api-base-url
   (or (getenv "PMBAH_API_BASE_URL") "https://possiblymadebyahuman.com")
   "Base URL for the PMBAH ingest API.
-The producer posts records to `/api/records` below this URL.  The default is
+The producer publishes through `/api/record-uploads` below this URL.  The default is
 the public PMBAH service; set `PMBAH_API_BASE_URL` or customize this variable
 to use a local `make local-container` stack."
   :type 'string
@@ -49,7 +50,7 @@ At signing it may also receive selected text transiently for the local binding."
   "Directory containing pmbah-mode.el, used to locate the helper scripts.")
 
 (defcustom pmbah-helper-script
-  (expand-file-name "scripts/build-record.mjs" pmbah--source-directory)
+  (expand-file-name "scripts/event-journal.mjs" pmbah--source-directory)
   "Local helper script that computes PMBAH BLAKE3 hashes and hash chains."
   :type 'file
   :group 'pmbah)
@@ -57,7 +58,7 @@ At signing it may also receive selected text transiently for the local binding."
 (defcustom pmbah-chain-tip-script
   (expand-file-name "scripts/chain-tip.mjs" pmbah--source-directory)
   "Local helper script that computes the public chain tip for a checkpoint.
-It receives only the session id, format version, and public events."
+It receives a private journal descriptor and reads only new public events."
   :type 'file
   :group 'pmbah)
 
@@ -76,20 +77,19 @@ records are uploaded without any observation request."
   :group 'pmbah)
 
 (defcustom pmbah-state-directory (locate-user-emacs-file "pmbah/")
-  "Directory holding per-file session state so recording resumes across restarts.
+  "Directory holding session recovery state and accepted-link archives.
 A file-visiting buffer's session is stored under the SHA-256 of the file's
 true name, readable only by the owner.  State files hold the session id,
-start time, public events, and the observation token; never document text."
+start time, journal prefix, frozen manifest, and observation token; never
+document text. Non-file buffers use session UUIDs and `pmbah-recover-session'."
   :type 'directory
   :group 'pmbah)
 
 (defconst pmbah-producer-version "0.1.0")
-(defconst pmbah-format-version "0.2")
+(defconst pmbah-format-version "0.3")
 
 (defconst pmbah-max-session-ms 9007199254740991
   "Largest exact JSON/JavaScript integer for elapsed milliseconds in a record.")
-(defconst pmbah-state-write-idle-seconds 2
-  "Idle time after an edit before the session state is written to disk.")
 
 (defconst pmbah-observation-every-n-events 50
   "Checkpoint once this many events accumulate since the last commitment.")
@@ -112,10 +112,38 @@ start time, public events, and the observation token; never document text."
 
 (defvar-local pmbah--session-id nil)
 (defvar-local pmbah--session-start-time nil)
-(defvar-local pmbah--events nil)
+(defvar-local pmbah--events nil
+  "Bounded newest-first tail, at most 256 numeric events; the journal is authoritative.")
+(defvar-local pmbah--journal-bytes 0)
+(defvar-local pmbah--journal-count 0)
+(defvar-local pmbah--journal-pending nil)
+(defvar-local pmbah--journal-repair nil)
+(defvar-local pmbah--chain-tip-byte-offset 0)
+(defvar-local pmbah--chain-tip-last-time 0)
+(defvar-local pmbah--frozen-byte-length nil)
+(defvar-local pmbah--upload-id nil)
 (defvar-local pmbah--next-seq 0)
-(defvar-local pmbah--state-timer nil
-  "Pending idle timer that writes this buffer's session state.")
+(defvar-local pmbah--session-format nil)
+(defvar-local pmbah--parent-record nil)
+(defvar-local pmbah--frozen-record nil
+  "Serialized manifest only; its immutable events stay in the journal prefix.")
+(defvar-local pmbah--frozen-upload nil
+  "Serialized small observation envelope, fixed before its first upload attempt.")
+(defvar-local pmbah--uploaded-response nil)
+(defvar-local pmbah--uploaded-at-ms nil)
+(defvar-local pmbah--signed-duration-ms nil)
+(defvar-local pmbah--signing nil)
+(defvar-local pmbah--sign-job nil "Current asynchronous interactive signing operation.")
+(defvar-local pmbah--read-only-lock nil)
+(defvar-local pmbah--previous-read-only nil)
+(defvar-local pmbah--owned-paths nil
+  "Recovery paths locked by this live buffer, including while capture is off.")
+(defvar-local pmbah--save-failure nil
+  "Latest recovery write failure; capture stays read-only until explicitly saved.")
+(defvar-local pmbah--pending-gap nil
+  "Non-nil until a real mutation marks an unknown capture baseline.")
+(defvar-local pmbah--observed-tick nil
+  "Last observed character modification tick; never a text snapshot.")
 (defvar-local pmbah--state-path nil
   "State file this buffer's session was last written to.
 When the visited file is renamed, the state file moves with it.")
@@ -175,26 +203,56 @@ passed transiently to the local helper solely to compute that binding."
       (condition-case error
           (progn
             (pmbah--begin-capture)
-            (add-hook 'after-change-functions #'pmbah--after-change nil t)
+            (pmbah--reinstall-capture)
             (add-hook 'after-change-major-mode-hook #'pmbah--reinstall-capture)
             (add-hook 'kill-buffer-hook #'pmbah--write-state)
+            (add-hook 'kill-buffer-hook #'pmbah--cancel-sign-job)
+            (add-hook 'kill-buffer-hook #'pmbah--release-ownership t)
             (add-hook 'kill-emacs-hook #'pmbah--write-all-state)
             (add-hook 'after-set-visited-file-name-hook #'pmbah--follow-visited-file nil t))
-        (error
+        ((error quit)
          (setq pmbah-mode nil)
+         (pmbah--unlock-buffer)
+         (pmbah--release-ownership)
+         (remove-hook 'before-change-functions #'pmbah--before-change t)
          (remove-hook 'after-change-functions #'pmbah--after-change t)
          (signal (car error) (cdr error))))
+    (pmbah--cancel-sign-job)
+    (setq pmbah--pending-gap t)
+    (pmbah--unlock-buffer)
+    (remove-hook 'before-change-functions #'pmbah--before-change t)
     (remove-hook 'after-change-functions #'pmbah--after-change t)
     (pmbah--write-state)))
 
 ;; Session state outlives `kill-all-local-variables', so changing the major
 ;; mode or reverting the buffer keeps recording into the same session.
-(dolist (variable '(pmbah-mode
-                    pmbah--session-id
+(defconst pmbah--session-variables '(pmbah--session-id
                     pmbah--session-start-time
                     pmbah--events
+                    pmbah--journal-bytes
+                    pmbah--journal-count
+                    pmbah--journal-pending
+                    pmbah--journal-repair
+                    pmbah--chain-tip-byte-offset
+                    pmbah--chain-tip-last-time
+                    pmbah--frozen-byte-length
+                    pmbah--upload-id
                     pmbah--next-seq
-                    pmbah--state-timer
+                    pmbah--session-format
+                    pmbah--parent-record
+                    pmbah--frozen-record
+                    pmbah--frozen-upload
+                    pmbah--uploaded-response
+                    pmbah--uploaded-at-ms
+                    pmbah--signed-duration-ms
+                    pmbah--signing
+                    pmbah--sign-job
+                    pmbah--read-only-lock
+                    pmbah--previous-read-only
+                    pmbah--owned-paths
+                    pmbah--save-failure
+                    pmbah--pending-gap
+                    pmbah--observed-tick
                     pmbah--state-path
                     pmbah--chain-tip
                     pmbah--chain-tip-event-count
@@ -209,55 +267,222 @@ passed transiently to the local helper solely to compute that binding."
                     pmbah--observation-watchdog
                     pmbah--observation-backoff-ms
                     pmbah--observation-commitments
-                    pmbah--observation-last-failure))
+                    pmbah--observation-last-failure)
+  "Buffer-local state installed together after successful recovery.")
+
+(dolist (variable (cons 'pmbah-mode pmbah--session-variables))
   (put variable 'permanent-local t))
 
 (defun pmbah--reinstall-capture ()
   "Re-add the buffer-local change hook after a major-mode change wiped it."
   (when (and pmbah-mode pmbah--session-id)
+    (when (or pmbah--signing pmbah--frozen-record pmbah--save-failure) (pmbah--lock-buffer))
+    (pmbah--check-capture-gap)
+    (add-hook 'before-change-functions #'pmbah--before-change nil t)
+    (add-hook 'before-revert-hook #'pmbah--mark-capture-gap nil t)
     (add-hook 'after-change-functions #'pmbah--after-change nil t)))
+
+(defun pmbah--mark-capture-gap ()
+  "Mark a boundary whose intervening changes may not have been observed."
+  (when pmbah--session-id
+    (setq pmbah--pending-gap t)))
+
+(defun pmbah--check-capture-gap ()
+  "Detect changes made while the capture hooks were suppressed."
+  (when (and pmbah--observed-tick
+             (/= pmbah--observed-tick (buffer-chars-modified-tick)))
+    (pmbah--mark-capture-gap)))
+
+(defun pmbah--before-change (_beg _end)
+  "Check continuity before the next observed character change."
+  ;; Do not throw from modification hooks: Emacs removes a failing hook.
+  ;; `buffer-read-only' blocks ordinary edits before hooks run. Deliberate
+  ;; inhibit-read-only edits remain private and cannot alter the sealed record.
+  (when (and pmbah-mode (not pmbah--signing) (not pmbah--frozen-record))
+    (pmbah--check-capture-gap)))
+
+(defun pmbah--lock-buffer ()
+  "Prevent ordinary edits while building or retaining a frozen record."
+  (unless pmbah--read-only-lock
+    (setq pmbah--previous-read-only buffer-read-only
+          pmbah--read-only-lock t))
+  (setq buffer-read-only t))
+
+(defun pmbah--unlock-buffer ()
+  "Restore the buffer's read-only setting from before PMBAH locked it."
+  (when pmbah--read-only-lock
+    (setq buffer-read-only pmbah--previous-read-only
+          pmbah--read-only-lock nil
+          pmbah--previous-read-only nil)))
 
 (defun pmbah--begin-capture ()
   "Continue this buffer's session, resume it from disk, or start fresh."
   (unless pmbah--session-id
     (let* ((path (pmbah--state-file))
+           (_lock (when path (pmbah--claim-state path)))
            (state (and path (file-exists-p path) (pmbah--read-state path)))
            (blocker (and path (file-exists-p path) (pmbah--state-resume-blocker state))))
       (cond
        (blocker
         (pmbah--retire-state-file path blocker)
         (pmbah--start-session))
-       (state (pmbah--resume-session state))
+       (state (pmbah--resume-session state path))
        (t (pmbah--start-session))))))
 
-(defun pmbah--start-session ()
+(defun pmbah--start-session (&optional parent-record start-ms)
   "Start a fresh per-buffer PMBAH session."
-  (setq pmbah--session-id (pmbah--uuid-v4)
-        pmbah--session-start-time (current-time)
-        pmbah--events nil
-        pmbah--next-seq 0
-        pmbah--chain-tip nil
-        pmbah--chain-tip-event-count 0)
-  (pmbah--observation-reset))
+  (pmbah--cancel-sign-job)
+  (let ((previous-path pmbah--state-path)
+        (previous-session pmbah--session-id))
+    (pmbah--unlock-buffer)
+    (setq pmbah--session-id (pmbah--uuid-v4)
+          pmbah--session-start-time (if start-ms (pmbah--ms-to-time start-ms) (current-time))
+          pmbah--state-path nil
+          pmbah--parent-record parent-record
+          pmbah--events nil
+          pmbah--journal-bytes 0
+          pmbah--journal-count 0
+          pmbah--journal-pending nil
+          pmbah--journal-repair nil
+          pmbah--chain-tip-byte-offset 0
+          pmbah--chain-tip-last-time 0
+          pmbah--frozen-byte-length nil
+          pmbah--upload-id nil
+          pmbah--next-seq 0
+          pmbah--session-format pmbah-format-version
+          pmbah--frozen-record nil
+          pmbah--frozen-upload nil
+          pmbah--uploaded-response nil
+          pmbah--uploaded-at-ms nil
+          pmbah--signed-duration-ms nil
+          pmbah--save-failure nil
+          pmbah--pending-gap (save-restriction (widen) (> (buffer-size) 0))
+          pmbah--observed-tick (buffer-chars-modified-tick)
+          pmbah--chain-tip nil
+          pmbah--chain-tip-event-count 0)
+    (pmbah--observation-reset)
+    (let* ((preferred (pmbah--preferred-state-file))
+           (existing (and (file-exists-p preferred) (pmbah--read-state preferred))))
+      (setq pmbah--state-path
+            (if (and buffer-file-name (file-exists-p preferred)
+                     (not (equal (plist-get existing :session_id) previous-session)))
+                (or previous-path
+                    (expand-file-name (concat "session-" pmbah--session-id ".json") pmbah-state-directory))
+              preferred)))
+    (pmbah--claim-state pmbah--state-path)
+    (pmbah--claim-state (pmbah--journal-file))
+    (pmbah--release-ownership (list pmbah--state-path (pmbah--journal-file)))))
 
-(defun pmbah--resume-session (state)
-  "Continue the session described by the STATE plist read from disk."
-  (let ((events (plist-get state :events))
+(defun pmbah--resume-session (state &optional recovery-path)
+  "Validate STATE in isolated bindings, then install its recovered session.
+Errors and quits leave the original live state intact, so another enable
+must repeat recovery rather than append with a partially installed cursor."
+  (pmbah--assert-session-owner (plist-get state :session_id))
+  (let ((original (mapcar #'symbol-value pmbah--session-variables))
+        (owned pmbah--owned-paths)
+        recovered committed)
+    (unwind-protect
+        (progn
+          (cl-progv pmbah--session-variables original
+            (let ((pmbah-mode nil))
+              (unwind-protect
+                  (progn
+                    (pmbah--resume-session-verified state recovery-path)
+                    (setq recovered (mapcar #'symbol-value pmbah--session-variables)))
+                (unless recovered (pmbah--release-ownership owned)))))
+          ;; The validated state and its lock ownership become visible together.
+          (let ((inhibit-quit t))
+            (cl-mapc #'set pmbah--session-variables recovered)
+            (pmbah--release-ownership (list pmbah--state-path (pmbah--journal-file)))
+            (setq committed t)))
+      (when (and recovered (not committed))
+        (let ((pmbah--owned-paths
+               (nth (cl-position 'pmbah--owned-paths pmbah--session-variables) recovered)))
+          (pmbah--release-ownership owned))))))
+
+(defun pmbah--resume-session-verified (state recovery-path)
+  "Recover STATE into the caller's isolated session bindings."
+
+  (let ((legacy (not (equal (plist-get state :storage_version) 2)))
         (observation (plist-get state :observation)))
     (setq pmbah--session-id (plist-get state :session_id)
           pmbah--session-start-time (pmbah--ms-to-time (plist-get state :session_start_ms))
-          pmbah--events (reverse events)
-          pmbah--next-seq (length events))
-    (pmbah--set-chain-tip (plist-get state :chain_tip)
-                          (or (plist-get state :chain_tip_event_count) 0))
+          pmbah--session-format (plist-get state :format_version)
+          pmbah--parent-record (plist-get state :parent_record)
+          pmbah--frozen-record (plist-get state :frozen_record)
+          pmbah--frozen-upload (plist-get state :frozen_upload)
+          pmbah--frozen-byte-length (plist-get state :frozen_byte_length)
+          pmbah--upload-id (plist-get state :upload_id)
+          pmbah--uploaded-response (plist-get state :uploaded_response)
+          pmbah--uploaded-at-ms (plist-get state :uploaded_at_ms)
+          pmbah--signed-duration-ms (plist-get state :signed_duration_ms)
+          pmbah--save-failure (plist-get state :save_failure)
+          pmbah--pending-gap t
+          pmbah--observed-tick (buffer-chars-modified-tick)
+          pmbah--journal-pending nil
+          pmbah--journal-repair nil
+          pmbah--state-path (or recovery-path (pmbah--preferred-state-file)))
+    (pmbah--claim-state pmbah--state-path)
+    (pmbah--claim-state (pmbah--journal-file))
+    (unless legacy
+      (unless (and (integerp (plist-get state :event_count)) (>= (plist-get state :event_count) 0)
+                   (integerp (plist-get state :journal_bytes)) (>= (plist-get state :journal_bytes) 0))
+        (user-error "Recovery metadata has an invalid acknowledged journal prefix")))
+    (when (and (not (plist-get state :chain_tip))
+               (not (zerop (or (plist-get state :chain_tip_event_count) 0))))
+      (user-error "Recovery metadata has no hash for its cached prefix"))
+    (when (and pmbah--frozen-record
+               (not (alist-get 'manifest (pmbah--parse-public-json pmbah--frozen-record))))
+      (user-error "Recovery metadata has no frozen manifest"))
+    (when legacy (pmbah--migrate-event-array (plist-get state :events)))
+    (let* ((scan (pmbah--journal-helper
+                  (append (list :operation "inspect" :journal_path (pmbah--journal-file)
+                        :session_id pmbah--session-id :format_version pmbah--session-format
+                        :acknowledged_event_count (if legacy (length (plist-get state :events))
+                                                    (plist-get state :event_count))
+                        :chain_anchor (when (plist-get state :chain_tip)
+                                        (append (list :event_count (plist-get state :chain_tip_event_count)
+                                                      :chain_tip (plist-get state :chain_tip))
+                                                (unless legacy
+                                                  (list :byte_length (plist-get state :chain_tip_byte_offset)
+                                                        :last_t (plist-get state :chain_tip_last_time)))))
+                        :observation_anchors (vconcat (plist-get observation :commitments))
+                        :frozen_manifest (when pmbah--frozen-record
+                                           (alist-get 'manifest (pmbah--parse-public-json pmbah--frozen-record)))
+                        :frozen_byte_length pmbah--frozen-byte-length
+                        :repair_tail t)
+                          (unless legacy (list :acknowledged_byte_length (plist-get state :journal_bytes))))))
+           (count (alist-get 'event_count scan)))
+      (setq pmbah--next-seq count
+            pmbah--journal-count count
+            pmbah--journal-bytes (alist-get 'byte_length scan)
+            pmbah--chain-tip (alist-get 'chain_tip scan)
+            pmbah--chain-tip-event-count count
+            pmbah--chain-tip-byte-offset pmbah--journal-bytes
+            pmbah--chain-tip-last-time (alist-get 'last_t scan)
+            pmbah--events (reverse (json-parse-string (pmbah--json-encode (alist-get 'tail scan))
+                                                     :object-type 'plist :array-type 'list :null-object nil :false-object :json-false))))
+    (when pmbah--frozen-record
+      (let ((manifest (alist-get 'manifest (pmbah--parse-public-json pmbah--frozen-record))))
+        (unless (= (alist-get 'event_count manifest) pmbah--next-seq)
+          (user-error "Frozen record does not match its journal prefix"))
+        (setq pmbah--frozen-record (pmbah--json-encode (list (cons 'manifest manifest)))
+              pmbah--frozen-byte-length pmbah--journal-bytes
+              pmbah--upload-id (or pmbah--upload-id (pmbah--uuid-v4))))
+      (when (and legacy pmbah--frozen-upload)
+        (setq pmbah--frozen-upload
+              (pmbah--json-encode
+               (list (cons 'observation
+                           (alist-get 'observation (pmbah--parse-public-json pmbah--frozen-upload))))))))
     (pmbah--observation-reset)
     (setq pmbah--observation-token (plist-get observation :token)
           pmbah--observation-committed-count (or (plist-get observation :committed_event_count) 0)
           pmbah--observation-commitments (plist-get observation :commitments)
           pmbah--observation-last-failure (plist-get observation :last_failure))
-    (when (equal (plist-get observation :state) "diverged")
-      (setq pmbah--observation-state 'diverged))
-    (pmbah--observation-recompute-state)))
+    (when (equal (plist-get observation :state) "diverged") (setq pmbah--observation-state 'diverged))
+    (pmbah--observation-recompute-state)
+    ;; Publish the new small metadata only after migration and verification succeed.
+    (pmbah--write-state t)))
 
 (defun pmbah--state-resume-blocker (state)
   "Return why the STATE plist cannot be resumed, or nil when it can."
@@ -265,13 +490,15 @@ passed transiently to the local helper solely to compute that binding."
    ((not (and state
               (stringp (plist-get state :session_id))
               (integerp (plist-get state :session_start_ms))
-              (listp (plist-get state :events))))
+              (or (equal (plist-get state :storage_version) 2)
+                  (listp (plist-get state :events)))))
     "could not be read")
-   ((not (equal (plist-get state :format_version) pmbah-format-version))
+   ((not (member (plist-get state :format_version) '("0.1" "0.2" "0.3")))
     (format "was recorded as format %s, not %s"
             (plist-get state :format_version) pmbah-format-version))
-   ((>= (- (pmbah--time-to-ms (current-time)) (plist-get state :session_start_ms))
-        pmbah-max-session-ms)
+   ((and (not (plist-get state :frozen_record))
+         (>= (- (pmbah--time-to-ms (current-time)) (plist-get state :session_start_ms))
+             pmbah-max-session-ms))
     "exceeds the exact integer range for a record clock")
    (t nil)))
 
@@ -302,52 +529,200 @@ passed transiently to the local helper solely to compute that binding."
 ;;
 ;; File-visiting buffers keep their session in `pmbah-state-directory' so a
 ;; writer who closes the file, or Emacs, and returns later continues the
-;; same session.  Writes are debounced on an idle timer and forced when the
-;; buffer or Emacs is killed, when the mode is turned off, and when the server
-;; accepts a checkpoint (the token must not be lost).
+;; same session. Every captured mutation saves before returning from its hook.
+;; State also saves on buffer/Emacs close, mode disable, and checkpoint outcomes
+;; (the observation token must not be lost).
 
 (defun pmbah--state-file ()
-  "Return the state file for the visited file, or nil for non-file buffers."
-  (when buffer-file-name
+  "Return the authoritative recovery path, including a retained rename source."
+  (or pmbah--state-path (pmbah--preferred-state-file)))
+
+(defun pmbah--preferred-state-file ()
+  "Return the file-keyed or non-file session-keyed recovery path."
+  (cond
+   (buffer-file-name
     (expand-file-name (concat (secure-hash 'sha256 (file-truename buffer-file-name)) ".json")
-                      pmbah-state-directory)))
+                      pmbah-state-directory))
+   (pmbah--session-id
+    (expand-file-name (concat "session-" pmbah--session-id ".json") pmbah-state-directory))))
 
 (defun pmbah--state-snapshot ()
   "Return the JSON-serializable session state for this buffer."
   (list :session_id pmbah--session-id
         :session_start_ms (pmbah--time-to-ms pmbah--session-start-time)
-        :format_version pmbah-format-version
-        :events (vconcat (pmbah--session-events))
+        :format_version pmbah--session-format
+        :parent_record pmbah--parent-record
+        :storage_version 2
+        :event_count pmbah--journal-count
+        :journal_bytes pmbah--journal-bytes
+        :frozen_byte_length pmbah--frozen-byte-length
+        :upload_id pmbah--upload-id
+        :pending_gap (if pmbah--pending-gap t :json-false)
+        :frozen_record pmbah--frozen-record
+        :frozen_upload pmbah--frozen-upload
+        :uploaded_response pmbah--uploaded-response
+        :uploaded_at_ms pmbah--uploaded-at-ms
+        :signed_duration_ms pmbah--signed-duration-ms
+        :save_failure pmbah--save-failure
         :chain_tip pmbah--chain-tip
         :chain_tip_event_count pmbah--chain-tip-event-count
+        :chain_tip_byte_offset pmbah--chain-tip-byte-offset
+        :chain_tip_last_time pmbah--chain-tip-last-time
         :observation (list :state (symbol-name pmbah--observation-state)
                            :last_failure pmbah--observation-last-failure
                            :token pmbah--observation-token
                            :committed_event_count pmbah--observation-committed-count
                            :commitments (vconcat pmbah--observation-commitments))))
 
-(defun pmbah--write-state ()
-  "Write this buffer's session state to its state file, if it visits a file.
-Failures are reported with `message' and never signalled, because this runs
-from hooks and timers."
-  (pmbah--cancel-state-write)
+(defun pmbah--journal-file ()
+  "Return this session's stable append-only numeric event journal path."
+  (expand-file-name (concat "events-" pmbah--session-id ".jsonl") pmbah-state-directory))
+
+(defun pmbah--journal-helper (payload)
+  "Run a bounded-memory local operation over the numeric journal."
+  (pmbah--run-helper payload))
+
+(defun pmbah--flush-journal ()
+  "Durably append only new numeric events, retaining an unacknowledged event on failure."
+  (let ((path (pmbah--journal-file))
+        (coding-system-for-write 'utf-8-unix)
+        (write-region-inhibit-fsync nil))
+    (pmbah--claim-state path)
+    (unless (file-exists-p path)
+      (with-file-modes #o600 (write-region "" nil path nil 'silent)))
+    (when pmbah--journal-repair
+      (pmbah--journal-helper (list :operation "truncate" :journal_path path :byte_length pmbah--journal-bytes))
+      (setq pmbah--journal-repair nil))
+    (while pmbah--journal-pending
+      (let* ((event (car (last pmbah--journal-pending)))
+             (line (concat (pmbah--json-encode event) "\n")))
+        (condition-case error
+            (progn
+              (write-region line nil path t 'silent)
+              (setq pmbah--journal-bytes (+ pmbah--journal-bytes (string-bytes line))
+                    pmbah--journal-count (1+ pmbah--journal-count)
+                    pmbah--journal-pending (butlast pmbah--journal-pending)))
+          (error
+           (setq pmbah--journal-repair t)
+           (signal (car error) (cdr error))))))))
+
+(defun pmbah--migrate-event-array (events)
+  "Atomically migrate a legacy EVENTS array before replacing its recovery metadata."
+  (let* ((path (pmbah--journal-file))
+         (temporary (concat path ".migrating"))
+         (coding-system-for-write 'utf-8-unix)
+         (write-region-inhibit-fsync nil))
+    (pmbah--claim-state path)
+    (unwind-protect
+        (progn
+          (with-file-modes #o600
+            (write-region "" nil temporary nil 'silent)
+            (with-temp-buffer
+              (dolist (event events)
+                (insert (pmbah--json-encode event) "\n")
+                (when (> (buffer-size) 65536)
+                  (write-region (point-min) (point-max) temporary t 'silent)
+                  (erase-buffer)))
+              (write-region (point-min) (point-max) temporary t 'silent)))
+          (rename-file temporary path t))
+      (when (file-exists-p temporary) (delete-file temporary)))))
+
+(defun pmbah--assert-session-owner (session-id)
+  "Reject a SESSION-ID already retained by another live buffer."
+  (let ((current (current-buffer)))
+    (dolist (buffer (buffer-list))
+      (unless (eq buffer current)
+        (with-current-buffer buffer
+          (when (and session-id (equal session-id pmbah--session-id))
+            (user-error "PMBAH session is already owned by buffer %s" (buffer-name))))))))
+
+(defun pmbah--claim-state (path)
+  "Exclusively claim PATH for this buffer without offering to steal a lock."
+  (unless (member path pmbah--owned-paths)
+    (let ((current (current-buffer))
+          (directory (file-name-directory path)))
+      (dolist (buffer (buffer-list))
+        (unless (eq current buffer)
+          (with-current-buffer buffer
+            (when (member path pmbah--owned-paths)
+              (user-error "PMBAH recovery is already owned by buffer %s" (buffer-name))))))
+      (unless (file-directory-p directory)
+        (make-directory directory t)
+        (set-file-modes directory #o700))
+      (let ((create-lockfiles t))
+        (cl-letf (((symbol-function 'ask-user-about-lock)
+                   (lambda (&rest _)
+                     (user-error "PMBAH recovery is already owned by another Emacs process: %s" path))))
+          (lock-file path)))
+      (unless (eq (file-locked-p path) t)
+        (user-error "Could not acquire PMBAH recovery lock: %s" path))
+      (push path pmbah--owned-paths))))
+
+(defun pmbah--release-ownership (&optional keep)
+  "Release recovery locks except KEEP, a path or list of paths."
+  (let ((paths (if (listp keep) keep (list keep))))
+    (dolist (path pmbah--owned-paths)
+      (unless (member path paths) (unlock-file path)))
+    (setq pmbah--owned-paths (cl-intersection pmbah--owned-paths paths :test #'equal))))
+
+(defun pmbah--write-json-file (path json)
+  "Atomically write JSON to private PATH, signalling storage failures."
+  (let ((directory (file-name-directory path))
+        (temp-path (concat path ".tmp"))
+        (coding-system-for-write 'utf-8)
+        (write-region-inhibit-fsync nil))
+    (unless (file-directory-p directory)
+      (make-directory directory t)
+      (set-file-modes directory #o700))
+    (unwind-protect
+        (progn
+          (with-file-modes #o600 (with-temp-file temp-path (insert json)))
+          (rename-file temp-path path t))
+      (when (file-exists-p temp-path) (delete-file temp-path)))))
+
+(defun pmbah--write-state (&optional strict)
+  "Write this buffer's content-blind recovery state.
+With STRICT, signal failures so signing cannot outrun durable storage.
+Otherwise report failures with `message' for hooks and timers."
   (let ((path (pmbah--state-file)))
-    (when (and path pmbah--session-id (> pmbah--next-seq 0))
+    (when (and path pmbah--session-id (or (> pmbah--next-seq 0) pmbah--parent-record))
       (condition-case error
-          (let ((directory (file-name-directory path))
-                (temp-path (concat path ".tmp"))
-                (json (pmbah--json-encode (pmbah--state-snapshot)))
-                (coding-system-for-write 'utf-8))
-            (unless (file-directory-p directory)
-              (make-directory directory t)
-              (set-file-modes directory #o700))
-            (with-file-modes #o600
-              (with-temp-file temp-path
-                (insert json)))
-            (rename-file temp-path path t)
+          (progn
+            (pmbah--claim-state path)
+            (pmbah--flush-journal)
+            (pmbah--write-json-file path (pmbah--json-encode (pmbah--state-snapshot)))
             (setq pmbah--state-path path))
         (error
-         (message "PMBAH could not save session state: %s" (error-message-string error)))))))
+         (if strict
+             (signal (car error) (cdr error))
+           (pmbah--mark-save-failure error)))))))
+
+(defun pmbah--mark-save-failure (error)
+  "Retain in-memory events and stop editable capture after a storage ERROR."
+  (setq pmbah--save-failure (error-message-string error))
+  (when pmbah-mode (pmbah--lock-buffer))
+  (message "PMBAH could not save recovery state: %s. Recording is paused; use M-x pmbah-retry-save"
+           pmbah--save-failure))
+
+;;;###autoload
+(defun pmbah-retry-save ()
+  "Save recovery state and resume unsigned capture after a storage failure.
+A frozen upload stays frozen and read-only. No document text is persisted."
+  (interactive)
+  (unless (and pmbah-mode pmbah--session-id)
+    (user-error "Enable pmbah-mode before retrying a save"))
+  (when (or pmbah--sign-job pmbah--signing)
+    (user-error "This record is being prepared or uploaded; wait before retrying its save"))
+  (setq pmbah--save-failure nil)
+  (condition-case error
+      (progn
+        (pmbah--write-state t)
+        (unless pmbah--frozen-record
+          (pmbah--unlock-buffer)
+          (when (> pmbah--next-seq 0) (pmbah--observation-after-event)))
+        (message "PMBAH recovery state saved%s"
+                 (if pmbah--frozen-record "; the record remains frozen" "; recording resumed")))
+    (error (pmbah--mark-save-failure error))))
 
 (defun pmbah--write-all-state ()
   "Write the session state of every recording buffer."
@@ -356,54 +731,37 @@ from hooks and timers."
       (when pmbah--session-id
         (pmbah--write-state)))))
 
-(defun pmbah--schedule-state-write ()
-  "Write the session state once Emacs has been idle for a moment."
-  (when (and buffer-file-name (not pmbah--state-timer))
-    (setq pmbah--state-timer
-          (run-with-idle-timer pmbah-state-write-idle-seconds nil
-                               #'pmbah--write-state-in-buffer (current-buffer)))))
-
-(defun pmbah--write-state-in-buffer (buffer)
-  "Write BUFFER's session state if the buffer is still live."
-  (when (buffer-live-p buffer)
-    (with-current-buffer buffer
-      (pmbah--write-state))))
-
-(defun pmbah--cancel-state-write ()
-  "Cancel a pending idle write for this buffer."
-  (when pmbah--state-timer
-    (cancel-timer pmbah--state-timer)
-    (setq pmbah--state-timer nil)))
-
 (defun pmbah--delete-state ()
-  "Remove this buffer's state file after the session was uploaded or discarded."
-  (pmbah--cancel-state-write)
-  (let ((path (pmbah--state-file)))
-    (when (and path (file-exists-p path))
-      (condition-case error
-          (delete-file path)
-        (error
-         (message "PMBAH could not remove session state: %s" (error-message-string error)))))))
+  "Remove finished/discarded recovery metadata before its now-unreferenced journal."
+  (let ((path (pmbah--state-file)) (journal (pmbah--journal-file)))
+    (condition-case error
+        (progn
+          (when (and path (file-exists-p path)) (delete-file path))
+          (when (file-exists-p journal) (delete-file journal)))
+      (error (message "PMBAH could not remove session recovery: %s" (error-message-string error))))))
 
 (defun pmbah--follow-visited-file ()
-  "Move the state file to the visited file's new name after a rename.
-Runs from `after-set-visited-file-name-hook', which `write-file' and
-`set-visited-file-name' call."
-  (let ((old-path pmbah--state-path)
-        (new-path (pmbah--state-file)))
-    (when (and old-path (not (equal old-path new-path)) (file-exists-p old-path))
-      (condition-case error
-          (if new-path
-              (progn
-                (rename-file old-path new-path t)
-                (setq pmbah--state-path new-path))
-            (delete-file old-path)
-            (setq pmbah--state-path nil))
-        (error
-         (message "PMBAH could not move session state to the renamed file: %s"
-                  (error-message-string error)))))
-    (when new-path
-      (pmbah--write-state))))
+  "Move recovery state after a visited-file rename without replacing another session."
+  (let* ((old-path (pmbah--state-file))
+         (new-path (pmbah--preferred-state-file))
+         (target (and new-path (file-exists-p new-path) (pmbah--read-state new-path))))
+    (if (and new-path (not (equal old-path new-path)) (file-exists-p new-path)
+             (not (equal (plist-get target :session_id) pmbah--session-id)))
+        (progn
+          (setq pmbah--state-path old-path)
+          (message "PMBAH recovery at %s belongs to another session; this session remains at %s"
+                   new-path old-path))
+      (when (and old-path new-path (not (equal old-path new-path)))
+        (condition-case error
+            (progn
+              (pmbah--claim-state new-path)
+              (when (file-exists-p old-path) (rename-file old-path new-path t))
+              (setq pmbah--state-path new-path)
+              (pmbah--release-ownership (list new-path (pmbah--journal-file))))
+          (error
+           (message "PMBAH could not move session recovery; retaining %s: %s"
+                    old-path (error-message-string error)))))
+      (when new-path (pmbah--write-state)))))
 
 (defun pmbah--read-state (path)
   "Parse the session state file at PATH, or return nil when it is unreadable."
@@ -444,7 +802,7 @@ Runs from `after-set-visited-file-name-hook', which `write-file' and
 BEG, END, and LEN are supplied by `after-change-functions` and are Emacs
 character positions/lengths, which match the PMBAH format's Unicode codepoint
 unit for these captured text buffers."
-  (unless (or (not pmbah-mode) (not pmbah--session-id))
+  (unless (or (not pmbah-mode) (not pmbah--session-id) pmbah--save-failure pmbah--signing pmbah--frozen-record)
     (let* ((inserted-len (- end beg))
            (op (cond
                 ((and (= len 0) (> inserted-len 0)) "insert")
@@ -452,25 +810,33 @@ unit for these captured text buffers."
                 ((and (> len 0) (> inserted-len 0)) "replace")
                 (t nil)))
            (pos (1- beg)))
+      (setq pmbah--observed-tick (buffer-chars-modified-tick))
       (when op
         (pmbah--append-event op pos len inserted-len (pmbah--source-for-current-command))))))
 
 (defun pmbah--append-event (op pos del-len ins-len source &optional timestamp-ms)
   "Append a content-blind PMBAH public event."
+  (when (or pmbah--signing pmbah--frozen-record)
+    (user-error "Cannot append to a frozen PMBAH record"))
   (when (>= (pmbah--elapsed-ms) pmbah-max-session-ms)
     (pmbah--retire-live-session))
   (let* ((seq pmbah--next-seq)
          (event (list :seq seq
                       :t (or timestamp-ms (pmbah--elapsed-ms))
                       :op op
-                      :pos pos
+                      :pos (unless pmbah--pending-gap pos)
                       :del_len del-len
                       :ins_len ins-len
                       :source source)))
     (push event pmbah--events)
+    (when (> (length pmbah--events) 256) (setcdr (nthcdr 255 pmbah--events) nil))
+    (push event pmbah--journal-pending)
+    (setq pmbah--pending-gap nil)
     (setq pmbah--next-seq (1+ pmbah--next-seq))
-    (pmbah--observation-after-event)
-    (pmbah--schedule-state-write)))
+    ;; Save before returning from this mutation hook. Failure never escapes the
+    ;; hook (Emacs would remove it), and the event remains available for retry.
+    (pmbah--write-state)
+    (unless pmbah--save-failure (pmbah--observation-after-event))))
 
 (defun pmbah--source-for-current-command ()
   "Return a conservative PMBAH source for `this-command`.
@@ -503,6 +869,8 @@ declare source_attribution."
                             (pmbah--observation-description)
                             pmbah-api-base-url)
                   "PMBAH mode is not active in this buffer.")))
+    (when pmbah--save-failure
+      (setq status (concat status " Recovery save failed; recording paused: " pmbah--save-failure)))
     (when (called-interactively-p 'interactive)
       (message "%s" status))
     status))
@@ -516,6 +884,7 @@ Capture remains enabled and a fresh session starts from the next edit."
     (user-error "pmbah-mode is not active"))
   (when (or (not (called-interactively-p 'interactive))
             (yes-or-no-p "Discard this local PMBAH session without uploading? "))
+    (pmbah--cancel-sign-job)
     (pmbah--delete-state)
     (pmbah--start-session)
     (message "PMBAH session discarded; new session %s started" pmbah--session-id)))
@@ -537,57 +906,245 @@ Capture remains enabled and a fresh session starts from the next edit."
 
 ;;;###autoload
 (defun pmbah-sign-buffer (&optional capture-context no-prompts)
-  "Freeze, build, upload, and copy a short URL for the current PMBAH session.
-
-Interactively, ask y/n questions with yes as the default.  With a prefix
-argument, do not ask those questions; use the default yes answers.  If binding
-is enabled, bind the active region when one is active; otherwise bind the whole
-buffer.  CAPTURE-CONTEXT is intended for tests or advanced callers and must be a
-JSON-serializable plist.  NO-PROMPTS is intended for interactive prefix use and
-tests."
+  "Freeze and publish this session; interactive work runs asynchronously.
+With a prefix argument, accept the usual context and binding defaults.
+Noninteractive callers retain the synchronous result-returning interface."
   (interactive (list nil current-prefix-arg))
-  (unless pmbah-mode
-    (user-error "Enable pmbah-mode before signing a buffer"))
-  (when (= pmbah--next-seq 0)
-    (user-error "No PMBAH events captured for this buffer"))
-  (when (>= (pmbah--elapsed-ms) pmbah-max-session-ms)
-    (pmbah--retire-live-session)
-    (user-error "PMBAH session exceeded the exact integer range of the record clock; it was set aside as .stale and a fresh session %s started"
-                pmbah--session-id))
-  (let* ((context (or capture-context
-                      (if no-prompts
-                          (pmbah--capture-context t t)
-                        (pmbah-review-capture-context))))
-         (binding-has-region (use-region-p))
-         (bind-prompt (if binding-has-region
-                          "Anyone can test guesses against this public commitment. Bind the selected region? "
-                        "Anyone can test guesses against this public commitment. Bind the whole buffer? "))
-         (bind (if no-prompts
-                   t
-                 (and (not noninteractive) (pmbah--y-or-n-p-default-yes bind-prompt))))
-         (final-text (when bind
-                       (if binding-has-region
-                           (buffer-substring-no-properties (region-beginning) (region-end))
-                         (buffer-substring-no-properties (point-min) (point-max)))))
-         (record (progn
-                   (pmbah--observation-flush)
-                   (pmbah-build-record-for-current-buffer context final-text)))
-         (observation (pmbah--observation-envelope))
+  (if (and (called-interactively-p 'interactive) (not noninteractive))
+      (pmbah--sign-buffer-async capture-context no-prompts)
+    (pmbah--sign-buffer-sync capture-context no-prompts)))
+
+(defun pmbah--prepare-signing-input (capture-context no-prompts)
+  "Confirm and freeze capture, returning only the transient local helper input."
+  (unless pmbah-mode (user-error "Enable pmbah-mode before signing a buffer"))
+  (when pmbah--sign-job (user-error "This record is already being prepared or uploaded"))
+  (when (= pmbah--next-seq 0) (user-error "No PMBAH events captured for this buffer"))
+  (unless pmbah--frozen-record
+    (pmbah--check-capture-gap)
+    (when (>= (pmbah--elapsed-ms) pmbah-max-session-ms)
+      (pmbah--retire-live-session)
+      (user-error "PMBAH session clock exceeded its exact integer range; a fresh session started"))
+    (let* ((context (or capture-context (if no-prompts (pmbah--capture-context t t) (pmbah-review-capture-context))))
+           (region (use-region-p))
+           (bind (and (not (equal pmbah--session-format "0.1"))
+                      (if no-prompts t
+                        (and (not noninteractive)
+                             (pmbah--y-or-n-p-default-yes
+                              (if region
+                                  "Anyone can test guesses against this public commitment. Bind the selected region? "
+                                "Anyone can test guesses against this public commitment. Bind the whole buffer? "))))))
+           (final-text (when bind
+                         (pmbah--check-capture-gap)
+                         (when pmbah--pending-gap
+                           (user-error "Capture has a gap; make a recorded edit before binding text, or sign without a text binding"))
+                         (if region (buffer-substring-no-properties (region-beginning) (region-end))
+                           (save-restriction (widen) (buffer-substring-no-properties (point-min) (point-max)))))))
+      (when (equal pmbah--session-format "0.2") (setq pmbah--session-format "0.3"))
+      (setq pmbah--signed-duration-ms
+            (if (equal pmbah--session-format "0.1") (or (plist-get (car pmbah--events) :t) 0) (pmbah--elapsed-ms))
+            pmbah--signing t)
+      (pmbah--lock-buffer)
+      (pmbah--write-state t)
+      (pmbah--record-helper-payload context final-text t))))
+
+(defun pmbah--accept-frozen-manifest (built)
+  "Keep only BUILT's manifest and immutable journal boundary."
+  (setq pmbah--frozen-record (pmbah--json-encode (list (cons 'manifest (alist-get 'manifest built))))
+        pmbah--frozen-byte-length (alist-get 'byte_length built)
+        pmbah--upload-id (pmbah--uuid-v4)
+        pmbah--signing nil)
+  (pmbah--write-state t))
+
+(defun pmbah--save-upload-envelope ()
+  "Persist the small frozen observation envelope before starting publication."
+  (unless pmbah--frozen-upload
+    (setq pmbah--frozen-upload (pmbah--json-encode (list (cons 'observation (pmbah--observation-envelope))))))
+  (pmbah--write-state t))
+
+(defun pmbah--reject-upload-observation (code)
+  "Keep the same record after a specific server rejection of its observation CODE."
+  (pmbah--observation-reset)
+  (setq pmbah--observation-last-failure code
+        pmbah--frozen-upload (pmbah--json-encode (list (cons 'observation (list (cons 'state "unobserved"))))))
+  (pmbah--write-state t)
+  (user-error "Server rejected the observation binding (%s); retry signing the same record without that binding" code))
+
+(defun pmbah--sign-buffer-sync (capture-context no-prompts)
+  "Synchronous noninteractive signing interface for automation and tests."
+  (when pmbah--sign-job (user-error "This record is already being prepared or uploaded"))
+  (unwind-protect
+      (let ((payload (pmbah--prepare-signing-input capture-context no-prompts)))
+        (when payload (pmbah--accept-frozen-manifest (pmbah--journal-helper payload))))
+    (setq pmbah--signing nil)
+    (unless (or pmbah--frozen-record pmbah--save-failure) (pmbah--unlock-buffer)))
+  (pmbah--lock-buffer)
+  (pmbah--write-state t)
+  (unless (or pmbah--frozen-upload pmbah--uploaded-response)
+    (pmbah--observation-flush)
+    (pmbah--save-upload-envelope))
+  (unless pmbah--uploaded-response
+    (condition-case error
+        (setq pmbah--uploaded-response (pmbah--json-encode (pmbah--post-record (pmbah--upload-descriptor)))
+              pmbah--uploaded-at-ms (pmbah--time-to-ms (current-time)))
+      (pmbah-observation-rejected (pmbah--reject-upload-observation (cadr error)))))
+  (pmbah--finish-publication))
+
+(defun pmbah--finish-publication ()
+  "Durably retain an accepted link and start its linked successor segment."
+  (let* ((response (pmbah--parse-public-json pmbah--uploaded-response))
+         (url (or (alist-get 'url response) (alist-get 'record_hash response)))
          (observation-note (pmbah--observation-upload-note))
-         (response (pmbah--post-record
-                    (if observation
-                        (append record (list (cons 'observation observation)))
-                      record)))
-         (url (or (alist-get 'url response) (alist-get 'record_hash response))))
-    (when url
-      (kill-new url))
+         (manifest (alist-get 'manifest (pmbah--parse-public-json pmbah--frozen-record)))
+         (parent (alist-get 'record_hash manifest))
+         (next-start (if (equal (alist-get 'format_version manifest) "0.3")
+                         (+ (pmbah--time-to-ms pmbah--session-start-time)
+                            (alist-get 'duration_ms manifest))
+                       (or pmbah--uploaded-at-ms (pmbah--time-to-ms (current-time))))))
+    (when url (kill-new url))
+    (condition-case error
+        (progn
+          (pmbah--write-state t)
+          ;; Keep the accepted link durable before removing a draft, even if
+          ;; deletion fails or the buffer is immediately reused for new writing.
+          (pmbah--write-json-file
+           (expand-file-name (concat "published-" pmbah--session-id ".json") pmbah-state-directory)
+           pmbah--uploaded-response))
+      (error
+       (user-error "Record uploaded: %s; could not save its link: %s. Retry signing to save it"
+                   url (error-message-string error))))
     (pmbah--delete-state)
-    (pmbah--start-session)
-    (message "PMBAH record uploaded; copied %s%s; new session %s started"
-             url
-             observation-note
-             pmbah--session-id)
+    (pmbah--start-session parent next-start)
+    (condition-case error
+        (pmbah--write-state t)
+      (error (user-error "Record uploaded: %s; could not save continuation state: %s"
+                         url (error-message-string error))))
+    (message "PMBAH record uploaded; copied %s%s; new session %s started" url observation-note pmbah--session-id)
     response))
+
+
+(defun pmbah--cancel-sign-job ()
+  "Cancel local async work before releasing a buffer's recovery ownership."
+  (let ((job pmbah--sign-job))
+    (setq pmbah--sign-job nil pmbah--signing nil)
+    (when (timerp (plist-get job :timer)) (cancel-timer (plist-get job :timer)))
+    (when (process-live-p (plist-get job :process)) (delete-process (plist-get job :process)))))
+
+(defun pmbah--async-sign-current-p (token)
+  "Whether TOKEN still identifies this buffer's current signing operation."
+  (and pmbah--sign-job (equal token (plist-get pmbah--sign-job :token))
+       (equal pmbah--session-id (plist-get pmbah--sign-job :session))))
+
+(defun pmbah--async-sign-failed (failure)
+  "Retain the recoverable prefix and report an asynchronous FAILURE."
+  (pmbah--cancel-sign-job)
+  (unless (or pmbah--frozen-record pmbah--save-failure) (pmbah--unlock-buffer))
+  (message "PMBAH signing stopped: %s" failure))
+
+(defun pmbah--sign-buffer-async (capture-context no-prompts)
+  "Start interactive signing without blocking Emacs during scans or uploads."
+  (when pmbah--sign-job (user-error "This record is already being prepared or uploaded"))
+  (condition-case error
+      (let ((payload (pmbah--prepare-signing-input capture-context no-prompts)))
+        (setq pmbah--sign-job (list :token (pmbah--uuid-v4) :session pmbah--session-id))
+        (if payload
+            (pmbah--start-sign-helper 'manifest payload)
+          (pmbah--lock-buffer)
+          (pmbah--write-state t)
+          (pmbah--async-flush-start))
+        (message "PMBAH is preparing or publishing the frozen record"))
+    ((error quit)
+     (pmbah--async-sign-failed (error-message-string error))
+     (signal (car error) (cdr error)))))
+
+(defun pmbah--start-sign-helper (stage payload)
+  "Run STAGE with PAYLOAD, retaining only the buffer and job token in its callback."
+  (setq pmbah--sign-job (plist-put pmbah--sign-job :stage stage))
+  (let* ((token (plist-get pmbah--sign-job :token))
+         (process (pmbah--run-node-script-async
+                  pmbah-helper-script payload
+                  (apply-partially #'pmbah--sign-helper-result (current-buffer)
+                                   token stage))))
+    (when (and (pmbah--async-sign-current-p token) (eq stage (plist-get pmbah--sign-job :stage)))
+      (setq pmbah--sign-job (plist-put pmbah--sign-job :process process)))))
+
+(defun pmbah--sign-helper-result (buffer token stage result failure)
+  "Apply one helper result only while BUFFER still owns TOKEN."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (pmbah--async-sign-current-p token)
+        (condition-case error
+            (progn
+              (when failure (error "%s" failure))
+              (if (eq stage 'manifest)
+                  (progn (pmbah--accept-frozen-manifest result) (pmbah--async-flush-start))
+                (setq pmbah--uploaded-response (pmbah--json-encode (pmbah--check-upload-result result))
+                      pmbah--uploaded-at-ms (pmbah--time-to-ms (current-time)))
+                (pmbah--finish-publication)))
+          (pmbah-observation-rejected
+           (condition-case rejected
+               (pmbah--reject-upload-observation (cadr error))
+             (error (pmbah--async-sign-failed (error-message-string rejected)))))
+          ((error quit) (pmbah--async-sign-failed (error-message-string error))))))))
+
+(defun pmbah--async-flush-start ()
+  "Set the same bounded checkpoint-flush deadline as synchronous signing."
+  (setq pmbah--sign-job (plist-put pmbah--sign-job :deadline (+ (float-time) pmbah-observation-flush-timeout-seconds))
+        pmbah--sign-job (plist-put pmbah--sign-job :rounds (if pmbah--observation-in-flight 1 0)))
+  (pmbah--async-flush-step (current-buffer) (plist-get pmbah--sign-job :token)))
+
+(defun pmbah--async-flush-step (buffer token)
+  "Poll checkpoint completion on a timer while leaving other buffers usable."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (when (pmbah--async-sign-current-p token)
+        (condition-case error
+            (if (and (not pmbah--frozen-upload) (not pmbah--uploaded-response)
+                     pmbah-observe-process pmbah--observation-token
+                     (not (eq pmbah--observation-state 'diverged))
+                     (< (float-time) (plist-get pmbah--sign-job :deadline))
+                     (or pmbah--observation-in-flight
+                         (and (< (plist-get pmbah--sign-job :rounds) pmbah-observation-flush-rounds)
+                              (> pmbah--next-seq pmbah--observation-committed-count))))
+                (progn
+                  (unless pmbah--observation-in-flight
+                    (setq pmbah--sign-job (plist-put pmbah--sign-job :rounds (1+ (plist-get pmbah--sign-job :rounds)))
+                          pmbah--observation-backoff-ms 0)
+                    (pmbah--observation-kick))
+                  (setq pmbah--sign-job (plist-put pmbah--sign-job :timer
+                                                 (run-with-timer 0.05 nil #'pmbah--async-flush-step buffer token))))
+              (if pmbah--uploaded-response
+                  (pmbah--finish-publication)
+                (pmbah--save-upload-envelope)
+                (pmbah--start-sign-helper 'publish (pmbah--upload-descriptor))))
+          ((error quit) (pmbah--async-sign-failed (error-message-string error))))))))
+
+(defun pmbah--parse-public-json (json)
+  "Read content-blind persisted JSON using public record alist keys."
+  (json-parse-string json :object-type 'alist :array-type 'array
+                     :null-object nil :false-object :json-false))
+
+;;;###autoload
+(defun pmbah-recover-session (path)
+  "Recover a non-file session from PATH into the current buffer.
+No document text is restored. Frozen uploads can be retried unchanged."
+  (interactive
+   (list (completing-read "Recover PMBAH session: "
+                          (when (file-directory-p pmbah-state-directory)
+                            (directory-files pmbah-state-directory t "\\`session-.*\\.json\\'"))
+                          nil t)))
+  (when (and pmbah--session-id (> pmbah--next-seq 0))
+    (user-error "Discard or finish the current session before recovering another"))
+  (let ((owned pmbah--owned-paths) recovered)
+    (unwind-protect
+        (progn
+          (pmbah--claim-state path)
+          (let* ((state (pmbah--read-state path))
+                 (blocker (pmbah--state-resume-blocker state)))
+            (when blocker (user-error "Cannot recover session: %s" blocker))
+            (pmbah--resume-session state path)
+            (setq recovered t)
+            (pmbah-mode 1)))
+      (unless recovered (pmbah--release-ownership owned)))))
 
 (defun pmbah-review-capture-context ()
   "Collect capture context for upload.
@@ -603,14 +1160,19 @@ Absolute file paths are omitted by default and are never included."
     (pmbah--capture-context include-buffer-name include-major-mode)))
 
 (defun pmbah-build-record-for-current-buffer (&optional capture-context final-text)
-  "Build and locally verify a public PMBAH record for the current buffer.
-The returned alist contains only the public `manifest` and `events` shape.
+  "Explicitly export a public PMBAH record for diagnostics.
+This materializes the event array; normal capture, checkpointing, and signing
+use bounded journal operations instead. The returned alist has manifest/events.
 FINAL-TEXT, when non-nil, is handed to the local helper transiently so it can
 compute the content-blind text binding; it is never stored or uploaded."
   (alist-get 'record (pmbah--build-record-result capture-context final-text)))
 
-(defun pmbah--build-record-result (&optional capture-context final-text)
-  "Return the helper result for the current buffer, including verification facts.
+(defun pmbah--build-record-result (&optional capture-context final-text manifest-only)
+  "Run an explicit synchronous export or manifest computation."
+  (pmbah--journal-helper (pmbah--record-helper-payload capture-context final-text manifest-only)))
+
+(defun pmbah--record-helper-payload (&optional capture-context final-text manifest-only)
+  "Return the private journal descriptor for the current buffer's helper call.
 FINAL-TEXT, when a non-empty string, is passed to the local helper SOLELY to
 compute the content-blind text binding and is never persisted or uploaded."
   (unless pmbah--session-id
@@ -618,18 +1180,22 @@ compute the content-blind text binding and is never persisted or uploaded."
   (when (= pmbah--next-seq 0)
     (user-error "No PMBAH events captured for this buffer"))
   (let* ((payload (append
-                   (list :format_version pmbah-format-version
+                   (list :format_version pmbah--session-format
                          :session_id pmbah--session-id
                          :producer (list :id "emacs"
                                          :version pmbah-producer-version
                                          :capabilities ["timing" "pause_fidelity"])
                          :capture_context (or capture-context (pmbah--capture-context nil nil))
-                         :events (vconcat (pmbah--session-events))
-                         :duration_ms (pmbah--elapsed-ms)
-                         :created_client_t (format-time-string "%FT%T%z" (current-time) t))
+                         :operation (if manifest-only "manifest" "export")
+                         :journal_path (pmbah--journal-file)
+                         :event_count pmbah--journal-count
+                         :end_byte pmbah--journal-bytes
+                         :duration_ms (or pmbah--signed-duration-ms (pmbah--elapsed-ms))
+                         :parent_record pmbah--parent-record
+                         :created_client_t (format-time-string "%FT%T.%3NZ" pmbah--session-start-time t))
                    (when (and final-text (stringp final-text) (> (length final-text) 0))
                      (list :final_text final-text)))))
-    (pmbah--run-helper payload)))
+    payload))
 
 (defun pmbah--run-helper (payload)
   "Run the local Node helper with PAYLOAD and return its parsed JSON result."
@@ -659,29 +1225,30 @@ compute the content-blind text binding and is never persisted or uploaded."
       (when (buffer-live-p stdout-buffer) (kill-buffer stdout-buffer))
       (when (file-exists-p stderr-file) (delete-file stderr-file)))))
 
-(defun pmbah--post-record (body)
-  "POST BODY to the ingest API and return the parsed response.
-BODY is the public record plus any observation binding."
-  (let* ((url-request-method "POST")
-         (url-request-extra-headers '(("Content-Type" . "application/json; charset=utf-8")))
-         (url-request-data (encode-coding-string (pmbah--json-encode body) 'utf-8))
-         (endpoint (concat (string-remove-suffix "/" pmbah-api-base-url) "/api/records"))
-         (buffer (url-retrieve-synchronously endpoint t t 30)))
-    (unless buffer
-      (user-error "PMBAH upload failed: no response from %s" endpoint))
-    (unwind-protect
-        (with-current-buffer buffer
-          (let ((status url-http-response-status))
-            (goto-char (or url-http-end-of-headers (point-min)))
-            (let ((body (buffer-substring-no-properties (point) (point-max))))
-              (unless (and (integerp status) (>= status 200) (< status 300))
-                (user-error "PMBAH upload failed with HTTP %s: %s" status (string-trim body)))
-              (json-parse-string body
-                                 :object-type 'alist
-                                 :array-type 'array
-                                 :null-object nil
-                                 :false-object :json-false))))
-      (kill-buffer buffer))))
+(define-error 'pmbah-observation-rejected "PMBAH observation binding was rejected" 'user-error)
+
+(defun pmbah--upload-descriptor ()
+  "Return a small private descriptor for chunked publication of the frozen prefix."
+  (append (pmbah--parse-public-json pmbah--frozen-record)
+          (pmbah--parse-public-json pmbah--frozen-upload)
+          (list (cons 'operation "publish") (cons 'upload_id pmbah--upload-id)
+                (cons 'api_base_url pmbah-api-base-url)
+                (cons 'journal_path (pmbah--journal-file))
+                (cons 'end_byte pmbah--frozen-byte-length))))
+
+(defun pmbah--post-record (descriptor)
+  "Publish DESCRIPTOR's immutable journal prefix in bounded resumable chunks."
+  (pmbah--check-upload-result (pmbah--journal-helper descriptor)))
+
+(defun pmbah--check-upload-result (response)
+  "Interpret the bounded helper response and preserve specific observation rejection."
+  (let ((failure (alist-get 'error response)))
+    (when failure
+      (let ((code (alist-get 'code failure)))
+        (if (member code '("observation_mismatch" "observation_unavailable"))
+            (signal 'pmbah-observation-rejected (list code))
+          (user-error "PMBAH upload failed: %s" (alist-get 'message failure)))))
+    response))
 
 (defun pmbah--capture-context (include-buffer-name include-major-mode)
   "Build capture context, including only accepted Emacs metadata fields."
@@ -762,26 +1329,22 @@ change hook that triggered the checkpoint."
                          (pmbah--observation-fail 'transient 0 "helper returned an unexpected chain tip"))
                         (t
                          (pmbah--set-chain-tip chain-tip event-count)
+                         (setq pmbah--chain-tip-byte-offset (alist-get 'byte_length result))
+                         (setq pmbah--chain-tip-last-time (alist-get 'last_t result))
                          (pmbah--observation-post event-count chain-tip)))))))))
       (error
        (pmbah--observation-fail 'transient 0 (error-message-string error))))))
 
 (defun pmbah--chain-tip-payload ()
-  "Return the chain-tip helper input for the events captured so far.
-When an earlier tip is known, only the events after it are sent, together
-with that tip and its event count, so a checkpoint costs the new events
-rather than the whole session."
-  (let ((events (pmbah--session-events)))
-    (if (and pmbah--chain-tip (> pmbah--chain-tip-event-count 0)
-             (< pmbah--chain-tip-event-count (length events)))
-        (list :session_id pmbah--session-id
-              :format_version pmbah-format-version
-              :previous_chain_tip pmbah--chain-tip
-              :previous_event_count pmbah--chain-tip-event-count
-              :events (vconcat (nthcdr pmbah--chain-tip-event-count events)))
-      (list :session_id pmbah--session-id
-            :format_version pmbah-format-version
-            :events (vconcat events)))))
+  "Return a bounded helper descriptor for only the un-hashed journal suffix."
+  (append (list :session_id pmbah--session-id :format_version pmbah--session-format
+                :journal_path (pmbah--journal-file) :event_count pmbah--journal-count
+                :end_byte pmbah--journal-bytes)
+          (when pmbah--chain-tip
+            (list :previous_chain_tip pmbah--chain-tip
+                  :previous_event_count pmbah--chain-tip-event-count
+                  :previous_byte_offset pmbah--chain-tip-byte-offset
+                  :previous_t pmbah--chain-tip-last-time))))
 
 (defun pmbah--set-chain-tip (chain-tip event-count)
   "Remember CHAIN-TIP as the tip over the first EVENT-COUNT events.
@@ -1108,13 +1671,18 @@ success, or nil and a failure description otherwise.  Return the process."
                          (pmbah--deliver-node-result callback proc exit-status output errors)))))))
     ;; A process that died before reading its input makes sending fail; its
     ;; sentinel is the single place that reports, so the error is not reported here.
-    (condition-case nil
+    (condition-case failure
         (progn
           (process-send-string process (pmbah--json-encode payload))
           (process-send-eof process))
-      (error
+      ((error quit)
        (when (process-live-p process)
-         (delete-process process))))
+         (delete-process process))
+       (when (eq (car failure) 'quit)
+         (setq payload nil)
+         (signal (car failure) (cdr failure)))))
+    ;; The sentinel's lexical scope must not retain a binding selection.
+    (setq payload nil)
     process))
 
 (defun pmbah--deliver-node-result (callback process exit-status output errors)
@@ -1135,8 +1703,17 @@ mistaken for a parse failure and reported a second time."
     (funcall callback nil (format "helper exited %s: %s" exit-status (string-trim errors)))))
 
 (defun pmbah--session-events ()
-  "Return chronological public events for the active session."
-  (nreverse (copy-sequence pmbah--events)))
+  "Explicit diagnostic export of all numeric events; never used by capture or signing."
+  (let ((path (pmbah--journal-file)) events)
+    (when (file-exists-p path)
+      (with-temp-buffer
+        (insert-file-contents path)
+        (goto-char (point-min))
+        (while (not (eobp))
+          (push (json-parse-string (buffer-substring-no-properties (line-beginning-position) (line-end-position))
+                                   :object-type 'plist :array-type 'list :null-object nil :false-object :json-false) events)
+          (forward-line 1))))
+    (append (nreverse events) (reverse pmbah--journal-pending))))
 
 (defun pmbah--elapsed-ms ()
   "Return integer milliseconds since the current session started."

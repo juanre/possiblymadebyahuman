@@ -1,13 +1,34 @@
-import type { B3Hash } from "../../format/src/index.ts";
+import type { B3Hash, BufferMutation, RecordManifest } from "../../format/src/index.ts";
 import type { IngestRecordInput, IngestRecordResponse, ObservedSessionToken, SessionId, SessionRecord } from "./types.ts";
 
 export interface StorageAdapter {
   read(): Promise<SessionRecord[]>;
   write(snapshot: SessionRecord[]): Promise<void>;
+  /** Production adapters use atomic append journals; write is legacy-only. */
+  journal?: EventJournalStorage;
 }
+
+export type JournalCommit = {
+  sessions: SessionRecord[];
+  appends: Array<{ session_id: string; events: BufferMutation[] }>;
+  deleted: string[];
+  clear_events: string[];
+};
+
+export interface EventJournalStorage {
+  commit(batch: JournalCommit): Promise<void>;
+  readEvents(session_id: string, start_seq: number, limit: number): Promise<BufferMutation[]>;
+}
+
+export type JournalUpload = {
+  upload_id: string;
+  manifest: RecordManifest;
+  observation?: IngestRecordInput["observation"];
+};
 
 export interface UploadAdapter {
   postRecord(payload: IngestRecordInput): Promise<IngestRecordResponse>;
+  postJournalRecord?(payload: JournalUpload, read: (start: number, count: number) => Promise<BufferMutation[]>): Promise<IngestRecordResponse>;
 }
 
 /**

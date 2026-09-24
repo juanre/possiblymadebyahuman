@@ -1,13 +1,9 @@
-import type { EventLog, RecordManifest, Signal, SignalMeasure } from "../../format/src/index.ts";
+import { aggregateMutationSizes, type EventLog, type RecordManifest, type Signal, type SignalMeasure } from "../../format/src/index.ts";
 
 export const ANALYZERS_PACKAGE = "@possiblymadebyahuman/analyzers";
-export const TIMING_DISTRIBUTION_ANALYZER_ID = "timing-distribution";
-export const EDIT_TOPOLOGY_ANALYZER_ID = "edit-topology";
-export const ANALYZER_VERSION = "0.1.0";
-export const TIMING_ANALYZER_VERSION = "0.1.1";
-export const DEFAULT_IDLE_THRESHOLD_MS = 30_000;
-export const DEFAULT_LARGE_ATOMIC_INSERT_CODEPOINTS = 50;
-export const DEFAULT_SMALL_EDIT_CODEPOINTS = 5;
+export * from "./constants.ts";
+import { DEFAULT_IDLE_THRESHOLD_MS, DEFAULT_LARGE_ATOMIC_INSERT_CODEPOINTS, DEFAULT_SMALL_EDIT_CODEPOINTS, EDIT_TOPOLOGY_ANALYZER_ID, EDIT_TOPOLOGY_ANALYZER_VERSION, TIMING_ANALYZER_VERSION, TIMING_DISTRIBUTION_ANALYZER_ID } from "./constants.ts";
+import { analyzeEventLog } from "./streaming.ts";
 
 export type AnalyzerInput = {
   events: EventLog;
@@ -81,45 +77,7 @@ export function timingDistributionAnalyzer(options: { idleThresholdMs?: number }
     id: TIMING_DISTRIBUTION_ANALYZER_ID,
     version: TIMING_ANALYZER_VERSION,
     analyze({ events, manifest }) {
-      if (!manifest.producer.capabilities.includes("timing")) {
-        return notApplicable(
-          TIMING_DISTRIBUTION_ANALYZER_ID,
-          "Producer did not declare timing capability, so timing-distribution is not applicable.",
-        );
-      }
-      if (events.length < 2) {
-        return notApplicable(
-          TIMING_DISTRIBUTION_ANALYZER_ID,
-          "Timing distribution needs at least two events to measure inter-event intervals.",
-        );
-      }
-
-      const delays = interEventDelays(events);
-      const sorted = [...delays].sort((left, right) => left - right);
-      const idleDelays = delays.filter((delay) => delay >= idleThresholdMs);
-      const idleTimeMs = sum(idleDelays);
-      const activeTimeMs = sum(delays.filter((delay) => delay < idleThresholdMs));
-      const max = sorted.at(-1) ?? 0;
-      const measures: SignalMeasure[] = [
-        measure("event_count", events.length),
-        measure("interval_count", delays.length),
-        measure("inter_event_delay_min_ms", sorted[0] ?? 0, "ms"),
-        measure("inter_event_delay_p50_ms", percentile(sorted, 0.5), "ms"),
-        measure("inter_event_delay_p90_ms", percentile(sorted, 0.9), "ms"),
-        measure("inter_event_delay_p95_ms", percentile(sorted, 0.95), "ms"),
-        measure("inter_event_delay_max_ms", max, "ms"),
-        measure("active_time_ms", activeTimeMs, "ms"),
-        measure("idle_time_ms", idleTimeMs, "ms"),
-        measure("long_pause_count", idleDelays.length),
-      ];
-
-      return {
-        analyzer_id: TIMING_DISTRIBUTION_ANALYZER_ID,
-        analyzer_version: TIMING_ANALYZER_VERSION,
-        applicable: true,
-        measures,
-        explanation: `Measured ${delays.length} inter-event intervals. Long pauses are intervals at or above ${idleThresholdMs}ms; the longest interval was ${max}ms, with ${idleDelays.length} long pause(s).`,
-      };
+      return analyzeEventLog(events, manifest, { idleThresholdMs }).signals[0]!;
     },
   };
 }
@@ -131,56 +89,40 @@ export function editTopologyAnalyzer(
   const smallThreshold = options.smallEditCodepoints ?? DEFAULT_SMALL_EDIT_CODEPOINTS;
   return {
     id: EDIT_TOPOLOGY_ANALYZER_ID,
-    version: ANALYZER_VERSION,
+    version: EDIT_TOPOLOGY_ANALYZER_VERSION,
     analyze({ events, manifest }) {
-      if (events.length === 0) {
-        return notApplicable(EDIT_TOPOLOGY_ANALYZER_ID, "Edit topology needs at least one event.");
-      }
-
-      const sourceAttribution = manifest.producer.capabilities.includes("source_attribution");
-      const sizeKnownEvents = events.filter(hasKnownSizes);
-      const unknownProcessMeasurementCount = events.filter(
-        (event) => event.pos === null || event.del_len === null || event.ins_len === null,
-      ).length;
-      const smallEditCount = sizeKnownEvents.filter((event) => event.ins_len + event.del_len <= smallThreshold).length;
-      const largeAtomicInserts = sizeKnownEvents.filter((event) => event.ins_len >= largeThreshold);
-      const deletionEvents = sizeKnownEvents.filter((event) => event.del_len > 0);
-      const insertedCodepoints = sum(sizeKnownEvents.map((event) => event.ins_len));
-      const deletedCodepoints = sum(sizeKnownEvents.map((event) => event.del_len));
-      const largestAtomicInsert = sizeKnownEvents.reduce((largest, event) => Math.max(largest, event.ins_len), 0);
-      const replaceCount = events.filter((event) => event.op === "replace").length;
-      const interleaveRatio = sizeKnownEvents.length === 0 ? 0 : round(smallEditCount / sizeKnownEvents.length, 4);
-      const deletedCodepointRatio = insertedCodepoints === 0 ? 0 : round(deletedCodepoints / insertedCodepoints, 4);
-      const deletionClusters = countDeletionClusters(events);
-
-      const measures: SignalMeasure[] = [
-        measure("event_count", events.length),
-        measure("small_edit_count", smallEditCount),
-        measure("small_edit_ratio", interleaveRatio),
-        measure("unknown_process_measurement_count", unknownProcessMeasurementCount),
-        measure("large_atomic_insert_count", largeAtomicInserts.length),
-        measure("atomic_insert_max_len", largestAtomicInsert, "codepoints"),
-        measure("deletion_count", deletionEvents.length),
-        measure("deletion_cluster_count", deletionClusters),
-        measure("replacement_count", replaceCount),
-        measure("inserted_codepoints_total", insertedCodepoints, "codepoints"),
-        measure("deleted_codepoints_total", deletedCodepoints, "codepoints"),
-        measure("revision_deleted_codepoint_ratio", deletedCodepointRatio),
-      ];
-
-      const sourceExplanation = sourceAttribution
-        ? ` Source attribution is present: ${sourceSummary(events)}.`
-        : " Source attribution was not declared, so this signal only uses known event sizes, positions, and operations.";
-
-      return {
-        analyzer_id: EDIT_TOPOLOGY_ANALYZER_ID,
-        analyzer_version: ANALYZER_VERSION,
-        applicable: true,
-        measures,
-        explanation: `Measured edit topology over ${events.length} mutation event(s), using ${sizeKnownEvents.length} event(s) with known sizes and marking ${unknownProcessMeasurementCount} event(s) with unknown process measurements: ${smallEditCount} small edit(s), ${largeAtomicInserts.length} large atomic insert(s), largest insert ${largestAtomicInsert} codepoint(s), and ${deletionEvents.length} deletion event(s) across ${deletionClusters} deletion cluster(s). deletion_count counts every mutation that removes codepoints, including replacement events; events with unknown measurements are counted in unknown_process_measurement_count. replacement_count separately counts op=replace events. Deleted codepoints are reported as a revision/dead-end indicator, not a verdict.${sourceExplanation}`,
-      };
+      if (events.length === 0) return notApplicable(EDIT_TOPOLOGY_ANALYZER_ID, "Edit topology needs at least one event.");
+      return analyzeEventLog(events, manifest, {
+        largeAtomicInsertCodepoints: largeThreshold, smallEditCodepoints: smallThreshold,
+      }).signals[1]!;
     },
   };
+}
+
+/** Correct derived legacy facts without guessing the original custom thresholds. */
+export function upgradeLegacyEditTopologySignal(signal: Signal, events: EventLog): Signal {
+  if (signal.analyzer_id !== EDIT_TOPOLOGY_ANALYZER_ID || signal.analyzer_version !== "0.1.0" || !signal.applicable) return signal;
+  const sizes = aggregateMutationSizes(events);
+  const unknownSizes = events.some(event => !hasKnownSizes(event));
+  const corrections: Record<string, number | null> = {
+    inserted_codepoints_total: sizes.inserted_codepoints_total,
+    deleted_codepoints_total: sizes.deleted_codepoints_total,
+    atomic_insert_max_len: sizes.largest_atomic_insert_codepoints,
+    revision_deleted_codepoint_ratio: revisionRatio(sizes.inserted_codepoints_total, sizes.deleted_codepoints_total),
+    deletion_count: sizes.deleted_codepoints_total === null ? null : events.filter(event => event.del_len! > 0).length,
+    deletion_cluster_count: sizes.deleted_codepoints_total === null ? null : countDeletionClusters(events),
+    ...(unknownSizes ? { small_edit_count: null, small_edit_ratio: null, large_atomic_insert_count: null } : {}),
+  };
+  return {
+    ...signal,
+    analyzer_version: EDIT_TOPOLOGY_ANALYZER_VERSION,
+    measures: signal.measures.map(item => Object.hasOwn(corrections, item.key) ? { ...item, value: corrections[item.key] ?? null } : item),
+    explanation: "Legacy edit-topology facts corrected from the recorded measurements. Totals and maxima are unavailable when a required size is unknown. Original size-threshold measures are preserved for fully measured logs; they are unavailable for partially measured logs because the original custom thresholds were not stored. This derived view does not change the stored writing record.",
+  };
+}
+
+function revisionRatio(inserted: number | null, deleted: number | null): number | null {
+  return inserted === null || deleted === null || inserted === 0 ? null : round(deleted / inserted, 4);
 }
 
 function hasKnownSizes(event: EventLog[number]): event is EventLog[number] & { del_len: number; ins_len: number } {
@@ -203,25 +145,15 @@ function deepFreeze<T>(value: T): T {
 function notApplicable(analyzerId: string, explanation: string): Signal {
   return {
     analyzer_id: analyzerId,
-    analyzer_version: analyzerId === TIMING_DISTRIBUTION_ANALYZER_ID ? TIMING_ANALYZER_VERSION : ANALYZER_VERSION,
+    analyzer_version: analyzerId === TIMING_DISTRIBUTION_ANALYZER_ID ? TIMING_ANALYZER_VERSION : EDIT_TOPOLOGY_ANALYZER_VERSION,
     applicable: false,
     measures: [],
     explanation,
   };
 }
 
-function measure(key: string, value: string | number | boolean, unit?: string): SignalMeasure {
+function measure(key: string, value: SignalMeasure["value"], unit?: string): SignalMeasure {
   return unit ? { key, value, unit } : { key, value };
-}
-
-function interEventDelays(events: EventLog): number[] {
-  return events.slice(1).map((event, index) => event.t - (events[index]?.t ?? 0));
-}
-
-function percentile(sortedNumbers: number[], percentileValue: number): number {
-  if (sortedNumbers.length === 0) return 0;
-  const index = Math.min(sortedNumbers.length - 1, Math.ceil(sortedNumbers.length * percentileValue) - 1);
-  return sortedNumbers[index] ?? 0;
 }
 
 function countDeletionClusters(events: EventLog): number {
@@ -233,16 +165,6 @@ function countDeletionClusters(events: EventLog): number {
     previousWasDeletion = isDeletion;
   }
   return clusters;
-}
-
-function sourceSummary(events: EventLog): string {
-  const counts = new Map<string, number>();
-  for (const event of events) counts.set(event.source, (counts.get(event.source) ?? 0) + 1);
-  return [...counts.entries()].map(([source, count]) => `${source}=${count}`).join(", ");
-}
-
-function sum(values: number[]): number {
-  return values.reduce((total, value) => total + value, 0);
 }
 
 function round(value: number, digits: number): number {

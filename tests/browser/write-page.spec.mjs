@@ -1,10 +1,16 @@
+import { mockRecordUpload, readWriteSessions, installJournalFailure } from "./journal-fixtures.mjs";
 import { expect, test } from "@playwright/test";
 import { verifyRecord } from "../../packages/format/src/index.ts";
 
 const canaries = ["A🙂B", "LineOne", "LineTwo", "NEWLINE-CANARY", "🙂"];
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => window.localStorage.clear());
+  await page.addInitScript(() => {
+    if (!window.sessionStorage.getItem('pmbah-test-initialized')) {
+      window.localStorage.clear();
+      window.sessionStorage.setItem('pmbah-test-initialized', 'true');
+    }
+  });
 });
 
 test("/write types, signs, shows short URL, and uploads no plaintext", async ({ page }) => {
@@ -31,7 +37,7 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
     });
   });
 
-  await page.route("**/api/records", async (route) => {
+  await mockRecordUpload(page, async (route) => {
     uploadedPayload = route.request().postDataJSON();
     await route.fulfill({
       status: 201,
@@ -65,7 +71,7 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
   expect(uploadedPayload.observation.token).toBe("t".repeat(32));
 
   // bind-by-default sealed a content-blind text binding into the record.
-  expect(uploadedPayload.manifest.format_version).toBe("0.2");
+  expect(uploadedPayload.manifest.format_version).toBe("0.3");
   expect(uploadedPayload.manifest.text_binding).toBeTruthy();
   expect(uploadedPayload.manifest.text_binding.scheme).toBe("canon-letters/0.1");
   expect(uploadedPayload.manifest.text_binding).not.toHaveProperty("policy");
@@ -106,7 +112,7 @@ test("/write captures Enter as a one-codepoint line break event", async ({ page 
     });
   });
 
-  await page.route("**/api/records", async (route) => {
+  await mockRecordUpload(page, async (route) => {
     uploadedPayload = route.request().postDataJSON();
     await route.fulfill({
       status: 201,
@@ -166,7 +172,7 @@ test("/write keeps a failed upload available for retry", async ({ page }) => {
       }),
     });
   });
-  await page.route("**/api/records", async (route) => {
+  await mockRecordUpload(page, async (route) => {
     uploadAttempts += 1;
     const payload = route.request().postDataJSON();
     if (uploadAttempts === 1) {
@@ -194,8 +200,8 @@ test("/write keeps a failed upload available for retry", async ({ page }) => {
   // technical detail is preserved in the title attribute on the error span.
   const errorSpan = page.locator(".ml-error");
   await expect(errorSpan).toBeVisible();
-  await expect(errorSpan).toHaveText("upload failed, try again");
-  await expect(errorSpan).toHaveAttribute("title", /Upload failed: temporary_test_failure/);
+  await expect(errorSpan).toHaveText("record not uploaded");
+  await expect(errorSpan).toHaveAttribute("title", /Record not uploaded: temporary_test_failure/);
   await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveAttribute("readonly", "");
   await page.getByRole("button", { name: "retry" }).click();
   await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/retrytest1" })).toBeVisible();
@@ -222,7 +228,7 @@ test("/write can sign the process only, binding no document", async ({ page }) =
       }),
     });
   });
-  await page.route("**/api/records", async (route) => {
+  await mockRecordUpload(page, async (route) => {
     uploadedPayload = route.request().postDataJSON();
     await route.fulfill({
       status: 201,
@@ -258,7 +264,7 @@ test("/write keeps your writing after signing and offers to copy it", async ({ p
       body: JSON.stringify({ observed_session_id: observedSessionId, token: "k".repeat(32), checkpoint_id: "keep-cp", event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
     });
   });
-  await page.route("**/api/records", async (route) => {
+  await mockRecordUpload(page, async (route) => {
     const payload = route.request().postDataJSON();
     await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: payload.manifest.record_hash, short_signature: "keeptext1", url: "http://127.0.0.1:4173/keeptext1", created: true }) });
   });
@@ -296,7 +302,7 @@ test("/write shows its status message on the page, including why an upload faile
       body: JSON.stringify({ observed_session_id: observedSessionId, token: "m".repeat(32), checkpoint_id: "message-cp", event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
     });
   });
-  await page.route("**/api/records", async (route) => {
+  await mockRecordUpload(page, async (route) => {
     await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "temporary_test_failure" }) });
   });
 
@@ -312,8 +318,8 @@ test("/write shows its status message on the page, including why an upload faile
   await page.getByRole("button", { name: "sign & upload" }).click();
   // The full reason is readable on the page, not only in a hover title.
   await expect(message).toBeVisible();
-  await expect(message).toContainText("Upload failed: temporary_test_failure");
-  await expect(page.locator(".ml-error")).toHaveText("upload failed, try again");
+  await expect(message).toContainText("Record not uploaded: temporary_test_failure");
+  await expect(page.locator(".ml-error")).toHaveText("record not uploaded");
 });
 
 test("/write uploads a diverged session as unobserved and says so on the page", async ({ page }) => {
@@ -333,7 +339,7 @@ test("/write uploads a diverged session as unobserved and says so on the page", 
       body: JSON.stringify({ observed_session_id: observedSessionId, token: "d".repeat(32), checkpoint_id: "diverge-cp", event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
     });
   });
-  await page.route("**/api/records", async (route) => {
+  await mockRecordUpload(page, async (route) => {
     uploadedPayload = route.request().postDataJSON();
     await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: uploadedPayload.manifest.record_hash, short_signature: "diverged1", url: "http://127.0.0.1:4173/diverged1", created: true }) });
   });
@@ -365,7 +371,7 @@ test("/write retries an upload rejected with observation_mismatch as unobserved 
       body: JSON.stringify({ observed_session_id: observedSessionId, token: "x".repeat(32), checkpoint_id: `mismatch-cp-${body.event_count}`, event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
     });
   });
-  await page.route("**/api/records", async (route) => {
+  await mockRecordUpload(page, async (route) => {
     const payload = route.request().postDataJSON();
     uploads.push(payload);
     if (uploads.length === 1) {
@@ -381,7 +387,7 @@ test("/write retries an upload rejected with observation_mismatch as unobserved 
   await page.keyboard.type("Bound once, then unobserved");
   await page.getByRole("button", { name: "sign", exact: true }).click();
   await page.getByRole("button", { name: "sign & upload" }).click();
-  await expect(message).toContainText("Upload failed: observation_mismatch");
+  await expect(message).toContainText("Record not uploaded: observation_mismatch");
   expect(uploads[0].observation.token).toBe("x".repeat(32));
 
   await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveAttribute("readonly", "");
@@ -404,7 +410,7 @@ test("/write explains on the empty canvas that text stays here and only the shap
 async function captureWriteUpload(page, edit) {
   let payload;
   await page.route("**/api/observed-sessions/*/checkpoints", (route) => route.fulfill({ status: 503, body: "unavailable" }));
-  await page.route("**/api/records", (route) => {
+  await mockRecordUpload(page, (route) => {
     payload = route.request().postDataJSON();
     return route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: payload.manifest.record_hash, short_signature: "capture1", url: "http://127.0.0.1:4173/capture1", created: true }) });
   });
@@ -429,7 +435,7 @@ test("/write measures native word deletion and undo instead of assuming one char
   });
   expect(value).toBe("hello world");
   expect(payload.events.find((event) => event.op === "delete")).toMatchObject({ del_len: 5, pos: 6 });
-  expect(payload.events.at(-1)).toMatchObject({ op: "insert", ins_len: 5, source: "unknown" });
+  expect(payload.events.at(-1)).toMatchObject({ op: "replace", del_len: null, ins_len: null, source: "unknown" });
 });
 
 test("/write ignores cancelled beforeinput and records a composition only at commit", async ({ page }) => {
@@ -464,3 +470,214 @@ test("/write preserves paste attribution when beforeinput supplies no text", asy
   expect(payload.events).toHaveLength(1);
   expect(payload.events[0]).toMatchObject({ op: "insert", pos: 0, ins_len: 13, source: "paste" });
 });
+
+for (const clipboardState of ['missing', 'denied', 'working']) {
+  test(`/write copy actions report actual outcomes when clipboard is ${clipboardState}`, async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.addInitScript(state => {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: state === 'missing' ? undefined : {
+        writeText: async value => {
+          if (state === 'denied') throw new DOMException('Denied', 'NotAllowedError');
+          window.__copiedText = value;
+        },
+      } });
+    }, clipboardState);
+    await captureWriteUpload(page, async () => { await page.keyboard.type('copy fixture'); });
+    const message = page.getByRole('status', { name: 'Drafting message' });
+    await page.getByRole('button', { name: 'copy text', exact: true }).click();
+    await expect(message).toContainText(clipboardState === 'working' ? 'Your writing was copied' : 'Your writing could not be copied');
+    if (clipboardState === 'working') expect(await page.evaluate(() => window.__copiedText)).toBe('copy fixture');
+    await page.getByRole('button', { name: 'copy record link' }).click();
+    await expect(message).toContainText(clipboardState === 'working' ? 'Record link copied' : 'record link could not be copied');
+    if (clipboardState === 'working') expect(await page.evaluate(() => window.__copiedText)).toContain('/capture1');
+    expect(errors).toEqual([]);
+  });
+}
+
+const installStorageFailure = installJournalFailure;
+
+async function setupRecoveryUpload(page, handle) {
+  await page.route('**/api/observed-sessions/*/checkpoints', route => route.fulfill({ status: 503, body: 'unavailable' }));
+  await mockRecordUpload(page, handle);
+  await page.goto('/write');
+  const canvas = page.getByRole('textbox', { name: 'Writing canvas' });
+  await expect(canvas).toBeEditable();
+  await canvas.pressSequentially('recover fixture');
+  return canvas;
+}
+
+function successfulUpload(route, payload) {
+  return route.fulfill({ status: 201, json: { record_hash: payload.manifest.record_hash,
+    short_signature: 'recovery1', url: 'http://127.0.0.1:4173/recovery1', created: true } });
+}
+
+async function finishWrite(page) {
+  await page.getByRole('button', { name: 'sign', exact: true }).click();
+  await page.getByRole('button', { name: 'sign & upload' }).click();
+}
+
+test('/write failed local capture save is visible, stops editing, and can be saved again', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await installStorageFailure(page);
+  const canvas = await setupRecoveryUpload(page, route => route.abort());
+  await page.evaluate(() => { window.__failLocalSave = true; });
+  await canvas.pressSequentially('x');
+  await expect(canvas).not.toBeEditable();
+  await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('could not be saved locally');
+  await page.evaluate(() => { window.__failLocalSave = false; });
+  await page.getByRole('button', { name: 'retry saving' }).click();
+  await expect(canvas).toBeEditable();
+  const records = await readWriteSessions(page);
+  expect(records[0].events).toHaveLength('recover fixturex'.length);
+  expect(errors).toEqual([]);
+});
+
+test('/write persists a frozen finish before upload and retries identical content after reload', async ({ page }) => {
+  const uploads = [];
+  await setupRecoveryUpload(page, route => {
+    const payload = route.request().postDataJSON();
+    uploads.push(payload);
+    return uploads.length === 1 ? route.fulfill({ status: 503, json: { error: 'temporary' } }) : successfulUpload(route, payload);
+  });
+  await finishWrite(page);
+  await expect(page.getByRole('button', { name: 'retry', exact: true })).toBeVisible();
+  const saved = (await readWriteSessions(page))[0];
+  expect(saved.signed_duration_ms).toBe(uploads[0].manifest.duration_ms);
+  expect(saved.format_version).toBe('0.3');
+  expect(JSON.stringify(saved)).not.toContain('recover fixture');
+  await page.reload();
+  await expect(page.getByRole('textbox', { name: 'Writing canvas' })).toHaveValue('');
+  await page.getByRole('button', { name: 'retry', exact: true }).click();
+  await expect(page.getByText('open record →')).toBeVisible();
+  expect(uploads).toHaveLength(2);
+  expect(uploads[1]).toEqual(uploads[0]);
+});
+
+test('/write never uploads when freezing cannot be saved locally', async ({ page }) => {
+  let uploads = 0;
+  await installStorageFailure(page);
+  await setupRecoveryUpload(page, route => { uploads++; return successfulUpload(route, route.request().postDataJSON()); });
+  await page.getByRole('button', { name: 'sign', exact: true }).click();
+  await page.evaluate(() => { window.__failLocalSave = true; });
+  await page.getByRole('button', { name: 'sign & upload' }).click();
+  await expect(page.getByRole('button', { name: 'retry', exact: true })).toBeVisible();
+  expect(uploads).toBe(0);
+  await page.evaluate(() => { window.__failLocalSave = false; });
+  await page.getByRole('button', { name: 'retry', exact: true }).click();
+  await expect(page.getByText('open record →')).toBeVisible();
+  expect(uploads).toBe(1);
+});
+
+test('/write shows the accepted link even if saving upload success fails', async ({ page }) => {
+  let uploads = 0;
+  await installStorageFailure(page);
+  await setupRecoveryUpload(page, async route => {
+    uploads++;
+    await page.evaluate(() => { window.__failLocalSave = true; });
+    return successfulUpload(route, route.request().postDataJSON());
+  });
+  await finishWrite(page);
+  await expect(page.getByText('open record →')).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('Record uploaded, but its link could not be saved locally');
+  await page.evaluate(() => { window.__failLocalSave = false; });
+  await page.getByRole('button', { name: 'retry saving' }).click();
+  const saved = (await readWriteSessions(page))[0];
+  expect(saved.state).toBe('uploaded');
+  expect(uploads).toBe(1);
+});
+
+test('/write failed discard keeps both writing and captured events', async ({ page }) => {
+  await installStorageFailure(page);
+  const canvas = await setupRecoveryUpload(page, route => route.abort());
+  await page.evaluate(() => { window.__failLocalSave = true; });
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'discard', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('Could not save the session change');
+  await expect(canvas).toHaveValue('recover fixture');
+  await page.evaluate(() => { window.__failLocalSave = false; });
+  await page.getByRole('button', { name: 'retry saving' }).click();
+  await expect(canvas).toBeEditable();
+  const saved = (await readWriteSessions(page))[0];
+  expect(saved.events).toHaveLength('recover fixture'.length);
+});
+
+test('/write malformed upload success remains frozen and retryable', async ({ page }) => {
+  const uploads = [];
+  await setupRecoveryUpload(page, route => {
+    const payload = route.request().postDataJSON();
+    uploads.push(payload);
+    return uploads.length === 1 ? route.fulfill({ status: 201, json: {} }) : successfulUpload(route, payload);
+  });
+  await finishWrite(page);
+  await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('Invalid upload response');
+  await expect(page.getByText('open record →')).toHaveCount(0);
+  await page.getByRole('button', { name: 'retry', exact: true }).click();
+  await expect(page.getByText('open record →')).toBeVisible();
+  expect(uploads[1]).toEqual(uploads[0]);
+});
+
+test('/write seals trailing idle time and preserves the saved parent when continuing', async ({ page }) => {
+  const uploads = [];
+  await page.addInitScript(() => {
+    const now = Date.now;
+    window.__elapsedOffset = 0;
+    Date.now = () => now() + window.__elapsedOffset;
+  });
+  const canvas = await setupRecoveryUpload(page, route => {
+    const payload = route.request().postDataJSON();
+    uploads.push(payload);
+    return successfulUpload(route, payload);
+  });
+  await page.evaluate(() => { window.__elapsedOffset += 60_000; });
+  await finishWrite(page);
+  await expect(page.getByText('open record →')).toBeVisible();
+  expect(uploads[0].manifest.duration_ms - uploads[0].events.at(-1).t).toBeGreaterThanOrEqual(60_000);
+  await page.getByRole('button', { name: 'keep editing' }).click();
+  await expect(canvas).toBeEditable();
+  await page.evaluate(() => { window.__elapsedOffset += 120_000; });
+  await canvas.pressSequentially('x');
+  await finishWrite(page);
+  await expect(page.getByText('open record →')).toBeVisible();
+  expect(uploads).toHaveLength(2);
+  expect(uploads[1].manifest.parent_record).toBe(uploads[0].manifest.record_hash);
+  expect(uploads[1].manifest.session_id).not.toBe(uploads[0].manifest.session_id);
+  expect(uploads[1].events).toHaveLength(1);
+  expect(uploads[1].events[0].pos).toBeNull();
+  expect(uploads[1].events[0].t).toBeGreaterThanOrEqual(120_000);
+  expect(verifyRecord(uploads[1]).valid).toBe(true);
+  const saved = await readWriteSessions(page);
+  expect(saved.filter(record => record.state === 'uploaded')).toHaveLength(2);
+  expect(saved.find(record => record.session_id === uploads[0].manifest.session_id).uploaded_response.record_hash).toBe(uploads[0].manifest.record_hash);
+});
+
+for (const recordAnotherEdit of [false, true]) {
+  test(`/write rejects an unobserved final length change and recovers with another edit=${recordAnotherEdit}`, async ({ page }) => {
+    const uploads = [];
+    const canvas = await setupRecoveryUpload(page, route => {
+      const payload = route.request().postDataJSON();
+      uploads.push(payload);
+      return successfulUpload(route, payload);
+    });
+    await canvas.evaluate(element => { element.value += ' UNOBSERVED'; });
+    await finishWrite(page);
+    await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('Capture has a gap');
+    await expect(canvas).toBeEditable();
+    expect(uploads).toEqual([]);
+    if (recordAnotherEdit) {
+      await canvas.pressSequentially('n');
+      await finishWrite(page);
+    } else {
+      await page.getByRole('button', { name: 'sign', exact: true }).click();
+      await page.getByRole('checkbox').uncheck();
+      await page.getByRole('button', { name: 'sign & upload' }).click();
+    }
+    await expect(page.getByText('open record →')).toBeVisible();
+    expect(uploads).toHaveLength(1);
+    expect(Boolean(uploads[0].manifest.text_binding)).toBe(recordAnotherEdit);
+    expect(uploads[0].events).toHaveLength('recover fixture'.length + Number(recordAnotherEdit));
+    if (recordAnotherEdit) expect(uploads[0].events.at(-1).pos).toBeNull();
+    expect(verifyRecord(uploads[0]).valid).toBe(true);
+  });
+}

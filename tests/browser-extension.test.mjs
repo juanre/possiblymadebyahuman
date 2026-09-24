@@ -201,30 +201,9 @@ test("codepoint: buildTextFieldMutation handles surrogate-pair text without reta
   assert.deepEqual(m, { op: "insert", pos: 1, del_len: 0, ins_len: 1, source: "typing" });
 });
 
-test("content-script ambiguous fallback emits null pos/del_len rather than retain text", async () => {
-  const module = await import("../apps/browser-extension/src/content/capture.ts");
-  const { ambiguousMutation } = module.__test;
-  assert.deepEqual(ambiguousMutation("", null), {
-    op: "delete",
-    pos: null,
-    del_len: null,
-    ins_len: 0,
-    source: "unknown",
-  });
-  assert.deepEqual(ambiguousMutation("formatting", "formatBold"), {
-    op: "insert",
-    pos: null,
-    del_len: null,
-    ins_len: 10,
-    source: "unknown",
-  });
-  assert.deepEqual(ambiguousMutation("", "insertParagraph"), {
-    op: "insert",
-    pos: null,
-    del_len: null,
-    ins_len: 1,
-    source: "typing",
-  });
+test("shared ambiguous fallback preserves unknown measurements without accepting text", async () => {
+  const { unknownMutation } = await import("../packages/producer-core/src/measured-input.ts");
+  assert.deepEqual(unknownMutation(), { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
 });
 
 test("content-script binding uses selected text or all field content", async () => {
@@ -426,6 +405,30 @@ const SAMPLE_DESCRIPTOR = {
   dom_signature: "ext00001",
   index_among_similar: 0,
 };
+
+test("dispatcher preserves producer capture times across delayed registration and append delivery", async () => {
+  const { dispatcher, clock } = makeDispatcher({ checkpoint: null });
+  clock.advance(4_000);
+  const reg = await dispatcher.handle({
+    kind: "register_field", activation_id: "timed-start", started_at_wall_ms: 1_000,
+    tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
+  });
+  const session_id = reg.result.session_id;
+  for (const [pos, captured_at_wall_ms] of [1_010, 1_025, 1_035].entries()) {
+    clock.advance(200);
+    assert.equal((await dispatcher.handle({ kind: "append_mutation", session_id, captured_at_wall_ms,
+      mutation: { op: "insert", pos, del_len: 0, ins_len: 1, source: "typing" },
+    })).kind, "append_mutation_result");
+  }
+  const session = dispatcher.registry.get(session_id);
+  assert.equal(session.base_wall_ms, 1_000);
+  assert.deepEqual(session.events.map(event => event.t), [10, 25, 35]);
+  assert.equal((await dispatcher.handle({ kind: "append_mutation", session_id, captured_at_wall_ms: -1,
+    mutation: { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" },
+  })).kind, "error");
+  assert.deepEqual(dispatcher.registry.get(session_id), session);
+});
 
 test("dispatcher: register → append → sign → upload → marks uploaded", async () => {
   const { dispatcher, upload, checkpoint } = makeDispatcher();
@@ -818,10 +821,11 @@ test("codepoint: a spellcheck replacement is sized from the inserted text and th
   );
 });
 
-test("codepoint: undo/redo and formatting record the net length change with unknown position", () => {
-  assert.deepEqual(netLengthChangeMutation({ lengthBefore: 10, lengthAfter: 13 }), { op: "insert", pos: null, del_len: 0, ins_len: 3, source: "unknown" });
-  assert.deepEqual(netLengthChangeMutation({ lengthBefore: 10, lengthAfter: 7 }), { op: "delete", pos: null, del_len: 3, ins_len: 0, source: "unknown" });
-  assert.equal(netLengthChangeMutation({ lengthBefore: 10, lengthAfter: 10 }), null);
+test("codepoint: a net length change cannot establish either replacement size", () => {
+  for (const lengthAfter of [13, 7, 10]) {
+    assert.deepEqual(netLengthChangeMutation({ lengthBefore: 10, lengthAfter }),
+      { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
+  }
 });
 
 test("codepoint: an IME composition is one ime event sized by the committed text", () => {
@@ -848,8 +852,9 @@ test("content script handles compositions, dedupes listeners, and finishes colla
   assert.match(source, /addEventListener\("compositionend"/);
   assert.match(source, /addEventListener\("input"/);
   assert.match(source, /listening\.has\(element\)/);
-  assert.match(source, /collapsedDeletionMutation/);
-  assert.match(source, /netLengthChangeMutation/);
+  assert.match(source, /deriveMutationFromMeasuredInput/);
+  assert.match(source, /measureTextField/);
+  assert.match(source, /unknownMutation/);
   // The browser activation tests cover terminal finish/stop. Automatic
   // continuation remains a kernel capability, not an extension capture path.
 });
@@ -1143,6 +1148,58 @@ test("dispatcher: an empty draft resumed in an empty field keeps exact first-edi
   assert.equal(computeObservedLength(dispatcher.registry.get(sid).events), 1);
 });
 
+
+test("dispatcher: accepted upload survives failed link persistence and retries without reuploading", async () => {
+  const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher({ checkpoint: null });
+  const sid = (await dispatcher.handle({ kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true })).result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
+  const write = storage.write;
+  storage.write = async snapshot => {
+    if (snapshot.some(record => record.state === "uploaded")) throw new Error("storage full");
+    return write(snapshot);
+  };
+  const binding = createTextBinding("abc", sid);
+  const result = await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: binding });
+  assert.equal(result.kind, "sign_session_result");
+  assert.equal(result.result.kind, "uploaded");
+  assert.match(result.result.persistence_note, /link could not be saved/);
+  assert.equal(result.result.response.url, "https://example.test/TestSig123");
+  assert.deepEqual(result.result.text_binding, binding);
+  assert.equal(dispatcher.registry.get(sid).state, "uploaded");
+  assert.equal(dispatcher.registry.get(sid).uploaded_response.url, result.result.response.url);
+  const durable = await storage.read();
+  assert.equal(durable[0].state, "uploading");
+  assert.deepEqual(durable[0].signed_text_binding, binding);
+  assert.equal((await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid })).result.kind, "uploaded");
+  assert.equal(upload.calls.length, 1, "in-memory accepted response never triggers another upload");
+  assert.deepEqual(await storage.read(), durable);
+  storage.write = write;
+  const restarted = new BackgroundDispatcher({ storage, clock, uuid, upload, checkpoint, producer: PRODUCER });
+  await restarted.ensureInitialised();
+  assert.equal(restarted.registry.get(sid).state, "failed_upload");
+  const recovered = await restarted.handle({ kind: "retry_failed_upload", session_id: sid });
+  assert.equal(recovered.result.kind, "uploaded");
+  assert.deepEqual(upload.calls[1], upload.calls[0], "restart submits the identical durable record for idempotent recovery");
+  assert.equal(recovered.result.response.url, result.result.response.url);
+  assert.equal((await storage.read())[0].state, "uploaded");
+  assert.equal((await dispatcher.handle({ kind: "retry_failed_upload", session_id: sid })).result.persistence_note, undefined);
+  assert.equal(upload.calls.length, 2, "saving the original worker's known response also does not reupload");
+});
+
+test("dispatcher: repeated pre-upload storage failures return a recoverable failure without a request", async () => {
+  const { dispatcher, storage, upload } = makeDispatcher({ checkpoint: null });
+  const sid = (await dispatcher.handle({ kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0,
+    origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true })).result.session_id;
+  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } });
+  storage.write = async () => { throw new Error("storage full"); };
+  const result = await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(result.kind, "sign_session_result");
+  assert.equal(result.result.kind, "failed");
+  assert.match(result.result.reason, /storage full.*Local saving also failed/);
+  assert.equal(upload.calls.length, 0);
+  assert.equal(dispatcher.registry.get(sid).state, "failed_upload");
+});
 
 test("dispatcher: failed uploaded-log cleanup cannot erase the durable saved link", async () => {
   const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher();

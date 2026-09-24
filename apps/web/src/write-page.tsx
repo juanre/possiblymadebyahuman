@@ -1,16 +1,18 @@
+import { IndexedDbSessionStorage } from "../../../packages/browser-storage/src/index.ts";
+import { uploadJournal } from "../../../packages/browser-storage/src/upload.ts";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   IngestUploadError,
   SessionFrozenError,
   SessionRegistry,
+  sessionEventCount,
+  sessionLastEventTime,
   stripQueryAndHash,
   type CheckpointAdapter,
   type CheckpointRequest,
   type CheckpointResponse,
   type CheckpointResult,
-  type IngestRecordInput,
   type IngestRecordResponse,
-  type ObservationEnvelope,
   type ProducerIdentity,
   type SessionRecord,
   type SignedRecordDraft,
@@ -21,19 +23,21 @@ import { attachWriteCapture } from "./write-capture.ts";
 const STORAGE_KEY = "pmbah.write.sessions.v1";
 const PRODUCER: ProducerIdentity = { id: "web-draft", version: "0.1.0", capabilities: ["timing"] };
 
-type WriteStatus = "loading" | "ready" | "signing" | "uploaded" | "error";
-type UploadPayload = IngestRecordInput & { observation?: ObservationEnvelope | { state: "unobserved" } };
-
-class LocalSessionStorage {
-  async read(): Promise<SessionRecord[]> {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as SessionRecord[];
-    return Array.isArray(parsed) ? parsed : [];
-  }
-
-  async write(snapshot: SessionRecord[]): Promise<void> {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+type WriteStatus = "loading" | "ready" | "signing" | "uploaded" | "error" | "storage_error";
+class LocalSessionStorage extends IndexedDbSessionStorage {
+  constructor(ownsStorage: () => boolean) {
+    super({
+      name: "pmbah.write.journal.v1",
+      assertOwnership() { if (!ownsStorage()) throw new Error("This tab no longer owns the local writing session."); },
+      async legacyRead() {
+        const raw = window.localStorage.getItem(STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) throw new Error("Stored writing sessions have an unrecognized shape; they have been preserved.");
+        return parsed;
+      },
+      async legacyRemove() { window.localStorage.removeItem(STORAGE_KEY); },
+    });
   }
 }
 
@@ -72,34 +76,27 @@ function currentBindingText(textarea: HTMLTextAreaElement | null): string {
   return textarea.value;
 }
 
-async function uploadRecord(payload: UploadPayload): Promise<IngestRecordResponse> {
-  const response = await fetch("/api/records", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const json = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const code = typeof json?.error === "string" ? json.error : null;
-    throw new IngestUploadError(response.status, code, code ?? `upload_failed_${response.status}`);
-  }
-  return json as IngestRecordResponse;
-}
-
 export function WritePage() {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const storageOwner = useRef<symbol | null>(null);
+  const ownershipAttempt = useRef<Promise<void>>(Promise.resolve());
   const registry = useMemo(() => new SessionRegistry({
     clock: { now: () => Date.now() },
     uuid: { uuid: () => crypto.randomUUID() },
-    storage: new LocalSessionStorage(),
+    storage: new LocalSessionStorage(() => storageOwner.current !== null),
     producer: PRODUCER,
+    signedFinishTime: true,
     checkpoint: new FetchCheckpointAdapter(),
   }), []);
+  const storageLoaded = useRef(false);
+  const [initializationAttempt, setInitializationAttempt] = useState(0);
   const [session, setSession] = useState<SessionRecord | null>(null);
   const [status, setStatus] = useState<WriteStatus>("loading");
   const [message, setMessage] = useState<string>("Preparing a local writing session…");
   const [uploaded, setUploaded] = useState<IngestRecordResponse | null>(null);
   const signedDraft = useRef<SignedRecordDraft | null>(null);
+  const capturePending = useRef<(() => boolean) | null>(null);
+  const captureGap = useRef<(() => boolean) | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmArmed, setConfirmArmed] = useState(false);
   const [bindDocument, setBindDocument] = useState(true);
@@ -111,7 +108,7 @@ export function WritePage() {
     if (next) setSession(next);
   }, [registry]);
 
-  const createSession = useCallback(async () => {
+  const createSession = useCallback(async (clearCanvas = false) => {
     const origin = { origin: window.location.origin, path: "/write", tab_id: 0, frame_id: 0 };
     const descriptor = {
       tag_name: "TEXTAREA" as const,
@@ -127,33 +124,77 @@ export function WritePage() {
       surface: "web-draft",
       label: "First-party drafting page",
       browser: { url: stripQueryAndHash(window.location.href), field_kind: "textarea" },
-    });
+    }, { fresh: true, initial_content_unknown: !clearCanvas && !!textareaRef.current?.value.length });
+    try { await registry.persist(); }
+    catch (error) {
+      // A failed clear keeps the writing visible. A later successful save must
+      // not imply that this retained text was captured by the empty new log.
+      if (clearCanvas && textareaRef.current?.value.length) {
+        setSession(registry.resume(record.session_id, record.origin, record.descriptor, { field_is_empty: false }));
+      } else setSession(record);
+      throw error;
+    }
+    if (clearCanvas && textareaRef.current) textareaRef.current.value = "";
     setSession(record);
     setStatus("ready");
     setMessage("Text stays in this browser canvas. Signing uploads only content-blind process metadata.");
-    await registry.persist();
   }, [registry]);
 
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      try {
-        await registry.init();
-        registry.sweep();
-        const retained = registry.list().filter((entry) => entry.capture_context?.surface !== "web-draft" || entry.state === "uploaded");
-        registry.load(retained);
-        await registry.persist();
+    let release: (() => void) | undefined;
+    const owner = Symbol("write storage owner");
+    const previousAttempt = ownershipAttempt.current;
+    const showStorageError = (error: unknown) => {
+      if (cancelled) return;
+      setStatus("storage_error");
+      setMessage(`Local session storage is unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    };
+    const attempt = (async () => {
+      // StrictMode cleanup can cancel the first effect before it requests a
+      // lock. On retries, wait until the preceding lock has actually released.
+      await previousAttempt.catch(() => undefined);
+      if (cancelled) return;
+      if (!navigator.locks) throw new Error("This browser cannot coordinate writing-session storage between tabs.");
+      await navigator.locks.request("pmbah.write.sessions.v1.owner", { ifAvailable: true }, async lock => {
         if (cancelled) return;
-        await createSession();
-      } catch (error) {
-        if (!cancelled) {
-          setStatus("error");
-          setMessage(error instanceof Error ? error.message : String(error));
-        }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [createSession, registry]);
+        if (!lock) throw new Error("Another writing tab owns this local session. Close that tab, then retry saving here.");
+        storageOwner.current = owner;
+        storageLoaded.current = false;
+        const released = new Promise<void>(resolve => { release = resolve; });
+        try {
+          await registry.init();
+          storageLoaded.current = true;
+          registry.sweep({ ttl_ms: Infinity, retain_uploaded_anchors: true });
+          if (!cancelled) {
+            const saved = registry.list().filter(entry => entry.capture_context?.surface === "web-draft");
+            const recoverable = saved.filter(entry => entry.state === "failed_upload" || entry.state === "active")
+              .sort((a, b) => b.last_edit_wall_ms - a.last_edit_wall_ms)[0];
+            const previous = recoverable ?? saved.filter(entry => entry.state === "uploaded")
+              .sort((a, b) => b.last_edit_wall_ms - a.last_edit_wall_ms)[0];
+            if (previous) {
+              if (previous.state === "active") registry.resume(previous.session_id, previous.origin, previous.descriptor, { field_is_empty: true });
+              setSession(registry.get(previous.session_id) ?? previous);
+              await registry.persist();
+              setUploaded(previous.uploaded_response ?? null);
+              setStatus(previous.state === "uploaded" ? "uploaded" : previous.state === "failed_upload" ? "error" : "ready");
+              setMessage(previous.state === "failed_upload"
+                ? "A frozen record was recovered. Retry uploads the same record; your writing was not stored."
+                : previous.state === "uploaded" ? "Your saved record link was recovered. Your writing was not stored."
+                  : "The local event log was recovered. Your writing was not stored; further edits begin after a capture gap.");
+            } else await createSession();
+          }
+        } catch (error) { showStorageError(error); }
+        await released;
+      });
+    })().catch(showStorageError);
+    ownershipAttempt.current = attempt;
+    return () => {
+      cancelled = true;
+      if (storageOwner.current === owner) storageOwner.current = null;
+      release?.();
+    };
+  }, [createSession, registry, initializationAttempt]);
 
   // Put the cursor in the canvas as soon as the session is ready, so landing
   // on /write means you can start typing without clicking it first.
@@ -165,27 +206,45 @@ export function WritePage() {
     const element = textareaRef.current;
     if (!element || !session || session.state !== "active") return;
 
-    return attachWriteCapture(element, (mutation) => {
+    const capture = attachWriteCapture(element, (mutation) => {
       try {
         const updated = registry.appendMutation(session.session_id, mutation);
         setSession(updated);
         setMessage("Capturing content-blind edit events locally.");
-        void registry.persist();
+        void registry.persist().catch(error => {
+          if (registry.get(session.session_id)?.state !== "active") return;
+          setStatus("storage_error");
+          setMessage(`The event log could not be saved locally: ${error instanceof Error ? error.message : String(error)}. Keep this page open and retry saving. Copy your writing before closing.`);
+        });
         void registry.awaitObservationIdle(session.session_id).then(() => refreshSession(session.session_id));
       } catch (error) {
         if (error instanceof SessionFrozenError) return;
-        setStatus("error");
+        // The DOM edit already occurred. Preserve that gap and pause capture
+        // before another edit can be presented as a continuous sequence.
+        registry.resume(session.session_id, session.origin, session.descriptor, { field_is_empty: false });
+        setStatus("storage_error");
         setMessage(error instanceof Error ? error.message : String(error));
       }
     });
+    capturePending.current = capture.isPending;
+    captureGap.current = capture.hasGap;
+    return () => { capturePending.current = null; captureGap.current = null; capture(); };
   }, [refreshSession, registry, session?.session_id, session?.state]);
 
   const signAndUpload = useCallback(async () => {
     if (!session) return;
+    if (capturePending.current?.()) {
+      setMessage("Finish the current edit or composition before signing.");
+      return;
+    }
+    if (session.state === "active" && bindDocument && (captureGap.current?.() || registry.get(session.session_id)?.pending_observation_gap)) {
+      setStatus("ready");
+      setMessage("Capture has a gap. Make a recorded edit before binding text, or sign without a text binding.");
+      return;
+    }
     setStatus("signing");
     setMessage("Flushing server-observed checkpoints, then uploading the content-blind record…");
     try {
-      await registry.flushObservation(session.session_id);
       let draft = signedDraft.current;
       if (!draft) {
         let options = {};
@@ -202,12 +261,18 @@ export function WritePage() {
         draft = registry.sign(session.session_id, options);
       }
       signedDraft.current = draft;
+      // Freeze and durably save before any awaited checkpoint/network work.
+      await registry.persist();
+      await registry.flushObservation(session.session_id);
       const observation = registry.getObservationEnvelope(session.session_id);
       registry.markUploading(session.session_id);
       await registry.persist();
-      const response = await uploadRecord({ ...draft, observation: observation ?? { state: "unobserved" } });
+      if (!draft.upload_id) throw new Error("Journal publication identity is missing");
+      const response = await uploadJournal({ endpoint: "/api/record-uploads", fetch,
+        payload: { upload_id: draft.upload_id, manifest: draft.manifest, observation: observation ?? { state: "unobserved" } },
+        readEvents: (start, count) => registry.readEvents(session.session_id, start, count),
+      });
       registry.markUploaded(session.session_id, response);
-      await registry.persist();
       setUploaded(response);
       setStatus("uploaded");
       setMessage(registry.getObservationState(session.session_id) === "diverged"
@@ -216,6 +281,11 @@ export function WritePage() {
       void navigator.clipboard?.writeText(response.url).catch(() => undefined);
       signedDraft.current = null;
       setSession(registry.get(session.session_id) ?? null);
+      try { await registry.persist(); }
+      catch (error) {
+        setStatus("storage_error");
+        setMessage(`Record uploaded, but its link could not be saved locally. Copy the displayed link and retry saving. ${error instanceof Error ? error.message : String(error)}`);
+      }
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       try {
@@ -224,12 +294,12 @@ export function WritePage() {
           registry.markObservationRejected(session.session_id, error.code);
         }
         await registry.persist();
-        refreshSession(session.session_id);
       } catch {
         // Keep the visible error even if the state transition already happened.
       }
+      refreshSession(session.session_id);
       setStatus("error");
-      setMessage(`Upload failed: ${reason}. The local event log is still available for retry.`);
+      setMessage(`Record not uploaded: ${reason}. The frozen record is available in this page for retry; keep the page open until it is saved.`);
     }
   }, [bindDocument, refreshSession, registry, session]);
 
@@ -248,46 +318,81 @@ export function WritePage() {
     if (hasText && !window.confirm(`Clear the canvas and start a new draft? Your writing will be removed from the page. Use "copy text" first if you want to keep it.`)) {
       return;
     }
-    signedDraft.current = null;
-    if (textareaRef.current) textareaRef.current.value = "";
-    registry.load(registry.snapshot().filter((entry) => entry.session_id !== session?.session_id));
-    await registry.persist();
-    setUploaded(null);
-    await createSession();
+    setStatus("loading");
+    try {
+      if (session) await registry.discardPersisted([session.session_id]);
+      signedDraft.current = null;
+      setUploaded(null);
+      await createSession(true);
+    } catch (error) {
+      setStatus("storage_error");
+      setMessage(`Could not save the session change: ${error instanceof Error ? error.message : String(error)}. Your writing remains in the canvas.`);
+    }
   }, [createSession, registry, session]);
 
-  const keepEditing = useCallback(() => {
+  const keepEditing = useCallback(async () => {
     if (!session) return;
-    registry.reopen(session.session_id);
-    void registry.persist();
-    signedDraft.current = null;
-    setUploaded(null);
-    setStatus("ready");
-    setMessage("Back to editing. Make changes and sign again to record the updated writing.");
-    setSession(registry.get(session.session_id) ?? null);
-    textareaRef.current?.focus();
+    try {
+      const next = registry.continueFrom(session.session_id);
+      setSession(next);
+      await registry.persist();
+      signedDraft.current = null;
+      setUploaded(null);
+      setStatus("ready");
+      setMessage("Further edits will form a new record linked to your saved record.");
+      textareaRef.current?.focus();
+    } catch (error) {
+      setStatus("storage_error");
+      setMessage(`The continuation could not be saved locally: ${error instanceof Error ? error.message : String(error)}. Retry saving before editing.`);
+    }
   }, [registry, session]);
+
+  const retrySaving = useCallback(async () => {
+    if (!storageOwner.current || !storageLoaded.current) { setInitializationAttempt(attempt => attempt + 1); return; }
+    try {
+      await registry.persist();
+      if (!session) { await createSession(); return; }
+      const current = registry.get(session.session_id);
+      if (!current) { await createSession(); return; }
+      setSession(current);
+      setUploaded(current.uploaded_response ?? null);
+      setStatus(current.state === "uploaded" ? "uploaded" : current.state === "failed_upload" ? "error" : "ready");
+      setMessage("The local event log is saved. Your writing still needs to be copied before closing.");
+    } catch (error) {
+      setMessage(`Local saving still failed: ${error instanceof Error ? error.message : String(error)}. Keep this page open and copy your writing.`);
+    }
+  }, [createSession, registry, session]);
 
   const copyLink = useCallback(async () => {
     if (!uploaded) return;
-    await navigator.clipboard?.writeText(uploaded.url);
-    setMessage("Record link copied to the clipboard.");
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard_unavailable");
+      await navigator.clipboard.writeText(uploaded.url);
+      setMessage("Record link copied to the clipboard.");
+    } catch {
+      setMessage("The record link could not be copied. Select and copy the displayed link manually.");
+    }
   }, [uploaded]);
 
   const copyText = useCallback(async () => {
     const text = textareaRef.current?.value ?? "";
     if (!text) return;
-    await navigator.clipboard?.writeText(text);
-    setMessage("Your writing was copied to the clipboard.");
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("clipboard_unavailable");
+      await navigator.clipboard.writeText(text);
+      setMessage("Your writing was copied to the clipboard.");
+    } catch {
+      setMessage("Your writing could not be copied. Select it in the canvas and copy it manually.");
+    }
   }, []);
 
-  const eventCount = session?.events.length ?? 0;
-  const elapsed = session && eventCount > 0 ? Math.max(0, session.events.at(-1)?.t ?? 0) : 0;
+  const eventCount = session ? sessionEventCount(session) : 0;
+  const elapsed = session && eventCount > 0 ? Math.max(0, sessionLastEventTime(session)) : 0;
   const canSign = status === "ready" && eventCount > 0;
-  const canRetry = status === "error" && session?.state === "failed_upload" && signedDraft.current !== null;
+  const canRetry = status === "error" && session?.state === "failed_upload";
   const canDiscard = eventCount > 0 || !!uploaded;
   const phase = displayPhase(status, eventCount);
-  const shortError = status === "error" ? "upload failed, try again" : null;
+  const shortError = status === "storage_error" ? "local save failed" : status === "error" ? "record not uploaded" : null;
 
   // Cmd/Ctrl+Enter triggers sign-or-retry from anywhere on the page.
   useEffect(() => {
@@ -384,8 +489,8 @@ export function WritePage() {
       <span className="ml-right">
         {canDiscard ? <button className="ml-button" type="button" onClick={copyText}>copy text</button> : null}
         {uploaded ? <button className="ml-button" type="button" onClick={copyLink}>copy record link</button> : null}
-        {uploaded ? <button className="ml-button" type="button" onClick={keepEditing}>keep editing</button> : null}
-        {!uploaded ? (
+        {uploaded && status === "uploaded" ? <button className="ml-button" type="button" onClick={keepEditing}>keep editing</button> : null}
+        {status === "storage_error" ? <button className="ml-button ml-primary" type="button" onClick={retrySaving}>retry saving</button> : !uploaded ? (
           <button
             className="ml-button ml-primary"
             type="button"
@@ -407,6 +512,7 @@ function displayPhase(status: WriteStatus, eventCount: number): string {
     case "loading": return "preparing";
     case "signing": return "signing";
     case "uploaded": return "saved";
+    case "storage_error": return "local save failed";
     case "error":    return "error";
     case "ready":    return eventCount === 0 ? "idle" : "drafting";
     default:         return status;

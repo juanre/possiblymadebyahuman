@@ -120,6 +120,12 @@ export type SessionRecord = {
   producer: ProducerIdentity;
   capture_context: CaptureContext;
   events: BufferMutation[];
+  /** Journal-backed sessions keep history in storage, never in this metadata. */
+  event_count?: number;
+  last_event_t?: number;
+  journaled?: true;
+  /** Private capability identifying the resumable publication attempt. */
+  upload_id?: string;
   last_event_chain_tip: B3Hash | null;
   state: SessionState;
   uploaded_response?: IngestRecordResponse;
@@ -139,7 +145,16 @@ export type SessionRecord = {
 export type SignedRecordDraft = {
   manifest: RecordManifest;
   events: BufferMutation[];
+  upload_id?: string;
 };
+
+export function sessionEventCount(session: Pick<SessionRecord, "events" | "event_count">): number {
+  return session.event_count ?? session.events.length;
+}
+
+export function sessionLastEventTime(session: Pick<SessionRecord, "events" | "last_event_t">): number {
+  return session.last_event_t ?? session.events.at(-1)?.t ?? 0;
+}
 
 export type SignOptions = {
   // A content-blind text binding to seal into the signed record. The

@@ -1,3 +1,4 @@
+import { mockRecordUpload } from "./journal-fixtures.mjs";
 import { expect, test } from "@playwright/test";
 
 async function widths(page) {
@@ -26,7 +27,7 @@ test.describe("phone viewport", () => {
         body: JSON.stringify({ observed_session_id: observedSessionId, token: "p".repeat(32), checkpoint_id: "phone-cp", event_count: body.event_count, chain_tip: body.chain_tip, server_t: "2026-05-28T00:00:00.000Z", created: true }),
       });
     });
-    await page.route("**/api/records", async (route) => {
+    await mockRecordUpload(page, async (route) => {
       const payload = route.request().postDataJSON();
       await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: payload.manifest.record_hash, short_signature: "phonetest1", url: "http://127.0.0.1:4173/phonetest1", created: true }) });
     });

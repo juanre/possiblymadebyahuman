@@ -1,4 +1,4 @@
-import type { SessionRecord } from '../../../../packages/producer-core/src/index.ts';
+import { sessionEventCount, type SessionRecord } from '../../../../packages/producer-core/src/index.ts';
 import type { CaptureStatus, SavedLink, SessionSummary } from './messages.ts';
 
 export type PanelNames = { names?: Record<string, string>; next_name_index?: number };
@@ -20,7 +20,7 @@ export function ensurePanelNames(state: PanelNames, sessions: SessionRecord[]): 
 
 export function sessionSummary(session: SessionRecord, displayName: string, captureStatus: CaptureStatus): SessionSummary {
   const { events, observation: _observation, ...summary } = session;
-  return { ...summary, event_count: events.length, display_name: displayName, capture_status: captureStatus };
+  return { ...summary, event_count: sessionEventCount(session), display_name: displayName, capture_status: captureStatus };
 }
 
 export function savedLink(session: SessionRecord, name: string): SavedLink {

@@ -1,4 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
+import { analyzeEventLog } from "../../../packages/analyzers/src/streaming.ts";
+import { createChunkedApi } from "./chunked-api.ts";
 
 import {
   DEFAULT_IDLE_THRESHOLD_MS as ANALYZER_DEFAULT_IDLE_THRESHOLD_MS,
@@ -6,14 +8,15 @@ import {
   TIMING_DISTRIBUTION_ANALYZER_ID,
   runAnalyzers,
   runDefaultAnalyzers,
+  upgradeLegacyEditTopologySignal,
   type Analyzer,
 } from "../../../packages/analyzers/src/index.ts";
 import {
   MAX_INTEGER_FIELD_VALUE,
   MAX_TIME_FIELD_VALUE,
   b3HashToBytes,
+  aggregateMutationSizes,
   computeEventHashChain,
-  computeObservedLength,
   isB3Hash,
   verifyRecord,
   type B3Hash,
@@ -101,6 +104,8 @@ export function createIngestApi(options: IngestApiOptions) {
   const now = options.now ?? (() => new Date());
   const idleThresholdMs = options.idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
   const initialShortSignatureLength = options.initialShortSignatureLength ?? DEFAULT_SHORT_SIGNATURE_LENGTH;
+  const chunked = createChunkedApi({ store: options.store, baseUrl, now, idleThresholdMs, initialShortSignatureLength, analyzers: options.analyzers,
+    validateManifestFields: validatePublicManifestFields, validateContent: findContentBearingFields });
 
   async function postObservedCheckpoint(
     observedSessionId: string,
@@ -117,8 +122,6 @@ export function createIngestApi(options: IngestApiOptions) {
 
     const observedToken = parsed.token ?? generateObservedToken();
     const observedAt = now().toISOString();
-    const idempotentConflictProbe = await probeIdempotentCheckpointConflict(observedSessionId, parsed);
-    if (idempotentConflictProbe) return idempotentConflictProbe;
     try {
       const appended = await options.store.appendObservedCheckpoint({
         observed_session_id: observedSessionId,
@@ -167,7 +170,7 @@ export function createIngestApi(options: IngestApiOptions) {
     if (!verification.valid) return failure(400, "verification_failed", verification.errors);
 
     const parentRecord = stampedRecord.manifest.parent_record;
-    if (parentRecord && !(await options.store.findByRecordHash(parentRecord))) {
+    if (parentRecord && !(await options.store.recordExists(parentRecord))) {
       return failure(400, "invalid_manifest", ["parent_record does not refer to a stored record"]);
     }
 
@@ -222,7 +225,7 @@ export function createIngestApi(options: IngestApiOptions) {
         return { status: 409, body: { error: "immutable_record_conflict", details: [error.message] } };
       }
       if (error instanceof ObservedCheckpointConflictError) {
-        return { status: 409, body: { error: error.code, details: [error.message] } };
+        return { status: 409, body: { error: error.code === "checkpoint_event_count_not_monotonic" ? "checkpoint_stale" : error.code, details: [error.message] } };
       }
       throw error;
     }
@@ -241,10 +244,12 @@ export function createIngestApi(options: IngestApiOptions) {
       const binding: ObservationBindingInput = {
         observed_session_id: observation.observed_session_id,
         observed_token_hash: hashObservedToken(observation.token),
+        maximum_event_count: record.events.length,
       };
       session = await options.store.getObservedSessionForBinding(binding);
     } catch (error) {
       if (error instanceof ObservedSessionTokenError) return observationUnavailableResult();
+      if (error instanceof ObservedCheckpointConflictError) return { status: 409, body: { error: error.code, details: [error.message] } };
       throw error;
     }
 
@@ -275,32 +280,14 @@ export function createIngestApi(options: IngestApiOptions) {
     return observationFromCheckpoints(session.observed_session_id, state, sorted);
   }
 
-  async function probeIdempotentCheckpointConflict(
-    observedSessionId: string,
-    parsed: Extract<CheckpointParseResult, { ok: true }>,
-  ): Promise<ApiFailure | null> {
-    if (!parsed.token) return null;
-    try {
-      const session = await options.store.getObservedSessionForBinding({
-        observed_session_id: observedSessionId,
-        observed_token_hash: hashObservedToken(parsed.token),
-      });
-      const checkpoint = session.checkpoints.find((candidate) => candidate.event_count === parsed.event_count);
-      if (checkpoint && checkpoint.chain_tip === parsed.chain_tip) return null;
-      if (checkpoint && checkpoint.chain_tip !== parsed.chain_tip) return null;
-      if (session.checkpoints.length > 0 && parsed.event_count < Math.max(...session.checkpoints.map((candidate) => candidate.event_count))) {
-        return { status: 409, body: { error: "checkpoint_stale", details: ["checkpoint event_count is lower than the latest stored commitment"] } };
-      }
-      return null;
-    } catch (error) {
-      if (error instanceof ObservedSessionTokenError) return observationUnavailableResult();
-      throw error;
-    }
-  }
-
   async function getRecord(shortSignatureOrHash: string): Promise<ApiResult<GetRecordResponse>> {
     const stored = await options.store.findByShortSignatureOrHash(shortSignatureOrHash);
     if (!stored) return { status: 404, body: { error: "record_not_found" } };
+    if (stored.event_storage === "chunks") {
+      if (stored.manifest.event_count > 512) return { status: 409, body: { error: "chunked_record_requires_pagination" } };
+      const page = await chunked.eventPage(stored, 0, 512);
+      return { status: 200, body: toGetRecordResponse({ ...stored, events: page.events }) };
+    }
     return { status: 200, body: toGetRecordResponse(stored) };
   }
 
@@ -309,6 +296,8 @@ export function createIngestApi(options: IngestApiOptions) {
   }
 
   async function handleRequest(request: Request): Promise<Response> {
+    const chunkedResponse = await chunked.route(request);
+    if (chunkedResponse) return jsonResponse(chunkedResponse);
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/api/health") return jsonResponse(health());
     const checkpointMatch = url.pathname.match(/^\/api\/observed-sessions\/([^/]+)\/checkpoints$/);
@@ -335,41 +324,7 @@ export function createIngestApi(options: IngestApiOptions) {
 }
 
 export function computeRecordStats(record: WritingRecord, idleThresholdMs = DEFAULT_IDLE_THRESHOLD_MS): RecordStats {
-  const events = record.events;
-  const delays = events.slice(1).map((event, index) => event.t - (events[index]?.t ?? 0));
-  const sortedDelays = [...delays].sort((left, right) => left - right);
-  const idleDelays = delays.filter((delay) => delay >= idleThresholdMs);
-
-  return {
-    record_hash: record.manifest.record_hash,
-    event_count: events.length,
-    duration_ms: record.manifest.duration_ms,
-    observed_final_length: computeObservedLength(events),
-    insert_op_count: events.filter((event) => event.op === "insert").length,
-    delete_op_count: events.filter((event) => event.op === "delete").length,
-    replace_op_count: events.filter((event) => event.op === "replace").length,
-    typed_event_count: events.filter((event) => event.source === "typing").length,
-    paste_event_count: events.filter((event) => event.source === "paste").length,
-    cut_event_count: events.filter((event) => event.source === "cut").length,
-    drop_event_count: events.filter((event) => event.source === "drop").length,
-    ime_event_count: events.filter((event) => event.source === "ime").length,
-    autocomplete_event_count: events.filter((event) => event.source === "autocomplete").length,
-    programmatic_event_count: events.filter((event) => event.source === "programmatic").length,
-    unknown_source_count: events.filter((event) => event.source === "unknown").length,
-    inserted_codepoints_total: events.reduce((total, event) => total + (event.ins_len ?? 0), 0),
-    deleted_codepoints_total: events.reduce((total, event) => total + (event.del_len ?? 0), 0),
-    largest_atomic_insert_codepoints: events.reduce((largest, event) => Math.max(largest, event.ins_len ?? 0), 0),
-    inter_event_delay_min_ms: sortedDelays[0] ?? null,
-    inter_event_delay_p50_ms: percentile(sortedDelays, 0.5),
-    inter_event_delay_p90_ms: percentile(sortedDelays, 0.9),
-    inter_event_delay_p95_ms: percentile(sortedDelays, 0.95),
-    inter_event_delay_p99_ms: percentile(sortedDelays, 0.99),
-    inter_event_delay_max_ms: sortedDelays.at(-1) ?? null,
-    active_time_ms: delays.filter((delay) => delay < idleThresholdMs).reduce((total, delay) => total + delay, 0),
-    idle_time_ms: idleDelays.reduce((total, delay) => total + delay, 0),
-    long_pause_count: idleDelays.length,
-    delay_histogram: buildDelayHistogram(delays),
-  };
+  return analyzeEventLog(record.events, record.manifest, { idleThresholdMs }).stats;
 }
 
 export async function generateShortSignature(
@@ -403,9 +358,9 @@ export function toGetRecordResponse(stored: StoredRecord): GetRecordResponse {
   return {
     manifest: stored.manifest,
     events: stored.events,
-    stats: { ...stored.stats, active_time_ms: Math.max(0, measuredSpan - stored.stats.idle_time_ms) },
+    stats: { ...stored.stats, ...aggregateMutationSizes(stored.events), active_time_ms: Math.max(0, measuredSpan - stored.stats.idle_time_ms) },
     signals: stored.signals.map((result) => {
-      const signal = stripAnalysisResultStorageFields(result);
+      const signal = upgradeLegacyEditTopologySignal(stripAnalysisResultStorageFields(result), stored.events);
       if (signal.analyzer_id !== TIMING_DISTRIBUTION_ANALYZER_ID || signal.analyzer_version !== "0.1.0") return signal;
       const idle = signal.measures.find((item) => item.key === "idle_time_ms")?.value;
       return {
@@ -539,7 +494,7 @@ function decodePathSegment(segment: string): string | null {
 
 function observedCheckpointErrorResult(error: unknown): ApiFailure {
   if (error instanceof ObservedSessionTokenError) return observationUnavailableResult();
-  if (error instanceof ObservedCheckpointConflictError) return { status: 409, body: { error: error.code, details: [error.message] } };
+  if (error instanceof ObservedCheckpointConflictError) return { status: 409, body: { error: error.code === "checkpoint_event_count_not_monotonic" ? "checkpoint_stale" : error.code, details: [error.message] } };
   throw error;
 }
 
@@ -557,27 +512,6 @@ function jsonResponse(result: ApiResult<unknown>): Response {
     status: result.status,
     headers: { "content-type": "application/json" },
   });
-}
-
-function percentile(sortedNumbers: number[], percentileValue: number): number | null {
-  if (sortedNumbers.length === 0) return null;
-  const index = Math.min(sortedNumbers.length - 1, Math.ceil(sortedNumbers.length * percentileValue) - 1);
-  return sortedNumbers[index] as number;
-}
-
-function buildDelayHistogram(delays: number[]): Array<{ bucket: string; count: number }> {
-  const buckets = [
-    { bucket: "0-999ms", max: 999, count: 0 },
-    { bucket: "1s-4.999s", max: 4_999, count: 0 },
-    { bucket: "5s-29.999s", max: 29_999, count: 0 },
-    { bucket: "30s-299.999s", max: 299_999, count: 0 },
-    { bucket: "5m+", max: Number.POSITIVE_INFINITY, count: 0 },
-  ];
-  for (const delay of delays) {
-    const target = buckets.find((bucket) => delay <= bucket.max);
-    if (target) target.count += 1;
-  }
-  return buckets.map(({ bucket, count }) => ({ bucket, count }));
 }
 
 function base58Encode(bytes: Uint8Array): string {

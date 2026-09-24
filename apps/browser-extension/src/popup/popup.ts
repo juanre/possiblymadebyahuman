@@ -33,6 +33,7 @@ let currentKey = "";
 let reviewing = false;
 let renamingId: string | undefined;
 let latest: SessionSummary | undefined;
+let latestPersistenceNote: string | undefined;
 let latestContext: string | undefined;
 let lastStartError: string | undefined;
 let refreshing = false;
@@ -329,8 +330,9 @@ async function reportOutcome(response: BackgroundResponse, session: SessionSumma
   const result = response.kind === "sign_session_result" || response.kind === "retry_result" ? response.result : undefined;
   if (result?.kind === "uploaded") {
     latest = { ...session, state: "uploaded", uploaded_response: result.response, signed_text_binding: result.text_binding };
+    latestPersistenceNote = result.persistence_note;
     latestContext = undefined;
-    closeReview(); notify(`Record saved. Open it or copy its link below.${result.observation_note ? ` ${result.observation_note}` : ""}`);
+    closeReview(); notify(`Record saved. Open it or copy its link below.${result.observation_note ? ` ${result.observation_note}` : ""}${result.persistence_note ? ` ${result.persistence_note}` : ""}`);
   } else {
     closeReview(); const reason = result?.kind === "failed" ? result.reason : response.kind === "error" ? response.reason : "The extension did not return a saved record.";
     notify(`Record was not saved. ${reason}`, true);
@@ -356,7 +358,7 @@ async function refresh(): Promise<void> {
     const query = SEARCH.value.trim(), offset = historyOffset;
     const response = await send({ kind: "list_panel_sessions", window_id: windowId, history_query: query, history_offset: offset, history_limit: PAGE_SIZE });
     if (query !== SEARCH.value.trim() || offset !== historyOffset) return;
-    if (response.kind !== "panel_sessions_result") { notify(response.kind === "error" ? response.reason : "Could not load your writing records.", true); return; }
+    if (response.kind !== "panel_sessions_result") { reportRefreshFailure(response.kind === "error" ? response.reason : "Could not load your writing records."); return; }
     if (response.last_start_error && response.last_start_error !== lastStartError) notify(response.last_start_error, true);
     lastStartError = response.last_start_error;
     const key = `${response.current_editor.state}:${response.current_editor.session_id ?? ""}`;
@@ -373,7 +375,13 @@ async function refresh(): Promise<void> {
     if (!selectedId && drafts.length) selectedId = drafts[0]!.session_id;
     if (changed || !CURRENT.childElementCount) render();
     if (moved && !reviewing && !preserveInteraction() && !document.hasFocus()) CURRENT.scrollIntoView({ block: "nearest" });
+  } catch (error) {
+    reportRefreshFailure(error instanceof Error ? error.message : "Could not load your writing records.");
   } finally { refreshing = false; }
+}
+function reportRefreshFailure(reason: string): void {
+  notify(latest ? `The public record was saved. Its link is shown below. ${latestPersistenceNote ?? ""} The record list could not be refreshed: ${reason}` : reason, true);
+  if (latest) render();
 }
 START.addEventListener("click", () => void activate(SHARE.checked && selectedId ? { share_session_id: selectedId } : {}));
 HISTORY.addEventListener("toggle", () => { if (HISTORY.open) { renderHistory(); updateAvailability(); } else HISTORY_ROWS.replaceChildren(); });

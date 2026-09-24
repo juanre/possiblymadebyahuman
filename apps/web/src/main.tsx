@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { RecordPage } from "./components.tsx";
 import type { RecordApiResponse } from "./types.ts";
+import { PagedRecordPage, type RecordSummary } from "./paged-record-page.tsx";
 import { WritePage } from "./write-page.tsx";
 import "./style.css";
 
@@ -9,7 +10,7 @@ function App() {
   const slug = window.location.pathname.replace(/^\//, "").replace(/\/$/, "") || "record";
   const isWriteRoute = slug === "write";
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState<{ loading: boolean; error?: string; notFound?: boolean; record?: RecordApiResponse }>({ loading: !isWriteRoute });
+  const [state, setState] = useState<{ loading: boolean; error?: string; notFound?: boolean; record?: RecordApiResponse; summary?: RecordSummary }>({ loading: !isWriteRoute });
 
   useEffect(() => {
     if (isWriteRoute) return;
@@ -20,6 +21,15 @@ function App() {
         const response = await fetch(`/api/records/${encodeURIComponent(slug)}`);
         if (response.status === 404) {
           if (!cancelled) setState({ loading: false, notFound: true });
+          return;
+        }
+        if (response.status === 409) {
+          const reason = await response.json();
+          if (reason.error !== "chunked_record_requires_pagination") throw new Error("Record could not be loaded");
+          const summaryResponse = await fetch(`/api/records/${encodeURIComponent(slug)}/summary`);
+          if (!summaryResponse.ok) throw new Error(`Record summary fetch failed (${summaryResponse.status})`);
+          const summary = await summaryResponse.json() as RecordSummary;
+          if (!cancelled) setState({ loading: false, summary });
           return;
         }
         if (!response.ok) throw new Error(`Record fetch failed (${response.status})`);
@@ -45,6 +55,7 @@ function App() {
       </main>
     );
   }
+  if (state.summary) return <PagedRecordPage key={state.summary.manifest.record_hash} summary={state.summary} />;
   if (state.error || !state.record) {
     return (
       <main className="page-shell">

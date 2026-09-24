@@ -1,0 +1,7 @@
+# Numeric browser capture index
+
+`NumericTextIndex` stores numeric UTF-16 offsets of surrogate pairs in a balanced randomized tree. It never retains characters or source strings. Offsets translate to Unicode codepoints in logarithmic time. A known edit replaces only the changed numeric span and shifts the suffix lazily; scanning is limited to inserted text and two boundary code units. ASCII documents need no tree nodes. Initial activation and ambiguous changes (such as undo or missing `beforeinput`) may rebuild the numeric index once from the current DOM value.
+
+Both text-field capture adapters use the same index and applied-input derivation. Unobserved UTF-16-length drift invalidates the numeric baseline and marks the next real event's position unknown. A silent programmatic replacement with the same UTF-16 length cannot be detected on this incremental path, even if its surrogate composition changes the codepoint count. Binding at finish performs a full numeric measurement and rejects a changed count; same-length unobserved content replacements remain inherently undetectable without retaining content.
+
+The extension's `RichTextIndex` combines per-text-node numeric indexes with balanced sibling weights, tracking text, block boundaries and placeholder BRs. MutationObserver records invalidate only changed leaves/subtrees. Common edits avoid rescanning unchanged document text or sibling lists. Unsupported embedded objects retain unknown measurements. DOM references identify the live editor; no old text or mutation `oldValue` is retained.

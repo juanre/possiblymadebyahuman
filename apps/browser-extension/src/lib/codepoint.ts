@@ -24,40 +24,8 @@ export function codepointOffsetOf(text: string, utf16Index: number): number {
  * content-blindness rule: when the inputType is unknown or ambiguous, return
  * "unknown" rather than guessing.
  */
-export function sourceFromInputType(inputType: string | undefined | null): Source {
-  if (!inputType) return "unknown";
-  switch (inputType) {
-    case "insertText":
-    case "insertLineBreak":
-    case "insertParagraph":
-      return "typing";
-    case "insertFromPaste":
-    case "insertFromPasteAsQuotation":
-      return "paste";
-    case "insertFromDrop":
-      return "drop";
-    case "insertCompositionText":
-    case "insertFromComposition":
-      return "ime";
-    case "insertReplacementText":
-      return "autocomplete";
-    case "deleteByCut":
-      return "cut";
-    case "deleteContentBackward":
-    case "deleteContentForward":
-    case "deleteWordBackward":
-    case "deleteWordForward":
-    case "deleteSoftLineBackward":
-    case "deleteSoftLineForward":
-    case "deleteHardLineBackward":
-    case "deleteHardLineForward":
-      return "typing";
-    case "deleteByDrag":
-      return "drop";
-    default:
-      return "unknown";
-  }
-}
+export { sourceFromInputType } from "../../../../packages/producer-core/src/measured-input.ts";
+import { sourceFromInputType, unknownMutation } from "../../../../packages/producer-core/src/measured-input.ts";
 
 export function operationFor(args: { ins_len: number; del_len: number }): Operation {
   if (args.del_len > 0 && args.ins_len === 0) return "delete";
@@ -98,17 +66,9 @@ export function collapsedDeletionMutation(args: {
   return { op: "delete", pos: Math.max(0, args.caretAfterCodepoints), del_len, ins_len: 0, source: args.source };
 }
 
-/**
- * Undo, redo and formatting change the buffer by an amount we can only measure
- * as a net length difference, at a position we cannot attribute. Record the
- * size honestly and leave pos unknown rather than guess.
- */
-export function netLengthChangeMutation(args: { lengthBefore: number; lengthAfter: number }): PendingMutation | null {
-  const delta = args.lengthAfter - args.lengthBefore;
-  if (delta === 0) return null;
-  return delta > 0
-    ? { op: "insert", pos: null, del_len: 0, ins_len: delta, source: "unknown" }
-    : { op: "delete", pos: null, del_len: -delta, ins_len: 0, source: "unknown" };
+/** A net delta cannot establish either replacement size. */
+export function netLengthChangeMutation(_args: { lengthBefore: number; lengthAfter: number }): PendingMutation {
+  return unknownMutation();
 }
 
 /**

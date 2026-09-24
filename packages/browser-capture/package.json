@@ -1,0 +1,8 @@
+{
+  "name": "@possiblymadebyahuman/browser-capture",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/numeric-text-index.ts",
+  "license": "MIT"
+}

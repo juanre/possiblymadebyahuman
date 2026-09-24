@@ -16,6 +16,45 @@ const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const measure = (signal, key) => signal.measures.find((item) => item.key === key)?.value;
 
+test("size aggregates keep unknown insertion and deletion measurements independent", async () => {
+  const { aggregateMutationSizes } = await import("../packages/format/src/index.ts");
+  const { computeRecordStats } = await import("../apps/ingest-api/src/index.ts");
+  const record = await goldenRecord();
+  for (const [ins_len, del_len] of [[8, null], [null, 2], [null, null], [8, 2]]) {
+    const events = [
+      { seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" },
+      { seq: 1, t: 10, op: "replace", pos: null, del_len, ins_len, source: "unknown" },
+    ];
+    const input = { manifest: record.manifest, events };
+    const stats = computeRecordStats(input);
+    const signal = editTopologyAnalyzer({ largeAtomicInsertCodepoints: 5, smallEditCodepoints: 4 }).analyze(input);
+    const expected = { inserted_codepoints_total: ins_len === null ? null : 11,
+      deleted_codepoints_total: del_len, largest_atomic_insert_codepoints: ins_len };
+    assert.deepEqual(aggregateMutationSizes(events), expected);
+    for (const [key, value] of Object.entries(expected)) assert.equal(stats[key], value);
+    assert.equal(measure(signal, "inserted_codepoints_total"), expected.inserted_codepoints_total);
+    assert.equal(measure(signal, "deleted_codepoints_total"), expected.deleted_codepoints_total);
+    assert.equal(measure(signal, "atomic_insert_max_len"), expected.largest_atomic_insert_codepoints);
+    assert.equal(measure(signal, "large_atomic_insert_count"), ins_len === null ? null : 1);
+    assert.equal(measure(signal, "deletion_count"), del_len === null ? null : 1);
+    assert.equal(measure(signal, "small_edit_count"), ins_len === null || del_len === null ? null : 1);
+    assert.equal(measure(signal, "large_atomic_insert_threshold_codepoints"), 5);
+    assert.equal(measure(signal, "small_edit_threshold_codepoints"), 4);
+    assert.equal(signal.analyzer_version, "0.2.0");
+    assert.equal(signal.applicable, true);
+    assert.equal(measure(signal, "unknown_process_measurement_count"), 1, "unknown position does not erase measurable sizes");
+  }
+});
+
+test("revision ratio is unavailable when the captured log has no inserted codepoints", async () => {
+  const record = await goldenRecord();
+  const signal = editTopologyAnalyzer().analyze({ manifest: record.manifest,
+    events: [{ seq: 0, t: 0, op: "delete", pos: null, del_len: 5, ins_len: 0, source: "typing" }] });
+  assert.equal(measure(signal, "inserted_codepoints_total"), 0);
+  assert.equal(measure(signal, "deleted_codepoints_total"), 5);
+  assert.equal(measure(signal, "revision_deleted_codepoint_ratio"), null);
+});
+
 async function goldenRecord() {
   const [golden] = await readJson("packages/conformance/vectors/golden-records.json");
   return golden.record;

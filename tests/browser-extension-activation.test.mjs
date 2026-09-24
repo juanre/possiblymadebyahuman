@@ -1,3 +1,4 @@
+import "fake-indexeddb/auto";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -125,7 +126,7 @@ test("explicit browser activation scopes permission to one document and freeze d
     assert.equal((await invoke(mutation, content)).kind, "error", "stopped editor cannot append");
     const stopped = await invoke({ kind: "list_sessions" });
     assert.equal(stopped.capture_status[session], "stopped");
-    assert.equal(stopped.sessions[0].events.length, 1, "finish includes the drained final edit");
+    assert.equal(stopped.sessions.find(record => record.session_id === session).event_count, 1, "finish includes the drained final edit");
     const processOnly = await invoke({ kind: "prepare_finish", session_id: session, bind: false });
     assert.equal(processOnly.reason, undefined);
     assert.equal(processOnly.text_binding, null);

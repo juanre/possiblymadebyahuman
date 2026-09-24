@@ -4,7 +4,7 @@ import { richMutation } from "../apps/browser-extension/src/lib/richtext.ts";
 
 test("rich measurement rejects a transformed replacement whose final caret contradicts the target range", () => {
   const mutation = richMutation({ length: 4, start: 2, end: 2, kind: "insert", source: "typing" }, { length: 7, start: 7, end: 7 });
-  assert.deepEqual(mutation, { op: "insert", pos: null, del_len: 0, ins_len: 3, source: "typing" });
+  assert.deepEqual(mutation, { op: "replace", pos: null, del_len: null, ins_len: null, source: "typing" });
 });
 
 test("equal-length undo stays visible without claiming an exact location", () => {

@@ -4,6 +4,8 @@ import type { RecordObservation, RecordStats } from "../../../packages/storage/s
 export type RecordApiResponse = {
   manifest: RecordManifest;
   events: BufferMutation[];
+  /** Endpoint times supplied separately when history is paged. */
+  event_times?: { first: number; last: number };
   stats: RecordStats;
   signals: Signal[];
   observation: RecordObservation;
@@ -11,6 +13,7 @@ export type RecordApiResponse = {
 
 export type VerificationState = {
   ok: boolean;
+  pending?: boolean;
   messages: string[];
   computedRecordHash?: string;
 };

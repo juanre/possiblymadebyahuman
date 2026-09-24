@@ -1,4 +1,6 @@
 export const PRODUCER_CORE_PACKAGE = "@possiblymadebyahuman/producer-core";
+export { DEFAULT_UPLOAD_TIMEOUT_MS, withUploadDeadline } from "./upload-deadline.ts";
+export { validateUploadResponse } from "./upload-response.ts";
 
 export { IngestUploadError } from "./adapters.ts";
 export type {
@@ -10,6 +12,9 @@ export type {
   ClipboardAdapter,
   ClockAdapter,
   StorageAdapter,
+  EventJournalStorage,
+  JournalCommit,
+  JournalUpload,
   UploadAdapter,
   UuidAdapter,
 } from "./adapters.ts";
@@ -37,6 +42,8 @@ export type {
 } from "./types.ts";
 
 export { buildCaptureContext, redactCaptureContext, stripQueryAndHash } from "./capture-context.ts";
+export { deriveMutationFromMeasuredInput, lineBreakInsertedCodepoints, sourceFromInputType, unknownMutation } from "./measured-input.ts";
+export type { MeasuredInputIntent } from "./measured-input.ts";
 export type { CaptureContextRedactions } from "./capture-context.ts";
 export { advanceChain, appendBufferMutation, durationMs } from "./timeline.ts";
 export {
@@ -62,3 +69,5 @@ export {
   UnknownSessionError,
 } from "./registry.ts";
 export type { CadenceOptions, SessionRegistryOptions } from "./registry.ts";
+
+export { sessionEventCount, sessionLastEventTime } from "./types.ts";

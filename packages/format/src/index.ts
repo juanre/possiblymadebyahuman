@@ -134,9 +134,26 @@ export type WritingRecord = {
 
 export type SignalMeasure = {
   key: string;
-  value: string | number | boolean;
+  value: string | number | boolean | null;
   unit?: string;
 };
+
+/** A missing size makes its total and maximum unknown, independently of position. */
+export function aggregateMutationSizes(events: EventLog): {
+  inserted_codepoints_total: number | null;
+  deleted_codepoints_total: number | null;
+  largest_atomic_insert_codepoints: number | null;
+} {
+  let inserted: number | null = 0;
+  let deleted: number | null = 0;
+  let largest: number | null = 0;
+  for (const event of events) {
+    inserted = inserted === null || event.ins_len === null ? null : inserted + event.ins_len;
+    deleted = deleted === null || event.del_len === null ? null : deleted + event.del_len;
+    largest = largest === null || event.ins_len === null ? null : Math.max(largest, event.ins_len);
+  }
+  return { inserted_codepoints_total: inserted, deleted_codepoints_total: deleted, largest_atomic_insert_codepoints: largest };
+}
 
 export type Signal = {
   analyzer_id: string;
@@ -343,12 +360,7 @@ export function computeEventHashChain(
 
   const chain: B3Hash[] = [];
   for (const event of events) {
-    const eventBytes = canonicalizeEventBytes(event);
-    const input =
-      event.seq === 0
-        ? concatBytes(utf8ToBytes(eventChainFormatVersion(formatVersion)), utf8ToBytes(sessionId), eventBytes)
-        : concatBytes(b3HashToBytes(chain[event.seq - 1] as B3Hash), eventBytes);
-    chain.push(b3HashBytes(input));
+    chain.push(advanceEventHash(chain.at(-1) ?? null, event, sessionId, formatVersion));
   }
   return chain;
 }
@@ -361,6 +373,35 @@ export function computeRecordHash(
   finalization?: Pick<RecordManifest, "duration_ms" | "parent_record">,
 ): B3Hash {
   const eventTip = last(computeEventHashChain(events, sessionId, formatVersion));
+  return sealRecordHash(eventTip, formatVersion, textBinding, finalization);
+}
+
+/** Advance one event commitment without retaining history. Sequence/time continuity
+ * belongs to the journal or EventStreamVerifier; this checks the chain boundary. */
+export function advanceEventHash(
+  previousTip: B3Hash | null, event: BufferMutation, sessionId: string,
+  formatVersion: FormatVersion = FORMAT_VERSION,
+): B3Hash {
+  assertValidEvent(event);
+  if (!FORMAT_VERSION_SET.has(formatVersion)) throw new TypeError("unsupported format version");
+  if (!isUuid(sessionId)) throw new TypeError("session_id must be a lowercase UUIDv4 string");
+  if ((previousTip === null) !== (event.seq === 0)) throw new TypeError("event chain boundary disagrees with sequence");
+  return b3HashBytes(concatBytes(
+    previousTip === null
+      ? concatBytes(utf8ToBytes(eventChainFormatVersion(formatVersion)), utf8ToBytes(sessionId))
+      : b3HashToBytes(previousTip),
+    canonicalizeEventBytes(event),
+  ));
+}
+
+/** Seal an already validated event prefix. Does not attest to how its tip was obtained. */
+export function sealRecordHash(
+  eventTip: B3Hash, formatVersion: FormatVersion = FORMAT_VERSION,
+  textBinding?: TextBinding,
+  finalization?: Pick<RecordManifest, "duration_ms" | "parent_record">,
+): B3Hash {
+  if (!isB3Hash(eventTip)) throw new TypeError("invalid event chain tip");
+  if (!FORMAT_VERSION_SET.has(formatVersion)) throw new TypeError("unsupported format version");
   if (formatVersion === FORMAT_VERSION_0_3) {
     const errors: string[] = [];
     validateElapsedMilliseconds(finalization?.duration_ms, "duration_ms", errors);
@@ -377,6 +418,49 @@ export function computeRecordHash(
   }
   if (formatVersion === FORMAT_VERSION_0_1 || textBinding === undefined) return eventTip;
   return b3HashBytes(concatBytes(b3HashToBytes(eventTip), utf8ToBytes(canonicalizeTextBinding(textBinding))));
+}
+
+/** Bounded-memory full verification. Rejects invalid events before advancing state.
+ * Callers must not use finish() until every page of the declared prefix was read. */
+export class EventStreamVerifier {
+  readonly #manifest: RecordManifest;
+  #count = 0;
+  #lastTime = -1;
+  #tip: B3Hash | null = null;
+  #failure: string | null = null;
+
+  constructor(manifest: RecordManifest) {
+    const errors = validateManifest(manifest);
+    if (errors.length) throw new TypeError(errors.join("; "));
+    this.#manifest = structuredClone(manifest);
+  }
+
+  append(event: BufferMutation): void {
+    if (this.#failure) throw new Error(this.#failure);
+    const errors = validateEvent(event, this.#count);
+    if (event?.t < this.#lastTime) errors.push(`event ${this.#count} t must be non-decreasing`);
+    if (this.#count >= this.#manifest.event_count) errors.push("event count exceeds manifest");
+    if (errors.length) {
+      this.#failure = errors.join("; ");
+      throw new TypeError(this.#failure);
+    }
+    this.#tip = advanceEventHash(this.#tip, event, this.#manifest.session_id, this.#manifest.format_version);
+    this.#lastTime = event.t;
+    this.#count++;
+  }
+
+  get eventCount(): number { return this.#count; }
+  get chainTip(): B3Hash | null { return this.#tip; }
+
+  finish(): VerificationResult {
+    const errors: string[] = this.#failure ? [this.#failure] : [];
+    if (this.#count !== this.#manifest.event_count) errors.push(`event_count mismatch: manifest ${this.#manifest.event_count}, events ${this.#count}`);
+    if (!this.#tip) errors.push("event log must contain at least one event to compute a record hash");
+    if (this.#lastTime > this.#manifest.duration_ms) errors.push("duration_ms is less than last event time");
+    const computedRecordHash = this.#tip ? sealRecordHash(this.#tip, this.#manifest.format_version, this.#manifest.text_binding, this.#manifest) : undefined;
+    if (computedRecordHash && computedRecordHash !== this.#manifest.record_hash) errors.push(`record_hash mismatch: expected ${this.#manifest.record_hash}, computed ${computedRecordHash}`);
+    return { valid: errors.length === 0, errors, computedRecordHash };
+  }
 }
 
 export function verifyEventHashChain(record: WritingRecord): VerificationResult {
@@ -504,23 +588,18 @@ export function validateEvent(event: unknown, expectedSeq?: number): string[] {
   }
   const delLen = candidate.del_len;
   const insLen = candidate.ins_len;
-  if (
-    typeof candidate.pos === "number" &&
-    typeof delLen === "number" &&
-    typeof insLen === "number" &&
-    Number.isInteger(delLen) &&
-    Number.isInteger(insLen) &&
-    typeof candidate.op === "string"
-  ) {
-    if (candidate.op === "insert" && !(delLen === 0 && insLen > 0)) {
-      errors.push("insert op requires del_len 0 and ins_len > 0");
-    }
-    if (candidate.op === "delete" && !(delLen > 0 && insLen === 0)) {
-      errors.push("delete op requires del_len > 0 and ins_len 0");
-    }
-    if (candidate.op === "replace" && !(delLen > 0 && insLen > 0)) {
-      errors.push("replace op requires del_len > 0 and ins_len > 0");
-    }
+  // Unknown position or size does not excuse a contradictory known size.
+  if (candidate.op === "insert" &&
+      ((typeof delLen === "number" && delLen !== 0) || (typeof insLen === "number" && insLen <= 0))) {
+    errors.push("insert op requires del_len 0 and ins_len > 0 when known");
+  }
+  if (candidate.op === "delete" &&
+      ((typeof delLen === "number" && delLen <= 0) || (typeof insLen === "number" && insLen !== 0))) {
+    errors.push("delete op requires del_len > 0 and ins_len 0 when known");
+  }
+  if (candidate.op === "replace" &&
+      ((typeof delLen === "number" && delLen <= 0) || (typeof insLen === "number" && insLen <= 0))) {
+    errors.push("replace op requires del_len > 0 and ins_len > 0 when known");
   }
 
   return errors;

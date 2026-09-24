@@ -13,20 +13,31 @@ const emacs = spawnSync("bash", ["-lc", "command -v emacs"], { encoding: "utf8" 
 // Scenarios that do not test observation point the producer at a closed port so
 // no test can ever reach the public service. Emacs runs asynchronously so that
 // an ingest API served from this process can answer it.
-function runEmacs(scriptPath, env = {}) {
-  return new Promise((resolveRun, rejectRun) => {
-    const child = spawn(emacs, ["--batch", "-Q", "-l", scriptPath], {
-      cwd: resolve("."),
-      env: { ...process.env, PMBAH_API_BASE_URL: "http://127.0.0.1:9", ...env },
-      stdio: ["ignore", "pipe", "pipe"],
+async function runEmacs(scriptPath, env = {}) {
+  const recoveryDirectory = await mkdtemp(join(tmpdir(), "pmbah-emacs-recovery-"));
+  try {
+    return await new Promise((resolveRun, rejectRun) => {
+      const child = spawn(emacs, ["--batch", "-Q", "--eval", `(progn
+          (setq pmbah-state-directory ${JSON.stringify(recoveryDirectory)})
+          (defun pmbah-test-materialize (descriptor)
+            (append (list (cons 'manifest (alist-get 'manifest descriptor))
+                          (cons 'events (vconcat (pmbah--session-events))))
+                    (when (alist-get 'observation descriptor)
+                      (list (cons 'observation (alist-get 'observation descriptor)))))))`, "-l", scriptPath], {
+        cwd: resolve("."),
+        env: { ...process.env, PMBAH_API_BASE_URL: "http://127.0.0.1:9", ...env },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
+      child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
+      child.on("error", rejectRun);
+      child.on("close", (status) => resolveRun({ status, stdout, stderr }));
     });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk) => { stdout += chunk; });
-    child.stderr.setEncoding("utf8").on("data", (chunk) => { stderr += chunk; });
-    child.on("error", rejectRun);
-    child.on("close", (status) => resolveRun({ status, stdout, stderr }));
-  });
+  } finally {
+    await rm(recoveryDirectory, { recursive: true, force: true });
+  }
 }
 
 test("Emacs producer captures Unicode codepoint mutations and builds a conformant content-blind record", { skip: emacs ? false : "emacs binary not available" }, async () => {
@@ -174,7 +185,7 @@ test("Emacs producer starts in non-empty buffers without text or baseline fields
     assert.equal(output.event_count, 1);
     assert.equal("initial_observed_length" in record.manifest, false);
     assert.deepEqual(record.events.map(({ op, pos, del_len, ins_len }) => ({ op, pos, del_len, ins_len })), [
-      { op: "insert", pos: output.start_pos, del_len: 0, ins_len: 1 },
+      { op: "insert", pos: null, del_len: 0, ins_len: 1 },
     ]);
     const verification = verifyRecord(record);
     assert.equal(verification.valid, true, verification.errors.join("; "));
@@ -184,6 +195,89 @@ test("Emacs producer starts in non-empty buffers without text or baseline fields
     assert.equal(serialized.includes("PREEXISTING-CANARY"), false);
     assert.equal(serialized.includes("🙂"), false);
     assert.equal(serialized.includes("X"), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs marks interrupted capture without inventing events and retains absolute narrowed positions", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-gaps-"));
+  const outputPath = join(temp, "gaps.json");
+  const scriptPath = join(temp, "gaps.el");
+  await writeFile(scriptPath, `;;; gaps.el -*- lexical-binding: t; -*-
+(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil)
+(let (events snapshot refused whole-binding)
+  (with-temp-buffer
+    (insert "unobserved prefix")
+    (narrow-to-region (point-max) (point-max))
+    (pmbah-mode 1)
+    (insert "A")
+    (insert "B")
+    (pmbah-mode -1)
+    (insert "C")
+    (pmbah-mode 1)
+    (insert "D")
+    (let ((inhibit-modification-hooks t)) (insert "E"))
+    (insert "F")
+    (emacs-lisp-mode)
+    (insert "G")
+    (setq events (vconcat (pmbah--session-events)))
+    (pmbah-mode -1)
+    (setq snapshot (pmbah--state-snapshot))
+    (pmbah-mode 1)
+    (setq refused (condition-case err
+                      (progn (pmbah-sign-buffer (list :surface "emacs") t) nil)
+                    (user-error (error-message-string err)))))
+  (with-temp-buffer
+    (pmbah-mode 1)
+    (insert "outside MIDDLE outside")
+    (narrow-to-region 9 15)
+    (cl-letf (((symbol-function 'pmbah--run-helper)
+               (lambda (payload &optional _script)
+                 (setq whole-binding (plist-get payload :final_text))
+                 (list :record (list :manifest nil :events []))))
+              ((symbol-function 'pmbah--post-record)
+               (lambda (_body) (list :url "https://example.test/record"))))
+      (pmbah-sign-buffer (list :surface "emacs") t)))
+  (with-temp-file ${JSON.stringify(outputPath)}
+    (insert (pmbah--json-encode
+             (list :events events :snapshot snapshot :refused refused :whole_binding whole-binding)))))
+`);
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.events.length, 5, "only observed mutations are recorded");
+    assert.deepEqual(output.events.map((event) => event.pos), [null, 18, null, null, 23]);
+    assert.ok(output.events.every((event) => event.ins_len === 1 && event.del_len === 0));
+    assert.equal(output.snapshot.pending_gap, true, "stopping capture persists the boundary");
+    assert.match(output.refused, /Capture has a gap/);
+    assert.equal(output.whole_binding, "outside MIDDLE outside", "whole-buffer binding includes text outside narrowing");
+    assert.equal(JSON.stringify(output.snapshot).includes("unobserved prefix"), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs refuses binding immediately after edits hidden from its hooks", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-hidden-edit-"));
+  const scriptPath = join(temp, "hidden.el");
+  await writeFile(scriptPath, `;;; hidden.el -*- lexical-binding: t; -*-
+(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil)
+(with-temp-buffer
+  (pmbah-mode 1)
+  (insert "known")
+  (let ((inhibit-modification-hooks t)) (insert " hidden"))
+  (condition-case err
+      (progn (pmbah-sign-buffer (list :surface "emacs") t) (error "binding should fail"))
+    (user-error (princ (error-message-string err)))))
+`);
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /Capture has a gap/);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -270,7 +364,7 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
                    (prog1 (car answers)
                      (setq answers (cdr answers)))))
                 ((symbol-function 'pmbah--run-helper)
-                 (lambda (payload)
+                 (lambda (payload &optional _script)
                    (setq captured payload)
                    (list :record (list :manifest (list :record_hash "b3:stub") :events []))))
                 ((symbol-function 'pmbah--post-record)
@@ -292,12 +386,12 @@ test("Emacs sign binding uses active region or whole buffer and avoids preview b
                  (lambda (prompt)
                    (error "unexpected prompt: %s" prompt)))
                 ((symbol-function 'pmbah--run-helper)
-                 (lambda (payload)
+                 (lambda (payload &optional _script)
                    (setq captured payload)
                    (list :record (list :manifest (list :record_hash "b3:stub") :events []))))
                 ((symbol-function 'pmbah--post-record)
                  (lambda (_record) (list :url "https://example.test/record"))))
-        (let ((noninteractive nil)
+        (let ((noninteractive t)
               (current-prefix-arg '(4)))
           (call-interactively #'pmbah-sign-buffer)))
       captured)))
@@ -367,7 +461,7 @@ test("Emacs helper payload contains only process metadata", { skip: emacs ? fals
   (insert "Ω")
   (let ((captured nil))
     (cl-letf (((symbol-function 'pmbah--run-helper)
-               (lambda (payload)
+               (lambda (payload &optional _script)
                  (setq captured payload)
                  (list :record (list :manifest nil :events [])))))
       (pmbah-build-record-for-current-buffer (list :surface "emacs")))
@@ -395,13 +489,10 @@ test("Emacs helper payload contains only process metadata", { skip: emacs ? fals
       assert.equal(serialized.includes(forbidden), false, `helper payload leaked ${forbidden}`);
     }
     assert.equal("initial_observed_length" in payload, false);
-    assert.equal(Array.isArray(payload.events), true);
-    assert.equal(payload.events.length, 3);
-    assert.deepEqual(payload.events.map(({ op, pos, del_len, ins_len }) => ({ op, pos, del_len, ins_len })), [
-      { op: "insert", pos: 0, del_len: 0, ins_len: 10 },
-      { op: "delete", pos: 5, del_len: 1, ins_len: 0 },
-      { op: "insert", pos: 5, del_len: 0, ins_len: 1 },
-    ]);
+    assert.equal(payload.events, undefined, "the helper receives a journal descriptor, not full history");
+    assert.equal(payload.event_count, 3);
+    assert.match(payload.journal_path, /events-[0-9a-f-]+\.jsonl$/);
+    assert.equal(payload.operation, "export");
   } finally {
     await rm(temp, { recursive: true, force: true });
   }
@@ -558,8 +649,10 @@ test("Emacs producer commits server-observed checkpoints while writing and binds
              (lambda (script payload callback)
                (push (list :previous_event_count (plist-get payload :previous_event_count)
                            :previous_chain_tip (plist-get payload :previous_chain_tip)
-                           :seqs (vconcat (mapcar (lambda (event) (plist-get event :seq))
-                                                  (plist-get payload :events))))
+                           :event_count (plist-get payload :event_count)
+                           :previous_byte_offset (plist-get payload :previous_byte_offset)
+                           :end_byte (plist-get payload :end_byte)
+                           :events_present (if (plist-member payload :events) t :json-false))
                      pmbah-test-helper-payloads)
                (funcall run-helper script payload callback))))
     (with-temp-buffer
@@ -597,7 +690,7 @@ test("Emacs producer commits server-observed checkpoints while writing and binds
     const fetched = await api.getRecord(output.response.short_signature);
     assert.equal(fetched.status, 200);
     assert.equal(fetched.body.manifest.producer.id, "emacs");
-    assert.equal(fetched.body.manifest.format_version, "0.2");
+    assert.equal(fetched.body.manifest.format_version, "0.3");
     assert.equal(fetched.body.events.length, 3);
     assert.equal(fetched.body.observation.state, "observed");
     assert.ok(fetched.body.observation.checkpoint_count >= 2, "first-edit checkpoint plus the pre-sign flush");
@@ -615,10 +708,16 @@ test("Emacs producer commits server-observed checkpoints while writing and binds
     assert.equal(output.status_after_sign.token_present, false);
     assert.equal(output.status_after_first_edit.chain_tip_event_count, 1);
     assert.equal(output.helper_payloads.length, 2, "first-edit checkpoint plus the pre-sign flush");
-    assert.deepEqual(output.helper_payloads[0], { previous_event_count: null, previous_chain_tip: null, seqs: [0] });
+    assert.equal(output.helper_payloads[0].previous_event_count, null);
+    assert.equal(output.helper_payloads[0].previous_chain_tip, null);
+    assert.equal(output.helper_payloads[0].event_count, 1);
+    assert.equal(output.helper_payloads[0].events_present, false);
     assert.equal(output.helper_payloads[1].previous_event_count, 1);
     assert.equal(output.helper_payloads[1].previous_chain_tip, fetched.body.observation.commitments[0].chain_tip);
-    assert.deepEqual(output.helper_payloads[1].seqs, [1, 2], "only the events after the last tip are sent");
+    assert.equal(output.helper_payloads[1].event_count, 3);
+    assert.equal(output.helper_payloads[1].events_present, false);
+    assert.equal(output.helper_payloads[1].previous_byte_offset, output.helper_payloads[0].end_byte,
+      "the next checkpoint starts exactly after the previously hashed prefix");
   } finally {
     await new Promise((resolveClose) => server.close(resolveClose));
     await rm(temp, { recursive: true, force: true });
@@ -877,9 +976,12 @@ test("Emacs producer persists a file buffer's session without text and resumes i
     (pmbah-mode 1)
     (insert "Hello")
     (insert " world")
-    (setq pmbah--observation-token "resume-token-0123456789abcdef0123456789"
-          pmbah--chain-tip "b3:ab"
-          pmbah--chain-tip-event-count 2)
+    (setq pmbah--observation-token "resume-token-0123456789abcdef0123456789")
+    (let ((scan (pmbah--journal-helper (append (list :operation "inspect") (pmbah--chain-tip-payload)))))
+      (setq pmbah--chain-tip (alist-get 'chain_tip scan)
+            pmbah--chain-tip-event-count 2
+            pmbah--chain-tip-byte-offset (alist-get 'byte_length scan)
+            pmbah--chain-tip-last-time (alist-get 'last_t scan)))
     (pmbah--write-state)
     (let ((path (pmbah--state-file)))
       (setq first (list :session pmbah--session-id
@@ -937,11 +1039,12 @@ test("Emacs producer persists a file buffer's session without text and resumes i
     assert.match(first.state_file, /\/[0-9a-f]{64}\.json$/);
     const state = JSON.parse(first.state_json);
     assert.equal(state.session_id, first.session);
-    assert.equal(state.format_version, "0.2");
+    assert.equal(state.format_version, "0.3");
     assert.equal(typeof state.session_start_ms, "number");
-    assert.equal(state.events.length, 2);
+    assert.equal(state.event_count, 2);
+    assert.equal(state.events, undefined, "metadata never embeds the growing event log");
     assert.equal(state.observation.token, "resume-token-0123456789abcdef0123456789");
-    assert.equal(state.chain_tip, "b3:ab");
+    assert.equal(state.chain_tip, computeEventHashChain(first.events, first.session, "0.3").at(-1));
     assert.equal(state.chain_tip_event_count, 2);
     for (const forbidden of ["Hello", "world", "essay", "text", "content"]) {
       assert.equal(first.state_json.includes(forbidden), false, `state file leaked ${forbidden}`);
@@ -952,15 +1055,15 @@ test("Emacs producer persists a file buffer's session without text and resumes i
     assert.equal(second.event_count, 3);
     assert.deepEqual(second.events.slice(0, 2), first.events);
     assert.equal(second.events[2].op, "insert");
-    assert.equal(second.events[2].pos, 11);
+    assert.equal(second.events[2].pos, null, "the first resumed mutation marks unobserved intervening edits");
     assert.ok(second.events[2].t >= second.events[1].t, "t stays monotonic across the resume");
     assert.ok(second.elapsed_ms >= second.events[2].t);
     assert.equal(second.token, "resume-token-0123456789abcdef0123456789");
     assert.equal(second.observation_state, "disabled");
-    assert.equal(second.chain_tip, "b3:ab", "the last chain tip resumes with the session");
+    assert.equal(second.chain_tip, computeEventHashChain(first.events, first.session, "0.3").at(-1), "recovery verifies the cached hash against its journal prefix");
     assert.equal(second.chain_tip_event_count, 2);
 
-    assert.equal(output.after_sign.state_file_exists, false, "upload removes the state file");
+    assert.equal(output.after_sign.state_file_exists, true, "the linked empty continuation remains recoverable");
     assert.notEqual(output.after_sign.session, first.session);
     assert.equal(output.after_sign.event_count, 0);
     assert.equal(output.after_discard.state_file_existed_before, true);
@@ -1173,7 +1276,7 @@ test("Emacs signs a sixty-day session and a backward clock correction cannot reo
     (let ((corrected-time (time-subtract (current-time) (seconds-to-time 3600))))
       (cl-letf (((symbol-function 'current-time) (lambda () corrected-time))
                 ((symbol-function 'pmbah--post-record)
-                 (lambda (body) (setq uploaded body) '((url . "https://example.test/saved")))))
+                 (lambda (body) (setq uploaded (pmbah-test-materialize body)) '((url . "https://example.test/saved")))))
         (insert "!")
         (pmbah-sign-buffer (list :surface "emacs") t)))
     (with-temp-file ${JSON.stringify(outputPath)}
@@ -1199,7 +1302,7 @@ test("Emacs signs a sixty-day session and a backward clock correction cannot reo
     assert.equal(output.record.manifest.duration_ms, output.record.events[2].t);
     assert.equal(verifyRecord(output.record).valid, true);
     assert.equal(output.same_session, false, "successful publication starts the next session");
-    assert.equal(output.state_file_exists, false, "published draft state is cleared");
+    assert.equal(output.state_file_exists, true, "the linked empty continuation remains recoverable");
     assert.equal(output.stale_file_exists, false);
     assert.equal(JSON.stringify(output.record).includes("Long ago"), false);
   } finally {
@@ -1419,6 +1522,469 @@ test("Emacs persists diverged state and reason immediately and preserves it on r
     assert.equal(output.restored.status.state, "diverged");
     assert.equal(output.restored.envelope.state, "unobserved");
     assert.equal(JSON.stringify(output).includes("Local test"), false);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs freezes before network and recovers identical file and non-file uploads after restart", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-frozen-"));
+  const stateDir = join(temp, "state");
+  const documentPath = join(temp, "draft.txt");
+  const firstPath = join(temp, "first.json");
+  const secondPath = join(temp, "second.json");
+  const scriptPath = join(temp, "scenario.el");
+  const setup = `(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil pmbah-state-directory ${JSON.stringify(stateDir)})`;
+  await writeFile(documentPath, "");
+  await writeFile(scriptPath, `;;; frozen.el -*- lexical-binding: t; -*-
+${setup}
+(let (results)
+  (dolist (variant '((t "0.3") (nil "0.3") (nil "0.2") (nil "0.1")))
+    (let ((file (car variant)) (version (cadr variant)))
+    (with-current-buffer (if file (find-file-noselect ${JSON.stringify(documentPath)}) (generate-new-buffer "scratch-recovery"))
+      (pmbah-mode 1)
+      (insert "PRIVATE-FROZEN-CANARY")
+      (unless (equal version "0.3")
+        (setq pmbah--session-format version
+              pmbah--frozen-record
+              (pmbah--json-encode (pmbah-build-record-for-current-buffer (list :surface "emacs")
+                                   (unless (equal version "0.1") "PRIVATE-FROZEN-CANARY")))))
+      (let (sent frozen-before-flush blocked)
+        (cl-letf (((symbol-function 'pmbah--observation-flush)
+                   (lambda ()
+                     (setq frozen-before-flush
+                           (stringp (plist-get (pmbah--read-state (pmbah--state-file)) :frozen_record)))
+                     (sleep-for 0.04)))
+                  ((symbol-function 'pmbah--post-record)
+                   (lambda (body) (setq sent (pmbah-test-materialize body)) (error "lost response"))))
+          (condition-case nil (pmbah-sign-buffer (list :surface "emacs") t) (error nil)))
+        (setq blocked t)
+        (dotimes (_ 3)
+          (unless (condition-case nil (progn (insert "forbidden") nil) (buffer-read-only t))
+            (setq blocked nil)))
+        (unless (and (memq #'pmbah--before-change before-change-functions)
+                     (memq #'pmbah--after-change after-change-functions))
+          (setq blocked nil))
+        (let ((inhibit-read-only t)) (insert "private override"))
+        (unless (= pmbah--next-seq 1) (error "frozen events changed"))
+        (push (list :file (if file t :json-false) :path (pmbah--state-file)
+                    :sent sent :version version :frozen_before_flush (if frozen-before-flush t :json-false)
+                    :blocked (if blocked t :json-false)) results))
+      (set-buffer-modified-p nil)
+      (kill-buffer (current-buffer)))))
+  (with-temp-file ${JSON.stringify(firstPath)} (insert (pmbah--json-encode (vconcat results)))))
+`);
+  try {
+    let result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const first = JSON.parse(await readFile(firstPath, "utf8"));
+    for (const attempt of first) {
+      assert.equal(attempt.frozen_before_flush, true);
+      assert.equal(attempt.blocked, true);
+      assert.equal(attempt.sent.manifest.format_version, attempt.version);
+      assert.equal(verifyRecord(attempt.sent).valid, true);
+      assert.equal((await readFile(attempt.path, "utf8")).includes("PRIVATE-FROZEN-CANARY"), false);
+    }
+    await writeFile(scriptPath, `;;; retry.el -*- lexical-binding: t; -*-
+${setup}
+(let (results)
+  (dolist (item (pmbah--read-state ${JSON.stringify(firstPath)}))
+    (with-current-buffer (if (eq (plist-get item :file) t)
+                            (find-file-noselect ${JSON.stringify(documentPath)})
+                          (generate-new-buffer "recovered-scratch"))
+      (if buffer-file-name (pmbah-mode 1) (pmbah-recover-session (plist-get item :path)))
+      (let (sent)
+        (dotimes (_ 3)
+          (condition-case nil (progn (insert "forbidden") (error "recovered frozen buffer was writable"))
+            (buffer-read-only nil)))
+        (cl-letf (((symbol-function 'pmbah--run-helper) (lambda (_) (error "must not rebuild")))
+                  ((symbol-function 'pmbah--observation-flush) (lambda () (error "must not reflush")))
+                  ((symbol-function 'pmbah--post-record)
+                   (lambda (body) (setq sent (pmbah-test-materialize body)) (list (cons 'url "https://example.test/recovered")))))
+          (pmbah-sign-buffer nil t))
+        (push sent results))
+      (set-buffer-modified-p nil)
+      (kill-buffer (current-buffer))))
+  (with-temp-file ${JSON.stringify(secondPath)} (insert (pmbah--json-encode (vconcat (nreverse results))))))
+`);
+    result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.deepEqual(JSON.parse(await readFile(secondPath, "utf8")), first.map((entry) => entry.sent));
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs blocks upload on storage failure and preserves accepted links when saving fails", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-save-failure-"));
+  const scriptPath = join(temp, "scenario.el");
+  const outputPath = join(temp, "out.json");
+  await writeFile(scriptPath, `;;; storage.el -*- lexical-binding: t; -*-
+(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil)
+(let ((posts 0) (flushes 0) failure accepted-error)
+  (with-temp-buffer
+    (pmbah-mode 1)
+    (insert "PRIVATE-STORAGE-CANARY")
+    (cl-letf (((symbol-function 'pmbah--write-json-file) (lambda (&rest _) (error "disk full")))
+              ((symbol-function 'pmbah--observation-flush) (lambda () (cl-incf flushes)))
+              ((symbol-function 'pmbah--post-record) (lambda (_) (cl-incf posts))))
+      (setq failure (condition-case err (pmbah-sign-buffer nil t) (error (error-message-string err)))))
+  (let ((posts-before posts) (flushes-before flushes))
+    (with-temp-buffer
+      (pmbah-mode 1)
+      (insert "accepted")
+      (let ((write-json (symbol-function 'pmbah--write-json-file)))
+        (cl-letf (((symbol-function 'pmbah--write-json-file)
+                   (lambda (path json)
+                     (if (string-match-p "published-" path) (error "archive full") (funcall write-json path json))))
+                  ((symbol-function 'pmbah--post-record)
+                   (lambda (_) (cl-incf posts) (list (cons 'url "https://example.test/accepted")))))
+          (setq accepted-error (condition-case err (pmbah-sign-buffer nil t) (error (error-message-string err))))))
+      (let ((saved (pmbah--read-state (pmbah--state-file))))
+        (pmbah--start-session)
+        (pmbah--resume-session saved))
+      (cl-letf (((symbol-function 'pmbah--post-record) (lambda (_) (error "must not upload again"))))
+        (pmbah-sign-buffer nil t)))
+    (with-temp-file ${JSON.stringify(outputPath)}
+      (insert (pmbah--json-encode (list :posts_before posts-before :flushes_before flushes-before
+                                      :posts posts :failure failure :accepted_error accepted-error)))))))
+`);
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.posts_before, 0);
+    assert.equal(output.flushes_before, 0);
+    assert.equal(output.posts, 1);
+    assert.match(output.failure, /disk full/);
+    assert.match(output.accepted_error, /https:\/\/example.test\/accepted/);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs helper seals finish time without rewriting historical formats or checkpoint prefixes", () => {
+  const base = { session_id: "00000000-0000-4000-8000-000000000044", duration_ms: 300,
+    events: [{ seq: 0, t: 100, op: "insert", pos: 0, del_len: 0, ins_len: 4, source: "typing" }] };
+  const build = (format_version, extra = {}) => {
+    const result = spawnSync(process.execPath, [resolve("producers/emacs/scripts/build-record.mjs")], {
+      input: JSON.stringify({ ...base, format_version, ...extra }), encoding: "utf8",
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout).record;
+  };
+  const modern = build("0.3", { final_text: "word" });
+  assert.equal(modern.manifest.format_version, "0.3");
+  assert.equal(verifyRecord(modern).valid, true);
+  const tampered = structuredClone(modern);
+  tampered.manifest.duration_ms += 1;
+  assert.equal(verifyRecord(tampered).valid, false);
+  const legacy = build("0.2", { final_text: "word" });
+  assert.equal(legacy.manifest.format_version, "0.2");
+  assert.equal(verifyRecord(legacy).valid, true);
+  assert.deepEqual(computeEventHashChain(base.events, base.session_id, "0.2"), computeEventHashChain(base.events, base.session_id, "0.3"));
+  const old = build("0.1");
+  old.manifest.duration_ms += 1;
+  assert.equal(verifyRecord(old).valid, true, "historical finalization bytes are unchanged");
+});
+
+test("Emacs links and persists the next segment at the prior signed finish", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-linked-"));
+  const scriptPath = join(temp, "scenario.el");
+  const outputPath = join(temp, "out.json");
+  const documentPath = join(temp, "draft.txt");
+  await writeFile(documentPath, "");
+  await writeFile(scriptPath, `;;; linked.el -*- lexical-binding: t; -*-
+(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil)
+(let (parent child start-ms child-state)
+  (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+    (pmbah-mode 1)
+    (setq pmbah--session-start-time (time-subtract (current-time) (seconds-to-time 10))
+          start-ms (pmbah--time-to-ms pmbah--session-start-time))
+    (insert "PARENT-CANARY")
+    (cl-letf (((symbol-function 'pmbah--post-record)
+               (lambda (body) (setq parent (pmbah-test-materialize body)) '((url . "https://example.test/parent")))))
+      (pmbah-sign-buffer (list :surface "emacs") t))
+    (setq child-state (pmbah--read-state (pmbah--state-file)))
+    (set-buffer-modified-p nil)
+    (kill-buffer (current-buffer)))
+  (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+    (pmbah-mode 1)
+    (insert "child")
+    (setq child (pmbah-build-record-for-current-buffer (list :surface "emacs")))
+    (set-buffer-modified-p nil)
+    (kill-buffer (current-buffer)))
+  (with-temp-file ${JSON.stringify(outputPath)}
+    (insert (pmbah--json-encode (list :parent parent :child child :start_ms start-ms :child_state child-state)))))
+`);
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(verifyRecord(output.child).valid, true);
+    assert.equal(output.child.manifest.parent_record, output.parent.manifest.record_hash);
+    assert.equal(output.child_state.parent_record, output.parent.manifest.record_hash);
+    assert.equal(output.child_state.session_start_ms, output.start_ms + output.parent.manifest.duration_ms);
+    assert.equal((output.child_state.events ?? []).length, 0);
+    assert.equal(output.child.events.length, 1);
+    assert.equal(output.child.events[0].pos, null);
+    assert.equal(Date.parse(output.parent.manifest.created_client_t), output.start_ms);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs drops only a rejected observation envelope and keeps the frozen record on retry", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-rejected-"));
+  const scriptPath = join(temp, "scenario.el");
+  const outputPath = join(temp, "out.json");
+  await writeFile(scriptPath, `;;; rejected.el -*- lexical-binding: t; -*-
+(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil)
+(with-temp-buffer
+  (pmbah-mode 1)
+  (insert "BOUND-CANARY")
+  (let (before after failure)
+    (let ((helper (symbol-function 'pmbah--journal-helper)))
+      (cl-letf (((symbol-function 'pmbah--journal-helper)
+                 (lambda (payload)
+                   (if (equal (alist-get 'operation payload) "publish")
+                       (progn (setq before (pmbah-test-materialize payload))
+                              '((error . ((code . "observation_mismatch") (message . "rejected")))))
+                     (funcall helper payload)))))
+        (setq failure (condition-case err (pmbah-sign-buffer (list :surface "emacs") t)
+                        (user-error (error-message-string err))))))
+    (let ((saved (pmbah--read-state (pmbah--state-file))))
+      (pmbah--start-session)
+      (pmbah--resume-session saved))
+    (cl-letf (((symbol-function 'pmbah--post-record)
+               (lambda (body) (setq after (pmbah-test-materialize body)) '((url . "https://example.test/retried")))))
+      (pmbah-sign-buffer nil t))
+    (with-temp-file ${JSON.stringify(outputPath)}
+      (insert (pmbah--json-encode (list :before before :after after :failure failure))))))
+`);
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.deepEqual(output.after.manifest, output.before.manifest);
+    assert.deepEqual(output.after.events, output.before.events);
+    assert.deepEqual(output.after.observation, { state: "unobserved" });
+    assert.match(output.failure, /observation_mismatch/);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs preserves unrelated recovery state when a visited file is renamed onto it", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-rename-conflict-"));
+  const scriptPath = join(temp, "scenario.el");
+  const outputPath = join(temp, "out.json");
+  const first = join(temp, "first.txt"), second = join(temp, "second.txt");
+  await Promise.all([writeFile(first, ""), writeFile(second, "")]);
+  await writeFile(scriptPath, `;;; rename-conflict.el -*- lexical-binding: t; -*-
+(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil)
+(let (target before old after)
+  (with-current-buffer (find-file-noselect ${JSON.stringify(second)})
+    (pmbah-mode 1) (insert "target") (pmbah--write-state)
+    (setq target (pmbah--state-file) before (pmbah--read-file target))
+    (set-buffer-modified-p nil) (kill-buffer (current-buffer)))
+  (with-current-buffer (find-file-noselect ${JSON.stringify(first)})
+    (pmbah-mode 1) (insert "source") (pmbah--write-state)
+    (setq old (pmbah--state-file))
+    (set-visited-file-name ${JSON.stringify(second)} t)
+    (insert "new edit") (pmbah--write-state)
+    (pmbah-discard-session)
+    (insert "after discard") (pmbah--write-state)
+    (cl-letf (((symbol-function 'pmbah--post-record)
+               (lambda (_) '((url . "https://example.test/renamed")))))
+      (pmbah-sign-buffer (list :surface "emacs") t))
+    (insert "linked child") (insert " second edit") (pmbah--write-state)
+    (setq after (pmbah--state-file))
+    (set-buffer-modified-p nil) (kill-buffer (current-buffer)))
+  (with-temp-file ${JSON.stringify(outputPath)}
+    (insert (pmbah--json-encode (list :target_preserved (if (equal before (pmbah--read-file target)) t :json-false)
+                                    :old old :after after :events (plist-get (pmbah--read-state old) :event_count))))))
+`);
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(output.target_preserved, true);
+    assert.equal(output.old, output.after);
+    assert.equal(output.events, 2);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs retains exclusive session ownership while capture is off and releases it on buffer close", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-owner-"));
+  const scriptPath = join(temp, "scenario.el");
+  const outputPath = join(temp, "out.json");
+  await writeFile(scriptPath, `;;; owners.el -*- lexical-binding: t; -*-
+(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil)
+(let ((owner (generate-new-buffer "owner")) path blocked recovered)
+  (with-current-buffer owner
+    (pmbah-mode 1) (insert "owned") (pmbah-mode -1)
+    (setq path (pmbah--state-file)))
+  (with-temp-buffer
+    (setq blocked (condition-case err (progn (pmbah-recover-session path) nil)
+                    (user-error (error-message-string err)))))
+  (kill-buffer owner)
+  (with-temp-buffer
+    (pmbah-recover-session path)
+    (setq recovered pmbah--next-seq))
+  (with-temp-file ${JSON.stringify(outputPath)}
+    (insert (pmbah--json-encode (list :blocked blocked :recovered recovered)))))
+`);
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.match(output.blocked, /already owned/);
+    assert.equal(output.recovered, 1);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs recovery locks reject a second process without stealing ownership", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-process-lock-"));
+  const documentPath = join(temp, "draft.txt");
+  const holderPath = join(temp, "holder.el");
+  const contenderPath = join(temp, "contender.el");
+  const readyPath = join(temp, "ready");
+  const releasePath = join(temp, "release");
+  const setup = `(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil pmbah-state-directory ${JSON.stringify(join(temp, "state"))})`;
+  await writeFile(documentPath, "");
+  await writeFile(holderPath, `;;; holder.el -*- lexical-binding: t; -*-
+${setup}
+(with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+  (pmbah-mode 1) (insert "first owner") (pmbah-mode -1)
+  (with-temp-file ${JSON.stringify(readyPath)} (insert "ready"))
+  (while (not (file-exists-p ${JSON.stringify(releasePath)})) (sleep-for 0.02))
+  (set-buffer-modified-p nil) (kill-buffer (current-buffer)))
+`);
+  await writeFile(contenderPath, `;;; contender.el -*- lexical-binding: t; -*-
+${setup}
+(with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+  (condition-case err (progn (pmbah-mode 1) (princ "acquired"))
+    (user-error (princ (error-message-string err)))))
+`);
+  const holder = spawn(emacs, ["--batch", "-Q", "-l", holderPath], { stdio: ["ignore", "ignore", "pipe"] });
+  let holderErrors = "";
+  holder.stderr.on("data", (chunk) => { holderErrors += chunk; });
+  const finished = new Promise((resolveExit) => holder.on("close", resolveExit));
+  try {
+    let ready = false;
+    for (let count = 0; count < 200; count += 1) {
+      try { ready = (await readFile(readyPath, "utf8")) === "ready"; } catch {}
+      if (ready) break;
+      await new Promise((resolveWait) => setTimeout(resolveWait, 20));
+    }
+    assert.equal(ready, true, holderErrors);
+    const blocked = await runEmacs(contenderPath);
+    assert.equal(blocked.status, 0, blocked.stderr);
+    assert.match(blocked.stdout, /already owned by another Emacs process/);
+    await writeFile(releasePath, "release");
+    assert.equal(await finished, 0, holderErrors);
+    const acquired = await runEmacs(contenderPath);
+    assert.equal(acquired.status, 0, acquired.stderr);
+    assert.equal(acquired.stdout, "acquired");
+  } finally {
+    if (holder.exitCode === null) holder.kill("SIGKILL");
+    await finished;
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs restores the writer's original read-only setting when leaving a frozen session", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-readonly-"));
+  const scriptPath = join(temp, "scenario.el");
+  await writeFile(scriptPath, `;;; readonly.el -*- lexical-binding: t; -*-
+(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil)
+(dolist (original '(nil t))
+  (with-temp-buffer
+    (pmbah-mode 1) (insert "draft") (setq buffer-read-only original)
+    (cl-letf (((symbol-function 'pmbah--post-record) (lambda (_) (error "offline"))))
+      (condition-case nil (pmbah-sign-buffer (list :surface "emacs") t) (error nil)))
+    (unless buffer-read-only (error "frozen buffer not locked"))
+    (pmbah-mode -1)
+    (unless (eq buffer-read-only original) (error "original setting not restored on disable"))
+    (pmbah-mode 1)
+    (unless buffer-read-only (error "frozen buffer not locked on reenable"))
+    (pmbah-discard-session)
+    (unless (eq buffer-read-only original) (error "original setting not restored on discard"))))
+(princ "preserved")
+`);
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(result.stdout, "preserved");
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Emacs saves every mutation and pauses safely when durable recovery fails", { skip: emacs ? false : "emacs binary not available" }, async () => {
+  const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-durable-capture-"));
+  const scriptPath = join(temp, "scenario.el");
+  const outputPath = join(temp, "out.json");
+  await writeFile(scriptPath, `;;; durable-capture.el -*- lexical-binding: t; -*-
+(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(setq pmbah-observe-process nil)
+(with-temp-buffer
+  (pmbah-mode 1)
+  (let (counts paused status blocked hooks retained retry-count frozen)
+    (dotimes (_ 3)
+      (insert "PRIVATE-DURABILITY-CANARY")
+      (push (plist-get (pmbah--read-state (pmbah--state-file)) :event_count) counts))
+    (cl-letf (((symbol-function 'pmbah--write-json-file) (lambda (&rest _) (error "disk full"))))
+      (insert "unsaved"))
+    (setq paused (if (and pmbah--save-failure buffer-read-only) t :json-false)
+          status (pmbah-show-session-status)
+          retained pmbah--next-seq
+          blocked 0)
+    (dotimes (_ 3)
+      (condition-case nil (insert "must not append") (buffer-read-only (cl-incf blocked))))
+    (setq hooks (if (and (memq #'pmbah--before-change before-change-functions)
+                         (memq #'pmbah--after-change after-change-functions)) t :json-false))
+    (pmbah-retry-save)
+    (when (or buffer-read-only pmbah--save-failure) (error "capture did not resume"))
+    (setq retry-count (plist-get (pmbah--read-state (pmbah--state-file)) :event_count))
+    (insert "resumed")
+    (cl-letf (((symbol-function 'pmbah--post-record) (lambda (_) (error "offline"))))
+      (condition-case nil (pmbah-sign-buffer (list :surface "emacs") t) (error nil)))
+    (setq frozen pmbah--frozen-record)
+    (pmbah-retry-save)
+    (unless (and buffer-read-only (equal frozen pmbah--frozen-record)) (error "save retry unfroze upload"))
+    (let ((state (pmbah--read-file (pmbah--state-file))))
+      (with-temp-file ${JSON.stringify(outputPath)}
+        (insert (pmbah--json-encode (list :counts (vconcat (nreverse counts)) :paused paused
+                                        :status status :retained retained :blocked blocked :hooks hooks
+                                        :retry_count retry-count :state state)))))))
+`);
+  try {
+    const result = await runEmacs(scriptPath);
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const output = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.deepEqual(output.counts, [1, 2, 3]);
+    assert.equal(output.paused, true);
+    assert.match(output.status, /Recovery save failed; recording paused: disk full/);
+    assert.equal(output.retained, 4);
+    assert.equal(output.blocked, 3);
+    assert.equal(output.hooks, true);
+    assert.equal(output.retry_count, 4);
+    assert.equal(output.state.includes("PRIVATE-DURABILITY-CANARY"), false);
+    assert.equal(output.state.includes("unsaved"), false);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

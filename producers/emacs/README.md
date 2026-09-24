@@ -4,10 +4,10 @@ Native Emacs producer for PossiblyMadeByAHuman (PMBAH) content-blind writing rec
 
 `pmbah-mode` is a buffer-local minor mode. It records Emacs buffer mutations from
 `after-change-functions`, asks the ingest API to stamp checkpoints of the public
-hash chain while you write, builds a PMBAH format `0.2` record locally, uploads
+hash chain while you write, builds a PMBAH format `0.3` record locally, uploads
 only the public content-blind record to the API, and copies the returned short URL
-to the kill ring. Sessions belong to buffers; for file-visiting buffers they are
-saved locally so you can close the file, or Emacs, and pick the same session up
+to the kill ring. Sessions belong to buffers and are saved locally so you can
+close the file, or Emacs, and pick the same session up
 days later.
 
 ## Privacy and scope
@@ -19,14 +19,19 @@ days later.
   snapshot, hash, or replay fixture. Some public length-derived stats may be
   `unknown` because the verifier cannot infer total document length from the
   captured suffix alone.
+- The first mutation after a nonempty start or capture gap has an unknown
+  position. Resuming, toggling capture, reverting, or edits made while hooks
+  were suppressed can introduce a gap. Binding text requires another recorded
+  edit after that boundary; signing without a binding remains available.
 - Public uploads contain mutation shape, timing, source labels, manifest metadata,
   and public process hashes. They do **not** include plaintext insertion text.
-- The local helper payload contains process metadata only, with one exception: when
+- The local helper receives process metadata and a private numeric-journal path,
+  with one exception: when
   you choose to bind the document at sign time, the mode passes the active region
   when one is active, otherwise the whole buffer, to the **local** helper transiently,
   solely so the helper can compute the content-blind text binding (the
   `canon-letters/0.1` commitment) via the shared format
-  implementation. The helper discards that text immediately — it is never stored,
+  implementation. That text exists only in the local helper input — it is never stored,
   logged, hashed for anything else, uploaded, or reconstructed; only the sealed binding
   object (`scheme`, `canonical_length`, `commitment`) survives. The text never
   leaves your machine. This is a local-compute exception, not a storage exception.
@@ -35,14 +40,16 @@ days later.
   `/api/observed-sessions/<session_id>/checkpoints`. The server stamps when it
   saw that prefix. Checkpoints carry no text and no text-derived hashes, and
   they are computed by a second local helper, `scripts/chain-tip.mjs`, which
-  refuses any input field other than the session id, format version, public
-  events, and the previously computed tip with its event count. After the
-  first checkpoint only the events since the last tip are hashed, so a
-  checkpoint costs the new events rather than the whole session.
+  reads the numeric journal from its last verified byte cursor. After the first
+  checkpoint only new events are hashed. Its path and cursor stay local; the
+  service receives only the event count and chain tip.
 - Session state saved under `pmbah-state-directory` holds the session id, start
-  time, format version, public events, and the checkpoint token. It never
-  holds document text, the file name, or the file path: the file is named by
-  the SHA-256 of the visited file's true name, and the file is written with
+  time, format version, checkpoint token, and frozen manifest when present.
+  Numeric events live in `events-<session-id>.jsonl`; metadata stores only its
+  durable count and byte boundary. Neither file holds document text or a document
+  path. Reviewed public
+  context can include a buffer name. File sessions use the SHA-256 of the visited
+  file's true name; non-file sessions use a session UUID. State files have
   owner-only permissions because the token is a bearer secret.
 - Absolute local file paths are noted as omitted at sign time and are not
   uploaded by default.
@@ -55,11 +62,14 @@ days later.
 
 - `pmbah-mode.el` — Emacs minor mode, checkpointing, session persistence, and
   upload flow.
-- `scripts/build-record.mjs` — local helper that uses the shared TypeScript
-  format package to compute BLAKE3 record hash chains and verification over the
-  public process record.
+- `scripts/event-journal.mjs` — local helper that uses the shared TypeScript
+  format package to recover/verify journals, seal manifests, and publish event
+  chunks without loading the complete history into memory.
 - `scripts/chain-tip.mjs` — local helper that computes the public hash-chain
   tip of the events captured so far for a checkpoint.
+- `scripts/build-record.mjs` — compatibility entry point for existing local
+  configurations; new journal descriptors delegate to `event-journal.mjs`.
+  Its old array-input interface remains for explicit legacy CLI exports only.
 
 ## Requirements
 
@@ -68,7 +78,7 @@ days later.
   your shell `PATH`; configure `pmbah-node-command` or `PMBAH_NODE` if `node`
   is not found.
 - A checkout or release directory containing both `pmbah-mode.el` and
-  `scripts/build-record.mjs`.
+  `scripts/event-journal.mjs`.
 - Repository dependencies installed from the repository root with `npm ci` (or
   `make install`, which runs the normal npm install path for this repo).
 - A running PMBAH ingest API.
@@ -99,7 +109,7 @@ producer paths from it:
 (require 'pmbah-mode)
 
 (setq pmbah-helper-script
-      (expand-file-name "producers/emacs/scripts/build-record.mjs"
+      (expand-file-name "producers/emacs/scripts/event-journal.mjs"
                         pmbah-checkout-root))
 ;; Public service; this is also the package default.
 (setq pmbah-api-base-url "https://possiblymadebyahuman.com")
@@ -121,7 +131,7 @@ Change only `pmbah-checkout-root` for your checkout location.
   :custom
   (pmbah-api-base-url "https://possiblymadebyahuman.com")
   (pmbah-helper-script
-   (expand-file-name "producers/emacs/scripts/build-record.mjs"
+   (expand-file-name "producers/emacs/scripts/event-journal.mjs"
                      pmbah-checkout-root)))
 ```
 
@@ -192,7 +202,8 @@ issued it.
 ### Session state directory
 
 `pmbah-state-directory` (default `~/.emacs.d/pmbah/`, via
-`locate-user-emacs-file`) holds one state file per visited file. The
+`locate-user-emacs-file`) holds small metadata files, append-only numeric event
+journals, and accepted-link archives. The
 directory is created owner-only. Point it elsewhere if your Emacs directory is
 synced between machines:
 
@@ -207,26 +218,51 @@ synced between machines:
   between them does nothing to their sessions.
 - The session survives `M-x <major-mode>` and `revert-buffer`, which otherwise
   wipe buffer-local state: recording continues into the same session.
-- A file-visiting buffer saves its session to `pmbah-state-directory` after a
-  moment of idle time, when the buffer or Emacs is killed, when the mode is
+- Every captured mutation appends one numeric journal line and saves small
+  metadata before capture returns. Both writes request a file flush; directory
+  rename durability still depends on the filesystem, so this is not a guarantee
+  against every power-loss scenario. State also saves when Emacs is killed, when the mode is
   turned off, and whenever the server accepts a checkpoint. Enabling
   `pmbah-mode` on that file later resumes the session: earlier events are
   kept and new event times continue from the original start, so a break of
   hours, days or months shows up as a pause, not as a new record.
-- A successful upload, or `pmbah-discard-session`, removes the state file and
-  starts a fresh session in the buffer.
+- If saving fails, the event remains in memory and capture makes the buffer
+  read-only. `M-x pmbah-retry-save` saves the pending state and resumes unsigned
+  capture; a frozen upload remains frozen. Each edit writes only its new event
+  and bounded metadata; it never rewrites the preceding history. Emacs retains
+  at most 256 events in its capture tail.
+- Recovery streams the journal and validates the acknowledged count and exact
+  byte boundary, cached hash prefix, retained observation commitments, and any
+  frozen record hash. Only then may it adopt complete appends beyond stale
+  metadata or remove an unacknowledged incomplete final line. A missing or
+  changed acknowledged prefix stops recovery without truncating the evidence.
+  Live session state is installed only after verification and the metadata save
+  succeed; errors or cancellation leave recovery safe to retry. Old array
+  snapshots remain authoritative until migration succeeds; frozen legacy records
+  retain their original hashes.
+- A successful upload starts a new segment linked to the accepted record,
+  beginning at its signed finish time. The new segment and its parent link are
+  saved even before the next edit. Frozen legacy uploads use their local upload
+  time as the approximate boundary. Accepted links are retained in
+  `published-<session-id>.json` before the old draft state is removed.
+  `pmbah-discard-session` removes draft state and starts an unlinked session.
 - Renaming the visited file (`write-file`, `set-visited-file-name`) moves the
-  state file with it, so the renamed file resumes the same session.
-- Non-file buffers (`*scratch*`, temporary buffers) keep their session in
-  memory only; killing the buffer discards it.
+  state file with it, so the renamed file resumes the same session. If the target
+  already has unrelated recovery state, that state is preserved and the current
+  session continues saving at its original recovery path, reported in a message.
+- Non-file buffers (`*scratch*`, temporary buffers) save their sessions under
+  `session-<session-id>.json`. Run `M-x pmbah-recover-session` in an unused buffer
+  to select a saved session. Recovery restores capture events or a frozen upload,
+  never document text.
 - Event times and durations are exact JSON integer milliseconds, supported
   through 9,007,199,254,740,991 ms, with 64-bit server storage. Months-long
   sessions retain the original clock; backwards system-clock corrections cannot
   make later events run backwards. Unreadable or incompatible state, or a clock
   outside the exact integer range, is kept with a `.stale` suffix before a fresh
   session starts. This does not change existing format versions or record hashes.
-- Opening the same file in two Emacs instances at once is not supported: both
-  would resume the same session and their checkpoints would conflict.
+- Each recovery file has one writer. A second buffer or Emacs process cannot
+  attach to a session while its current owner remains open, including while
+  capture is off. Close the owning buffer before recovering it elsewhere.
 
 ## Usage
 
@@ -263,15 +299,50 @@ synced between machines:
    M-x pmbah-discard-session
    ```
 
-Before uploading, the mode sends one last checkpoint covering any events the
+Before network work, the mode freezes and saves the record, including its signed
+finish time. It then sends one last checkpoint covering any events the
 server has not stamped yet, so an observed record is observed to its final
 event. If no checkpoint ever succeeded during the session (for example, you
 wrote offline), the record is uploaded with an explicit `unobserved` state
 rather than being stamped for the first time at sign time.
 
-After a successful upload, the local event log and any saved state are cleared
-and a fresh session is started for the current buffer. If upload fails, the
-local event log remains so you can retry.
+After a successful upload, the old local event log and draft state are cleared,
+the accepted link is saved, and a linked segment starts. If upload fails, run
+`pmbah-sign-buffer` again to retry exactly the same frozen record, including
+after reopening Emacs. The buffer becomes read-only while its record is frozen;
+finish or discard it before recording more edits. Turning capture off restores
+the buffer's earlier read-only setting for private edits. Frozen legacy uploads keep their
+original format and hash. Unsigned `0.2` drafts finish as `0.3` while retaining
+their checkpoint prefixes; `0.1` drafts retain their legacy finalization.
+When the server specifically rejects an observation binding, a retry drops that
+binding while keeping the frozen record and hash unchanged.
+
+Signing streams the immutable journal prefix to seal its manifest. Publication
+uses `/api/record-uploads` with chunks of at most the advertised size, capped at
+4,096 events locally, and a 30-second deadline per request. Retrying asks the
+service for its durable event cursor and sends only the missing suffix. The
+private upload capability, journal path, and byte cursor never become public
+record fields. Frozen state contains a manifest and prefix reference, not copies
+of the entire event history.
+
+Interactive signing runs the scan and publication in background helper processes,
+so other buffers remain usable during a long upload. Closing the signing buffer
+cancels its local helper and keeps the saved frozen prefix available for recovery.
+Noninteractive Lisp callers retain the synchronous, result-returning interface.
+
+`pmbah-build-record-for-current-buffer` and `pmbah--session-events` are explicit
+diagnostic exports that materialize arrays. Capture, checkpointing, normal
+signing, and publication do not call these exports.
+
+For reproducible scale evidence, run `node scripts/benchmark-emacs-journal.mjs`
+from the repository root. It seeds four million numeric events over two years
+and a four-million-character live buffer, recovers with a 96 MB Node heap limit,
+then measures 400 real native edits
+and a suffix checkpoint. In the recorded development run, per-edit writes were
+792 bytes after four million events versus 767 bytes near the beginning, with a
+256-event memory tail and 689-byte metadata. After the recovery corrections, recovery took about 22 seconds;
+the subsequent 400 edits took about 308 ms and their checkpoint about 91 ms
+while the PostgreSQL integration suite ran concurrently.
 
 ## Verify the installation
 
@@ -384,7 +455,7 @@ make check
   path in the checkout where you ran `npm ci` / `make install`.
 - `Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@noble/hashes'`: install
   repository dependencies from the repo root (`npm ci` or `make install`) and
-  ensure `pmbah-helper-script` points to `producers/emacs/scripts/build-record.mjs`
+  ensure `pmbah-helper-script` points to `producers/emacs/scripts/event-journal.mjs`
   inside that same checkout.
 - `Searching for program: No such file or directory, node`: GUI Emacs cannot find
   Node. Set `PMBAH_NODE` or `pmbah-node-command` to an absolute Node path.
@@ -394,7 +465,7 @@ make check
 - Upload HTTP errors: run `M-x pmbah-show-session-status` and confirm
   `pmbah-api-base-url` is `https://possiblymadebyahuman.com` for normal public
   use. `http://localhost:8000` only works when you are running `make
-  local-container` locally. The API origin must serve `POST /api/records`, and
+  local-container` locally. The API origin must serve `/api/record-uploads`, and
   `/ready` should be healthy.
 - No URL copied: upload did not complete; the local session is retained for
   retry.

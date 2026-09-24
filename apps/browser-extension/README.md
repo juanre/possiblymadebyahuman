@@ -2,7 +2,7 @@
 
 The extension creates content-blind writing records **only for editors you explicitly start**. Opening a page, focusing a field, typing, or opening the side panel does not start capture. No controls are placed over webpage content.
 
-This README describes extension **0.3.1**, which supports starting in fields that already contain text. It requires API and viewer version **0.3 or newer**. Developer-mode ZIP packages are available through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases); no Chrome Web Store availability is claimed.
+This README describes the current **0.3.3 source**, which supports starting in fields that already contain text. Its resumable publication path requires the API and viewer from the same architecture update, with database migration **005** applied. This is source status, not a claim that a new release has been distributed. Developer-mode ZIP packages are available through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases); no Chrome Web Store availability is claimed.
 
 ## Use it
 
@@ -20,6 +20,17 @@ This README describes extension **0.3.1**, which supports starting in fields tha
 For the same document in another tab, choose its active draft in the panel and explicitly choose **Share its writing record** before starting in the other editor. The extension does not infer that unrelated fields belong together. Shared sessions can publish editing activity only; they do not silently choose one editor’s wording for a binding. Both editors must represent the same document; independent copies that drift apart do not establish a single reliable document-length history.
 
 If the text-check scope is unavailable or its hash cannot be computed, no upload occurs. Only then does the panel offer cancel or a separate **Publish editing activity only** choice. It does not read later edits to manufacture a replacement binding. Failed or interrupted uploads retain the frozen record for an exact retry, including across browser restarts. Canceling after capture has stopped leaves the draft stopped; it does not resume capture invisibly.
+
+## Long sessions and local storage
+
+Numeric events are appended to IndexedDB; session status, checkpoint state and
+saved links are stored separately from event history. Normal edits never rewrite
+older events. Existing Chrome-storage drafts migrate only after their event
+chains verify in the new journal. There is no snapshot fallback after a storage
+failure. Publication uses resumable chunks of at most 4096 events and preserves
+the same frozen record across retries. Local disk and browser storage remain
+finite; a failed write is reported and capture stops rather than claiming that
+an unsaved event was durable.
 
 ## Saved records and continued writing
 

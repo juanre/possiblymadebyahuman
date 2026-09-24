@@ -13,6 +13,10 @@ async function loadPanel(page, options = {}) {
   await page.exposeFunction("panelMessage", async message => {
     state.calls.push(message);
     if (message.kind === "list_panel_sessions") {
+      if (options.refreshFailureAfterUpload && state.sessions.some(s => s.state === "uploaded")) {
+        if (options.refreshFailureAfterUpload === "throw") throw new Error("storage full");
+        return { kind: "error", reason: "storage full" };
+      }
       const saved = state.sessions.filter(s => s.state === "uploaded");
       const matches = saved.filter(s => `${s.display_name} ${s.origin.origin} ${s.uploaded_response.url}`.toLowerCase().includes((message.history_query ?? "").toLowerCase()));
       const offset = Math.min(message.history_offset ?? 0, Math.max(matches.length - 1, 0));
@@ -28,7 +32,8 @@ async function loadPanel(page, options = {}) {
     if (message.kind === "sign_session" || message.kind === "retry_failed_upload") {
       const record = state.sessions.find(s => s.session_id === message.session_id);
       record.state = "uploaded"; record.uploaded_response = { url: URL, short_signature: "exampleSaved", record_hash: "b3:example" }; record.signed_text_binding = message.text_binding;
-      return { kind: "sign_session_result", result: { kind: "uploaded", response: record.uploaded_response, text_binding: record.signed_text_binding } };
+      return { kind: "sign_session_result", result: { kind: "uploaded", response: record.uploaded_response, text_binding: record.signed_text_binding,
+        ...(options.refreshFailureAfterUpload ? { persistence_note: "The link could not be saved in this browser. Copy the displayed link now." } : {}) } };
     }
     if (message.kind === "rename_session") { state.sessions.find(s => s.session_id === message.session_id).display_name = message.name; return { kind: "rename_result", ok: true }; }
     if (message.kind === "remove_saved") { state.sessions = state.sessions.filter(s => s.session_id !== message.session_id); return { kind: "remove_saved_result", ok: true }; }
@@ -72,6 +77,18 @@ test("unavailable text check uploads nothing until editing activity is explicitl
   await expect(page.getByLabel("Complete record link")).toHaveValue(URL);
   await expect(page.getByText("No text check included.", { exact: true })).toBeVisible();
 });
+
+for (const failure of ["error", "throw"]) {
+  test(`accepted link and persistence warning survive a ${failure} while refreshing the panel`, async ({ page }) => {
+    const { state } = await loadPanel(page, { refreshFailureAfterUpload: failure });
+    await page.getByRole("button", { name: "Finish & get link" }).click();
+    await page.getByRole("button", { name: "Confirm & publish" }).click();
+    await expect(page.locator("#latest").getByLabel("Complete record link")).toHaveValue(URL);
+    await expect(page.locator("#toast")).toContainText("public record was saved");
+    await expect(page.locator("#toast")).toContainText("link could not be saved in this browser");
+    expect(state.calls.filter(message => message.kind === "sign_session")).toHaveLength(1);
+  });
+}
 
 test("finish includes the text hash without an opt-out", async ({ page }) => {
   const { state } = await loadPanel(page);

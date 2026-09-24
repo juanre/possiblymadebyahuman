@@ -122,11 +122,11 @@ export function buildDelayHistogram(events: BufferMutation[]): {
 }
 
 /** Endpoint waits are distinct from intervals between captured edits. */
-export function recordTimingDetails(record: Pick<RecordApiResponse, "manifest" | "events">): {
+export function recordTimingDetails(record: Pick<RecordApiResponse, "manifest" | "events" | "event_times">): {
   signedFinish: boolean; editingSpanMs: number; beforeFirstEditMs: number; afterLastEditMs: number;
 } {
-  const first = record.events[0]?.t ?? 0;
-  const last = record.events.at(-1)?.t ?? 0;
+  const first = record.event_times?.first ?? record.events[0]?.t ?? 0;
+  const last = record.event_times?.last ?? record.events.at(-1)?.t ?? 0;
   return {
     signedFinish: record.manifest.format_version === "0.3",
     editingSpanMs: Math.max(0, last - first),

@@ -11,6 +11,9 @@ COPY packages/format/package.json packages/format/package.json
 COPY packages/conformance/package.json packages/conformance/package.json
 COPY packages/analyzers/package.json packages/analyzers/package.json
 COPY packages/storage/package.json packages/storage/package.json
+COPY packages/producer-core/package.json packages/producer-core/package.json
+COPY packages/browser-capture/package.json packages/browser-capture/package.json
+COPY packages/browser-storage/package.json packages/browser-storage/package.json
 RUN npm ci
 
 FROM deps AS web-builder
