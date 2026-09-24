@@ -5,7 +5,7 @@ Status: **implemented in the 0.3.0 candidate; release and authenticated-site acc
 ## Candidate implementation
 
 - **This editor** follows exact editor identity in the panel's browser window and active tab. Focus alone never starts capture. Other drafts remain separately accessible; visiting saved history does not retarget an editor. Rename uses a private local name, distinct from the public label reviewed at finish. Defaults use site, field metadata and a stable distinguishing number, never document contents.
-- **Finish & get link** pins the target draft. **Selected text** or **Whole field** appears separately from the optional text-check checkbox; changed scope requires another confirmation. Public context and an expandable explanation of the check remain available before publication. A text-check failure offers cancellation or explicit publication of editing activity only.
+- **Finish & get link** pins the target draft. **Selected text** or **Whole field** identifies the text to be signed; changed scope requires another confirmation. Normal publication includes the text check, without an opt-out checkbox or long explanation in the panel. Public context remains available before publication. An unavailable scope or failed text check offers cancellation or explicit publication of editing activity only.
 - **Saved records** is last and collapsed by default. It has lightweight paged rows, search by name/site/date/link, Open/Copy, expandable details, Rename, explicit Continue and explicit removal. One recent publication result remains until Done. **Export all links** includes the whole saved-link list and its private names/site metadata, without document text or checkpoint credentials. No time/count eviction was added.
 - **Stop** retains an unfinished draft. Resume is explicit, may use a non-empty field on the same site origin, and keeps session identity, checkpoints and clock. Missing edits are not reconstructed; unknown positions prevent an invented document-length curve.
 - **Continue in chosen field** starts a distinct session linked to an immutable saved record. It captures only new mutations. Its clock starts at the parent's signed finish, or a retained local upload-time approximation for a legacy parent. The prior saved link remains; no document identity is inferred.
@@ -53,17 +53,13 @@ The permanent introduction can shrink after first use, leaving a Help entry. Int
 
 ## Text-check language
 
-Lead with what the option lets a reader do. The candidate uses:
-
-> **Let readers check a copy of this text**
->
-> Your text is not uploaded.
+Normal publication computes the text check. Do not show an opt-out checkbox or a lengthy explanation in the publishing panel.
 
 Show the actual target separately: **"Selected text"** or **"Whole field"**. Keep this generic across websites and editor types. The owner explicitly removed the spacing/punctuation/capitalisation sentence from the main interface; do not reintroduce it elsewhere in the primary flow. Do not make the reader mentally execute a conditional sentence. If scope changes before confirmation, update or reconfirm it; the displayed scope must agree with the text bound at finish. Share only selection presence/numeric scope across contexts, never selected plaintext.
 
-Keep a clearly available **How the text check works** explanation before publishing: comparison uses letters and numbers, does not establish exact equality, ignores number formatting too, and does not establish that these recorded edits produced that text or identify its author. Explain that a public check permits guessed text to be tested; short/predictable text may be guessed. Simplifying the main flow must not hide these limitations or imply encryption.
+Keep the limitations in the public documentation: comparison uses letters and numbers, does not establish exact equality, ignores number formatting too, and does not establish that these recorded edits produced that text or identify its author. Explain that a public check permits guessed text to be tested; short/predictable text may be guessed. The publishing panel must not imply encryption.
 
-Saved-state copy can say "Text check included" and link to the explanation. Avoid "wording commitment", "candidate wording", "process-only", and "local reference" in primary controls. When the option is unavailable, explain the consequence directly: readers can inspect the editing activity but cannot compare a copy of the text.
+Saved-state copy can say "Text check included" and link to the explanation. Avoid "wording commitment", "candidate wording", "process-only", and "local reference" in primary controls. When the text-check scope is unavailable or computation fails, explain the consequence directly: readers can inspect the editing activity but cannot compare a copy of the text.
 
 ## History after 200 write-ups
 
@@ -82,7 +78,7 @@ A writer can explicitly start a session in a field, leave, and return two months
 
 - The gap is elapsed time in the signed editing timeline. Do not reset the clock or compress it to active typing time. Distinguish a pause from evidence of continuous observation: edits made elsewhere while the extension was absent are not retroactively captured.
 - New fields still require explicit activation. Reattach a previously authorized session automatically only with reliable document/field identity. Generic URL, field label, or DOM position alone is not enough when a site reuses an editor for many documents. For ambiguous cases, let the writer choose the existing named session; never silently attach someone else's draft or start a replacement session.
-- Resuming an existing session may target a non-empty field. The empty-field requirement applies to new independent sessions, not to returning to an existing one. The website supplies the text; PMBAH does not store or restore the words.
+- New sessions, resumed sessions and explicit continuations may target a non-empty field. Starting records only later edits; earlier text is not imported, and total document length remains unknown when there is no observed empty baseline. The website supplies the text; PMBAH does not store or restore the words.
 - Numeric length checks cannot prove that restored text is unchanged. If edits may have been missed, preserve the gap and represent measurement uncertainty honestly rather than claiming an uninterrupted exact length curve. Do not introduce background plaintext snapshots or per-edit content hashes to solve reattachment.
 - An existing published signature remains immutable. Further publication must create another immutable record/link, with the relationship to prior records explicit. Retaining a working session and retaining a published snapshot are different responsibilities. The candidate uses linked continuation sessions containing only new mutations, as defined above.
 - Clarify lifecycle controls: leaving an editor is detachment, pausing is resumable, publishing creates a snapshot, and deletion is explicit. Stop retains an unfinished draft; finishing freezes a published segment, and Continue creates a new linked session.
@@ -99,7 +95,7 @@ A writer can explicitly start a session in a field, leave, and return two months
 ## Implementation slices and acceptance
 
 1. Focus-aware current-editor model and distinct draft identity. Verify two identical Gmail-like bodies in one frame, other tabs/frames, untracked recipient/subject fields, keyboard navigation and a confirmation pinned during focus changes.
-2. Finish/text-check copy and truthful scope display. Verify selected versus whole-field wording, changed selection before confirmation, unavailable binding, and privacy explanations in the normal publishing flow.
+2. Finish/text-check copy and truthful scope display. Verify selected versus whole-field wording, changed selection before confirmation, unavailable binding, and explicit editing-activity-only fallback.
 3. Durable drafts and saved-link history. Verify migration before cleanup, restart, no automatic expiry, explicit removal/export and failed writes. Keep failed uploads recoverable outside the saved archive.
 4. Long-session format/storage/observation support and safe reattachment. Simulate at least 60 days away, close/restart the browser, resume a non-empty field, add edits, sign and verify the full pause survives upload and visualization. Test ambiguous same-site editors and off-device changes without inventing coverage.
 5. Compact panel layout and scale. Test 0, 1, 20 and 200 saved records; narrow panel, keyboard/screen-reader use, stable focus, search/older entries and no interference with current writing. Opening/copying an old record must never alter which draft will finish.

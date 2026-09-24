@@ -88,7 +88,7 @@ test.describe("browser extension against the local service", () => {
     await session.getByRole("button", { name: "Finish & get link" }).click();
     const confirm = popup.locator(".sign-confirm");
     await expect(confirm).toBeVisible();
-    await expect(confirm.locator(".sign-bind")).toBeChecked();
+    await expect(confirm.locator(".binding-scope")).toHaveText("Whole field");
     await confirm.locator(".sign-confirm-go").click();
 
     const toast = popup.locator("#toast");
@@ -141,6 +141,76 @@ test.describe("browser extension against the local service", () => {
     await recordPage.screenshot({ path: testInfo.outputPath("record-viewer.png"), fullPage: true });
     expect(pageErrors).toEqual([]);
   });
+
+  for (const fieldLabel of ["plain field", "rich field"]) {
+  test(`explicitly starts in a partly filled ${fieldLabel} and captures only subsequent edits`, async ({ baseURL }) => {
+    const existingText = `Uncaptured juniper paragraph in the ${fieldLabel}.`;
+    const addedText = "Saffron";
+    const requests = [];
+    const captureRequest = request => requests.push(`${request.url()}\n${request.postData() ?? ""}`);
+    context.on("request", captureRequest);
+    const page = await context.newPage();
+    const panel = await context.newPage();
+    try {
+      await page.goto(`${baseURL}/extension-page`);
+      const field = page.getByLabel(fieldLabel);
+      await field.fill(existingText);
+      await panel.goto(`chrome-extension://${extensionId}/popup.html`);
+      await page.bringToFront();
+      await field.focus();
+      await page.keyboard.press("ControlOrMeta+End");
+      // Wait for the panel to recognise this exact editor before clicking.
+      // The button must work after the normal focus/availability update too.
+      await expect(panel.locator("#current")).toContainText("No writing record is active for this field");
+      await expect(panel.locator("#start")).toBeEnabled();
+      await panel.locator("#start").evaluate(button => button.click());
+      await expect(panel.locator("#toast")).toContainText("Writing record started");
+      await expect(panel.locator("#toast")).not.toHaveClass(/error/);
+      const draft = panel.locator("article.current");
+      await expect(draft).toContainText("0 editing events");
+      const sessionId = await draft.getAttribute("data-session-id");
+
+      await page.keyboard.type(addedText);
+      await page.keyboard.press("Backspace");
+      await expect(field).toHaveJSProperty(fieldLabel === "plain field" ? "value" : "textContent", existingText + addedText.slice(0, -1));
+      await expect(draft).toContainText(`${addedText.length + 1} editing events`);
+      const storedDrafts = JSON.stringify(await panel.evaluate(() => chrome.storage.local.get(null)));
+      for (const canary of [existingText, addedText, "Uncaptured juniper", "Saffro"]) {
+        expect(storedDrafts, "extension storage must not contain editor plaintext").not.toContain(canary);
+      }
+
+      await draft.getByRole("button", { name: "Finish & get link" }).click();
+      await panel.locator(".sign-confirm-go").click();
+      const saved = panel.locator("#latest");
+      await expect(saved.getByRole("heading", { name: "Record saved" })).toBeVisible();
+      const url = await saved.getByLabel("Complete record link").inputValue();
+      const response = await fetch(`${localBaseUrl}/api/records/${new URL(url).pathname.slice(1)}`);
+      expect(response.status).toBe(200);
+      const record = await response.json();
+      expect(record.manifest.session_id).toBe(sessionId);
+      expect(record.manifest.event_count).toBe(addedText.length + 1);
+      expect(record.events).toHaveLength(addedText.length + 1);
+      expect(record.events[0]).toMatchObject({ op: "insert", pos: null, ins_len: 1, del_len: 0 });
+      for (let i = 1; i < addedText.length; i += 1) {
+        expect(record.events[i]).toMatchObject({ op: "insert", pos: existingText.length + i, ins_len: 1, del_len: 0 });
+      }
+      expect(record.events.at(-1)).toMatchObject({ op: "delete", pos: existingText.length + addedText.length - 1, ins_len: 0, del_len: 1 });
+      expect(record.stats.observed_final_length).toBeNull();
+      expect(verifyRecord({ manifest: record.manifest, events: record.events }).valid).toBe(true);
+      const serialized = JSON.stringify(record);
+      const storedAfterSave = JSON.stringify(await panel.evaluate(() => chrome.storage.local.get(null)));
+      for (const canary of [existingText, addedText, "Uncaptured juniper", "Saffro"]) {
+        expect(serialized, "public record must not contain editor plaintext").not.toContain(canary);
+        expect(requests.join("\n"), "extension requests must not contain editor plaintext").not.toContain(canary);
+        expect(storedAfterSave, "saved extension storage must not contain editor plaintext").not.toContain(canary);
+      }
+    } finally {
+      context.off("request", captureRequest);
+      await page.close();
+      await panel.close();
+    }
+  });
+  }
 
   test("stopped drafts resume in an explicitly chosen nonempty field and finish with a fresh binding", async ({ baseURL }) => {
     const page = await context.newPage();

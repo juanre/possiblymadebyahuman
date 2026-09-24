@@ -176,7 +176,7 @@ export class SessionRegistry {
     origin: FieldOrigin,
     descriptor: FieldDescriptor,
     capture: CaptureContext,
-    options: { fresh?: boolean } = {},
+    options: { fresh?: boolean; initial_content_unknown?: boolean } = {},
   ): SessionRecord {
     const resolution = resolveSession(
       origin,
@@ -209,6 +209,7 @@ export class SessionRegistry {
       last_event_chain_tip: null,
       state: "active",
       observation: emptyObservation(this.#checkpoint !== null),
+      ...(options.initial_content_unknown ? { pending_observation_gap: true } : {}),
     };
     this.#sessions.set(record.session_id, record);
     return cloneSession(record);

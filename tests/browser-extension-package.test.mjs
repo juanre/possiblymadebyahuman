@@ -30,6 +30,7 @@ test("browser extension package command creates deterministic Chrome zip without
   const entries = parseZipEntries(second);
   assert.deepEqual(entries.map((entry) => entry.name), [
     "content.js",
+    "favicon.svg",
     "icons/128.png",
     "icons/16.png",
     "icons/48.png",
@@ -56,6 +57,7 @@ test("browser extension package command creates deterministic Chrome zip without
   assertPngIcon(readEntry(second, entries, "icons/16.png"), 500);
   assertPngIcon(readEntry(second, entries, "icons/48.png"), 1000);
   assertPngIcon(readEntry(second, entries, "icons/128.png"), 10000);
+  assert.deepEqual(readEntry(second, entries, "favicon.svg"), await readFile("apps/site/static/favicon.svg"), "package reuses the existing site favicon");
 
   const serviceWorker = readEntry(second, entries, "service-worker.js").toString("utf8");
   assert.match(serviceWorker, /https:\/\/possiblymadebyahuman\.com/);

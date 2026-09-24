@@ -128,7 +128,9 @@ export class BackgroundDispatcher {
       field_is_empty: message.field_is_empty,
       existing_sessions: message.activation_id ? [] : this.registry.list(),
     });
-    if (!eligibility.eligible) {
+    // Explicit Start records only future edits, even when the field already
+    // contains writing. Legacy descriptor-based callers keep their policy.
+    if (!message.activation_id && !eligibility.eligible) {
       return {
         kind: "register_field_result",
         result: { kind: "ineligible", reason: eligibility.reason },
@@ -139,12 +141,12 @@ export class BackgroundDispatcher {
       descriptor: message.descriptor,
       page_title: message.page_title,
     });
-    // A non-empty field whose session was already uploaded gets a continuation
-    // session linked to that record; the signed session stays frozen.
-    const resumable = message.field_is_empty ? null : findResumableSession(origin, message.descriptor, this.registry.list());
+    // Legacy registration may continue a matching uploaded session. Explicit
+    // Start is independent; only Continue may link it to a saved record.
+    const resumable = message.activation_id || message.field_is_empty ? null : findResumableSession(origin, message.descriptor, this.registry.list());
     const session = resumable?.state === "uploaded"
       ? this.registry.continueFrom(resumable.session_id, { origin, descriptor: message.descriptor })
-      : this.registry.findOrCreate(origin, message.descriptor, capture, { fresh: !!message.activation_id });
+      : this.registry.findOrCreate(origin, message.descriptor, capture, { fresh: !!message.activation_id, initial_content_unknown: !!message.activation_id && !message.field_is_empty });
     await this.registry.persist();
     return {
       kind: "register_field_result",

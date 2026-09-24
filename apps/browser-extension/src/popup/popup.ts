@@ -257,16 +257,13 @@ async function openReview(session: SessionSummary): Promise<void> {
   const panel = document.createElement("section"); panel.className = "sign-confirm";
   panel.innerHTML = `<h2 tabindex="-1">Finish this writing record</h2><p><strong>${escapeHtml(session.display_name)}</strong></p>
     <p class="sign-note">Confirming stops capture and publishes this draft. Further edits will not be included.</p>
-    <label><input type="checkbox" class="sign-bind" checked /> Let readers check a copy of this text</label>
-    <p class="binding-scope">Checking text scope…</p><p class="sign-note">Your text is not uploaded.</p>
-    <details class="text-check-help"><summary>How the text check works</summary><p>The check compares letters and numbers. A match does not mean the text is exactly identical; number formatting is ignored too. It does not show that these edits produced that text or identify its author.</p><p>Anyone can test guesses against the public check. Short or predictable text may be guessed. This is not encryption.</p></details>
+    <p>Text hash: <span class="binding-scope">Checking text scope…</span></p><p class="sign-note">Your text is not uploaded.</p>
     <details class="public-context" open><summary>Public context</summary><p class="note">Review the details published with this record. Your private name stays in this browser.</p>
     <label><input type="checkbox" class="sign-keep-url" ${url ? "checked" : "disabled"} /> Page URL: <span class="sign-context-value">${escapeHtml(url || "none")}</span></label>
     <label><input type="checkbox" class="sign-keep-title" ${title ? "checked" : "disabled"} /> Page title: <span class="sign-context-value">${escapeHtml(title || "none")}</span></label>
     <label class="sign-label-row">Public label<input type="text" class="sign-label" value="${escapeHtml(label)}" maxlength="120" /></label></details>
     <p class="binding-error notice error" role="alert" hidden></p><div class="session-actions"><button class="sign-confirm-go" disabled>Confirm &amp; publish</button><button class="process-only secondary" hidden>Publish editing activity only</button><button class="sign-confirm-cancel secondary">Cancel</button></div>`;
   REVIEW.replaceChildren(panel); render(); panel.querySelector<HTMLHeadingElement>("h2")!.focus();
-  const bind = panel.querySelector<HTMLInputElement>(".sign-bind")!;
   const go = panel.querySelector<HTMLButtonElement>(".sign-confirm-go")!;
   const processOnly = panel.querySelector<HTMLButtonElement>(".process-only")!;
   const error = panel.querySelector<HTMLElement>(".binding-error")!;
@@ -278,9 +275,10 @@ async function openReview(session: SessionSummary): Promise<void> {
     scope = preview;
     scopeLabel.textContent = preview.scope === "selection" ? "Selected text" : preview.scope === "whole_field" ? "Whole field" : "Text check unavailable for this editor.";
     if (preview.scope === "unavailable") {
-      bind.checked = false; bind.disabled = true;
       scopeLabel.textContent += ` ${preview.reason ?? "Readers can inspect the editing activity, but cannot compare a copy of the text."}`;
     }
+    go.hidden = preview.scope === "unavailable";
+    processOnly.hidden = preview.scope !== "unavailable";
     go.disabled = false;
   }
   function redactions(): CaptureContextRedactions {
@@ -314,7 +312,7 @@ async function openReview(session: SessionSummary): Promise<void> {
       await reportOutcome(outcome.response, session);
     });
   }
-  go.addEventListener("click", () => void finish(bind.checked));
+  go.addEventListener("click", () => void finish(true));
   processOnly.addEventListener("click", () => void finish(false));
   panel.querySelector(".sign-confirm-cancel")!.addEventListener("click", () => {
     if (guard.busy) return;
@@ -346,7 +344,7 @@ async function activate(options: { resume_session_id?: string; continue_session_
       selectedId = response.session_id; latest = undefined; SHARE.checked = false;
       notify(options.resume_session_id ? "Draft resumed in the chosen field. The original timeline is kept; edits made while capture was stopped are unknown."
         : options.continue_session_id ? "A new draft continues this saved record. Its earlier link stays unchanged."
-        : "Writing record started in the chosen editor. Return there to write, then finish here.");
+        : "Writing record started. Edits from now on will be included. Return to the field to write, then finish here.");
     } else notify(response.kind === "error" || response.kind === "start_editor_result" ? response.reason ?? "Choose an editor first." : "Could not start this editor.", true);
     await refresh();
   });

@@ -6,9 +6,9 @@ import type {
 } from "../../../../packages/producer-core/src/index.ts";
 
 /**
- * Producer scope invariant from coord: no automatic snapshot of existing
- * non-empty fields. A non-empty field with no resumable session is INELIGIBLE
- * — the extension records nothing and surfaces this state via the badge.
+ * Legacy descriptor-based registration policy. Explicit browser activation
+ * bypasses this policy and may begin in existing text without importing it.
+ * A legacy non-empty field without a resumable session remains ineligible.
  * A resumable session match (exact or partial) re-enters that session and
  * continues recording, even if the field currently shows non-empty content.
  * An uploaded session counts as resumable: the field's content is exactly the

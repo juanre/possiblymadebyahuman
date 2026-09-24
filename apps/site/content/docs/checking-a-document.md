@@ -11,17 +11,18 @@ Binding does not establish that the recorded edits produced the selected text. T
 
 ## Binding when you sign
 
-In `/write`, the browser extension, and Emacs, signing offers to **bind the document**:
+In `/write`, the browser extension, and Emacs, signing can **bind the document**:
 
-- Binding is on by default; you can opt out and sign the **process only** (no document bound), for example when you do not want a wording commitment.
+- Browser extension 0.3.1 includes binding when you confirm publication. If the text-check scope is unavailable or its hash cannot be computed, it offers cancellation or explicit publication of editing activity only.
+- `/write` and Emacs enable binding by default and let you opt out to sign the **process only** (no document bound).
 - The text being bound is producer-specific:
   - `/write`: selected text in the writing canvas if there is a selection; otherwise all current canvas content.
   - Browser extension: selected text in the editor explicitly chosen for this record if there is a selection; otherwise all current content of that editor. Capture stops before the binding is computed. This is the path to sign only the body of an email or reply in a larger page such as Gmail.
   - Emacs: active region when `use-region-p` is true; otherwise the whole buffer.
 
-The producer computes the binding **locally** from that selected-or-fallback text and **discards the text**. Only a content-blind commitment is uploaded: a salted hash of the text's canonical letters and digits, plus its length. No document text is sent to PMBAH. Anyone can test guesses against the public commitment, so short or predictable wording may be guessed. Binding is not encryption; turn it off if you do not want that check to be possible.
+The producer computes the binding **locally** from that selected-or-fallback text and **discards the text**. Only a content-blind commitment is uploaded: a salted hash of the text's canonical letters and digits, plus its length. No document text is sent to PMBAH. Anyone can test guesses against the public commitment, so short or predictable wording may be guessed. Binding is not encryption.
 
-A selection with no letters or digits (for example emoji or punctuation only) cannot be bound. The browser extension stops publication and asks you to cancel or explicitly publish a process-only record; it never silently drops a requested binding. The other producers may finish without a binding in this case.
+A selection with no letters or digits (for example emoji or punctuation only) cannot be bound. The browser extension stops publication and asks you to cancel or explicitly publish a process-only record; it never silently drops the binding. The other producers may finish without a binding in this case.
 
 ## Checking a document
 

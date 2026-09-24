@@ -58,14 +58,11 @@ test("Emacs production path allows non-empty starts and helper receives no text 
   }
 });
 
-test("browser extension rejects fresh non-empty fields and audits retained text", async () => {
-  const policy = await text("apps/browser-extension/src/lib/policy.ts");
+test("browser extension explicitly starts in existing text without importing it and audits retained text", async () => {
   const canary = await text("tests/browser-extension-canary.test.mjs");
   const unit = await text("tests/browser-extension.test.mjs");
 
-  assert.match(policy, /non_empty_field_no_resumable_session/);
-  assert.match(policy, /no automatic snapshot of existing/);
-  assert.match(unit, /fresh empty field is eligible; non-empty without resumable session is INELIGIBLE/);
+  assert.match(unit, /explicit start in existing text persists unknown baseline before the first edit/);
   assert.match(canary, /content script retains no text snapshots between events/);
   assert.match(canary, /FieldEntry type carries no text-bearing string field/);
 });

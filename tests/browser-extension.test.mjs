@@ -690,6 +690,30 @@ test("dispatcher: non-empty field with no resumable session reports ineligible",
   assert.equal(dispatcher.registry.list().length, 0);
 });
 
+test("dispatcher: explicit start in existing text persists unknown baseline before the first edit", async () => {
+  const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher();
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false };
+  const result = await dispatcher.handle(registration);
+  assert.equal(result.result.kind, "registered");
+  const sid = result.result.session_id;
+  assert.deepEqual(dispatcher.registry.get(sid).events, [], "starting does not invent an insertion of prior text");
+  const restarted = new BackgroundDispatcher({ storage, clock, uuid, upload, checkpoint, producer: PRODUCER });
+  const mutation = { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" };
+  await restarted.handle({ kind: "append_mutation", session_id: sid, mutation });
+  await restarted.handle({ kind: "append_mutation", session_id: sid, mutation: { ...mutation, pos: 1 } });
+  const events = restarted.registry.get(sid).events;
+  assert.deepEqual(events.map(e => e.pos), [null, 1], "only the first edit marks the unobserved baseline, even at position zero");
+  assert.equal(computeObservedLength(events), null);
+  const signed = await restarted.handle({ kind: "sign_session", session_id: sid });
+  assert.equal(signed.result.kind, "uploaded");
+  assert.equal(verifyRecord(upload.calls.at(-1)).valid, true);
+  const fresh = await restarted.handle(registration);
+  assert.notEqual(fresh.result.session_id, sid);
+  assert.equal(restarted.registry.get(fresh.result.session_id).parent_record, undefined, "Start does not silently continue a matching saved record");
+  const another = await restarted.handle(registration);
+  assert.notEqual(another.result.session_id, fresh.result.session_id, "Start does not silently join a matching unfinished record");
+});
+
 test("dispatcher: parallel fields across sites stay independent", async () => {
   const { dispatcher } = makeDispatcher();
   const fields = [
