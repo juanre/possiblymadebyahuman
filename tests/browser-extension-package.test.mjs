@@ -54,9 +54,12 @@ test("browser extension package command creates deterministic Chrome zip without
   assert.deepEqual(manifest.host_permissions, ["<all_urls>"]);
   assert.equal(manifest.background.service_worker, "service-worker.js");
 
-  assertPngIcon(readEntry(second, entries, "icons/16.png"), 500);
-  assertPngIcon(readEntry(second, entries, "icons/48.png"), 1000);
-  assertPngIcon(readEntry(second, entries, "icons/128.png"), 10000);
+  assert.deepEqual(manifest.action.default_icon, manifest.icons, "toolbar and installed-extension icons use the same artwork");
+  for (const size of [16, 48, 128]) {
+    const icon = readEntry(second, entries, `icons/${size}.png`);
+    assertPngIcon(icon, size);
+    assert.deepEqual(icon, await readFile(`apps/browser-extension/icons/${size}.png`));
+  }
   assert.deepEqual(readEntry(second, entries, "favicon.svg"), await readFile("apps/site/static/favicon.svg"), "package reuses the existing site favicon");
 
   const serviceWorker = readEntry(second, entries, "service-worker.js").toString("utf8");
@@ -78,9 +81,10 @@ function sha256(buffer) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
-function assertPngIcon(buffer, minBytes) {
-  assert.ok(buffer.length >= minBytes, `icon should be real artwork, got ${buffer.length} bytes`);
+function assertPngIcon(buffer, size) {
   assert.deepEqual([...buffer.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assert.equal(buffer.readUInt32BE(16), size);
+  assert.equal(buffer.readUInt32BE(20), size);
 }
 
 function parseZipEntries(buffer) {

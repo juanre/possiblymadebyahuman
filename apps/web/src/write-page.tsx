@@ -311,9 +311,10 @@ export function WritePage() {
   }, [confirming]);
 
   return <div className="write-shell">
-    <a className="write-home" href="/">← possiblymadebyahuman</a>
-
-    <p className="write-notice">Your writing is not saved. Copy it before closing or refreshing. Uploading saves only the process record.</p>
+    <header className="write-header">
+      <a className="write-home" href="/">← possiblymadebyahuman</a>
+      <p className="write-notice">Your text is not saved. Copy it before closing or refreshing.</p>
+    </header>
     <div className="write-canvas-wrap">
       <textarea
         ref={textareaRef}

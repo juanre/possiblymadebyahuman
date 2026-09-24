@@ -351,9 +351,8 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    if (url.pathname === "/favicon.ico") {
-      res.statusCode = 404;
-      res.end();
+    if (url.pathname === "/favicon.ico" || url.pathname === "/favicon.svg") {
+      await serveFile(res, join(siteDistDir, url.pathname.slice(1)));
       return;
     }
 
