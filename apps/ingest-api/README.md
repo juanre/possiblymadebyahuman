@@ -38,6 +38,15 @@ The implementation exposes a Fetch `Request` handler plus direct functions for t
 
 `npm run migrate` applies ordered SQL migrations through the TypeScript migration manager. Applied migration versions/checksums are recorded in `schema_migrations`; reruns skip unchanged migrations and checksum drift fails before runtime readiness succeeds.
 
+Validation also bounds work after JSON parsing: at most 131,072 events per
+legacy one-shot request, 16 entries in other arrays, 64 fields per object,
+128 characters per field name, 32 nesting levels, and two million visited
+values. These limits return 400 even when the HTTP body fits the byte limit;
+raising `RECORD_BODY_LIMIT_BYTES` does not raise them. Current producers use
+4096-event chunks. The content check visits one child at a time, and malformed
+event validation stops collecting diagnostics before running full verification.
+Error responses contain at most 25 details plus a truncation notice.
+
 Runtime admission is bounded before buffering API bodies. Defaults can be changed
 with these environment variables (production Compose passes them through):
 

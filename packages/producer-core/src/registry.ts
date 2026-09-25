@@ -701,6 +701,9 @@ export class SessionRegistry {
     ) {
       return false;
     }
+    // A coalesced attempt interrupted by local persistence remains due once
+    // capture resumes. It must not wait for another complete cadence interval.
+    if (record.observation.queued) return true;
     if (record.observation.last_committed_event_count === 0) return true; // first-mutation immediate
     if (delta >= this.#every_n_events) return true;
     const sinceLast = record.observation.last_attempt_at_wall_ms === null
@@ -719,7 +722,16 @@ export class SessionRegistry {
     this.#inFlight.set(record.session_id, promise);
     void promise.catch(() => undefined).finally(() => {
       const current = this.#inFlight.get(record.session_id);
-      if (current === promise) this.#inFlight.delete(record.session_id);
+      if (current === promise) {
+        this.#inFlight.delete(record.session_id);
+        // A storage failure can exit the loop between coalesced requests.
+        // Clear ownership of that finished task, without touching a newer one
+        // or forgetting queued work. The next save persists the repaired flags.
+        if (this.#sessions.get(record.session_id) === record && record.observation.in_flight) {
+          record.observation.in_flight = false;
+          this.#dirty.add(record.session_id);
+        }
+      }
     });
   }
 
@@ -767,9 +779,9 @@ export class SessionRegistry {
         return;
       }
       if (!this.#flushing.has(session_id) && liveRecord.observation.queued && (sessionEventCount(liveRecord) - liveRecord.observation.last_committed_event_count) > 0) {
+        await this.persist();
         liveRecord.observation.queued = false;
         liveRecord.observation.last_attempt_at_wall_ms = this.#clock.now();
-        await this.persist();
         continue;
       }
       liveRecord.observation.in_flight = false;

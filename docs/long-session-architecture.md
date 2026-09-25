@@ -32,6 +32,15 @@ supersedes the snapshot persistence limitation in the correctness ledger.
 
 Browser producers use transactional event storage and separate session metadata.
 Emacs uses a private append-only numeric-event journal and atomic small metadata.
+Interactive Emacs capture uses a persistent disk worker: the modification hook
+only queues numeric events, and worker acknowledgement follows journal fsync
+and atomic metadata commit. The pending queue is capped at 256 events; failures
+retain the exact request for idempotent retry, and checkpoints never outrun the
+acknowledged cursor. Readiness and per-frame credits bound each transport send
+to 4096 bytes. Normal lifecycle transitions drain storage before changing paths,
+releasing locks, or publishing. Abrupt failure may lose not-yet-durable events.
+Batch Emacs callers retain a synchronous persistence interface.
+
 Both expose bounded event-page readers. Recovery and explicit full verification
 may take linear time; adding the next event must not depend on history length.
 

@@ -4,7 +4,7 @@ Status: approved architecture for v0 implementation.
 Audience: coordinator, developer, reviewer, and future contributors.  
 Spec reference: `docs/spec.md` remains the product/format thesis; this document is the implementation source of truth for architecture, UI, backend, database, routing, and work breakdown.
 
-Extension UX amendment, 23 September 2026: the owner requires explicit activation on the chosen editor and no persistent controls over webpage content. The last deployment recorded here was extension 0.2.1; current deployment has not been reverified. Source package version is **0.3.3** and implements the next panel and signed-finish contract in sections 3.8 and 13.1; this document is not deployment evidence. Versions before 0.2.0 use the superseded passive-capture behavior. Work follows [UX-reset epic #3](https://github.com/juanre/possiblymadebyahuman/issues/3), [the review](extension-ux-review-2026-09-23.md), and [the panel/session design](extension-panel-design-2026-09-23.md).
+Extension UX amendment, 23 September 2026: the owner requires explicit activation on the chosen editor and no persistent controls over webpage content. The last deployment recorded here was extension 0.2.1; current deployment has not been reverified. Source package version is **0.3.4** and implements the next panel and signed-finish contract in sections 3.8 and 13.1; this document is not deployment evidence. Versions before 0.2.0 use the superseded passive-capture behavior. Work follows [UX-reset epic #3](https://github.com/juanre/possiblymadebyahuman/issues/3), [the review](extension-ux-review-2026-09-23.md), and [the panel/session design](extension-panel-design-2026-09-23.md).
 
 Further owner direction, 23 September 2026: cards have private editable names with contextual defaults, use generic field wording, and follow the focused editor without starting capture. Saved links and unfinished sessions have no automatic expiry. Extension 0.2.1 supplies long-duration storage and explicit unfinished-session resumption. The current source adds the focus-aware panel, collapsed searchable/exportable history, signed finish time and explicit linked continuations. Existing published records remain immutable. See [signed finish and continuations](signed-finish-and-continuations.md) for the versioned format contract and compatibility boundaries. Deploy the compatible API/viewer before distributing 0.3.0; integrated release checks and authenticated-site acceptance are separate gates.
 
@@ -40,6 +40,16 @@ Closing cancels recovery without changing saved capture intent. Recovery keeps
 exclusive file ownership through installation or worker cancellation, rejects
 stale callbacks, and preserves the same prefix/hash checks. Noninteractive Lisp
 recovery retains a synchronous interface.
+
+Interactive capture latency amendment, 24 September 2026: Emacs modification
+hooks enqueue bounded numeric events without filesystem I/O or process startup.
+A persistent local worker durably commits event batches and metadata, with
+readiness and credit-controlled 4096-byte transport frames. At most 256 events
+may await acknowledgement; storage backpressure temporarily locks that buffer,
+and errors retain events for exact retry. Checkpoints describe only acknowledged
+prefixes. Lifecycle transitions drain writes before changing ownership or
+publication state. An abrupt failure can lose not-yet-durable events; normal
+close and exit drain them. Batch Lisp persistence remains synchronous.
 
 ---
 
@@ -892,7 +902,7 @@ Build/deploy note:
 
 ### 13.1 Browser extension UI
 
-Primary normal-user author UX. The explicit-start requirements below supersede the previous passive/capture-all design. Extension 0.2.0 introduced explicit activation; the last recorded deployment, 0.2.1, added durable drafts/links and explicit resumption. Current source 0.3.3 includes the panel and signed-finish changes below; deployment must be verified separately. Versions before 0.2.0 use the superseded passive-capture behavior.
+Primary normal-user author UX. The explicit-start requirements below supersede the previous passive/capture-all design. Extension 0.2.0 introduced explicit activation; the last recorded deployment, 0.2.1, added durable drafts/links and explicit resumption. Current source 0.3.4 includes the panel and signed-finish changes below; deployment must be verified separately. Versions before 0.2.0 use the superseded passive-capture behavior.
 
 Surfaces:
 

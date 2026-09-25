@@ -2,7 +2,7 @@
 
 The extension creates content-blind writing records **only for editors you explicitly start**. Opening a page, focusing a field, typing, or opening the side panel does not start capture. No controls are placed over webpage content.
 
-This README describes the current **0.3.3 source**, which supports starting in fields that already contain text. Its resumable publication path requires the API and viewer from the same architecture update, with database migration **005** applied. This is source status, not a claim that a new release has been distributed. Developer-mode ZIP packages are available through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases); no Chrome Web Store availability is claimed.
+This README describes the current **0.3.4 source**, which supports starting in fields that already contain text. Its resumable publication path requires the API and viewer from the same architecture update, with database migration **005** applied. This is source status, not a claim that a new release has been distributed. Developer-mode ZIP packages are available through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases); no Chrome Web Store availability is claimed.
 
 ## Use it
 

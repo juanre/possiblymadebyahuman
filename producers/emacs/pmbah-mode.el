@@ -62,6 +62,31 @@ It receives a private journal descriptor and reads only new public events."
   :type 'file
   :group 'pmbah)
 
+(defcustom pmbah-writer-script
+  (expand-file-name "scripts/session-writer.mjs" pmbah--source-directory)
+  "Persistent local worker that durably saves numeric events off the UI thread."
+  :type 'file
+  :group 'pmbah)
+
+(defvar pmbah--background-persistence (not noninteractive)
+  "Use background persistence in interactive Emacs; batch callers save synchronously.")
+(defconst pmbah--pending-event-limit 256
+  "Maximum captured events awaiting durable storage before editing pauses.")
+(defvar-local pmbah--writer nil)
+(defvar-local pmbah--writer-ready nil)
+(defvar-local pmbah--writer-credit nil)
+(defvar-local pmbah--writer-request nil)
+(defvar-local pmbah--writer-retry nil)
+(defvar-local pmbah--writer-dirty nil)
+(defvar-local pmbah--writer-timer nil)
+(defvar-local pmbah--writer-watchdog nil)
+(defvar-local pmbah--writer-output "")
+(defvar-local pmbah--writer-draining nil)
+(defvar-local pmbah--storage-backpressure nil)
+(defvar pmbah--writer-sequence 0)
+(defvar pmbah--writer-timeout 10
+  "Seconds allowed for one bounded storage request before reporting failure.")
+
 (defcustom pmbah-observe-process t
   "Non-nil requests server-observed checkpoints while writing.
 Each checkpoint sends the event count and the public hash-chain tip of the
@@ -93,7 +118,7 @@ your init file so this also works after restarting Emacs."
   :type 'boolean
   :group 'pmbah)
 
-(defconst pmbah-producer-version "0.1.0")
+(defconst pmbah-producer-version "0.1.1")
 (defconst pmbah-format-version "0.3")
 
 (defconst pmbah-max-session-ms 9007199254740991
@@ -169,6 +194,9 @@ Checkpoints advance from it instead of rehashing the whole session.")
 ;; Observation state: what the server has committed to for this session.
 (defvar-local pmbah--observation-state 'disabled
   "One of `disabled', `unknown', `known', `partial', or `diverged'.")
+(defvar-local pmbah--observation-session-id nil
+  "Server observation identity, independent of the immutable writing-session ID.
+Legacy sessions use the writing-session ID until observation access is lost.")
 (defvar-local pmbah--observation-token nil
   "Bearer token returned by the first successful checkpoint.")
 (defvar-local pmbah--observation-committed-count 0
@@ -194,6 +222,8 @@ one, so a late or duplicate result cannot touch a later attempt.")
   "Return a compact mode-line session status."
   (cond
    (pmbah--recovery-job " PMBAH:recovering")
+   (pmbah--save-failure " PMBAH:save!")
+   (pmbah--storage-backpressure " PMBAH:saving")
    ((and pmbah-mode pmbah--session-id)
       (format " PMBAH:%d%s" pmbah--next-seq (pmbah--observation-mode-line-mark)))
    (t " PMBAH")))
@@ -243,13 +273,13 @@ passed transiently to the local helper solely to compute that binding."
     (pmbah--unlock-buffer)
     (remove-hook 'before-change-functions #'pmbah--before-change t)
     (remove-hook 'after-change-functions #'pmbah--after-change t)
-    (pmbah--write-state)))
+    (pmbah--save-lifecycle)))
 
 (defun pmbah--activate-capture ()
   "Enable hooks only after this buffer owns a verified live session."
   (setq pmbah-mode t pmbah--capture-enabled t pmbah--recovery-error nil)
   (pmbah--unlock-buffer)
-  (pmbah--write-state)
+  (pmbah--save-lifecycle)
   (pmbah--reinstall-capture)
   (add-hook 'kill-emacs-hook #'pmbah--write-all-state))
 
@@ -287,6 +317,7 @@ passed transiently to the local helper solely to compute that binding."
                     pmbah--chain-tip
                     pmbah--chain-tip-event-count
                     pmbah--observation-state
+                    pmbah--observation-session-id
                     pmbah--observation-token
                     pmbah--observation-committed-count
                     pmbah--observation-last-attempt
@@ -300,7 +331,12 @@ passed transiently to the local helper solely to compute that binding."
                     pmbah--observation-last-failure)
   "Buffer-local state installed together after successful recovery.")
 
-(dolist (variable (append '(pmbah-mode pmbah--recovery-error pmbah--recovery-job) pmbah--session-variables))
+(dolist (variable (append '(pmbah-mode pmbah--recovery-error pmbah--recovery-job
+                           pmbah--writer pmbah--writer-ready pmbah--writer-credit
+                           pmbah--writer-request pmbah--writer-retry
+                           pmbah--writer-dirty pmbah--writer-timer pmbah--writer-watchdog
+                           pmbah--writer-output pmbah--storage-backpressure)
+                         pmbah--session-variables))
   (put variable 'permanent-local t))
 
 (defun pmbah--reinstall-capture ()
@@ -312,14 +348,16 @@ passed transiently to the local helper solely to compute that binding."
   (when (and (local-variable-p 'pmbah--session-id) pmbah--session-id)
     (add-hook 'after-set-visited-file-name-hook #'pmbah--follow-visited-file nil t)
     (add-hook 'kill-buffer-query-functions #'pmbah--can-close-buffer nil t)
-    (add-hook 'kill-buffer-hook #'pmbah--write-state nil t)
+    (remove-hook 'kill-buffer-hook #'pmbah--write-state t)
+    (add-hook 'kill-buffer-hook #'pmbah--close-storage nil t)
     (add-hook 'kill-buffer-hook #'pmbah--cancel-sign-job nil t)
     (add-hook 'kill-buffer-hook #'pmbah--observation-abandon-attempt nil t)
     (add-hook 'kill-buffer-hook #'pmbah--release-ownership t t))
   (when (and (local-variable-p 'pmbah--recovery-error) pmbah--recovery-error)
     (pmbah--lock-buffer))
   (when (and pmbah-mode pmbah--session-id)
-    (when (or pmbah--signing pmbah--frozen-record pmbah--save-failure) (pmbah--lock-buffer))
+    (when (or pmbah--signing pmbah--frozen-record pmbah--save-failure pmbah--storage-backpressure)
+      (pmbah--lock-buffer))
     (pmbah--check-capture-gap)
     (add-hook 'before-change-functions #'pmbah--before-change nil t)
     (add-hook 'before-revert-hook #'pmbah--mark-capture-gap nil t)
@@ -505,6 +543,7 @@ passed transiently to the local helper solely to compute that binding."
 (defun pmbah--start-session (&optional parent-record start-ms)
   "Start a fresh per-buffer PMBAH session."
   (when pmbah--recovery-job (user-error "Wait for PMBAH recovery before starting a session"))
+  (pmbah--drain-writer)
   (pmbah--cancel-sign-job)
   (let ((previous-path pmbah--state-path)
         (previous-session pmbah--session-id))
@@ -629,7 +668,9 @@ must repeat recovery rather than append with a partially installed cursor."
                (list (cons 'observation
                            (alist-get 'observation (pmbah--parse-public-json pmbah--frozen-upload))))))))
     (pmbah--observation-reset)
-    (setq pmbah--observation-token (plist-get observation :token)
+    (setq pmbah--observation-session-id (or (plist-get observation :observed_session_id)
+                                           pmbah--session-id)
+          pmbah--observation-token (plist-get observation :token)
           pmbah--observation-committed-count (or (plist-get observation :committed_event_count) 0)
           pmbah--observation-commitments (plist-get observation :commitments)
           pmbah--observation-last-failure (plist-get observation :last_failure))
@@ -691,6 +732,11 @@ must repeat recovery rather than append with a partially installed cursor."
    ((and (plist-member state :capture_enabled)
          (not (memq (plist-get state :capture_enabled) '(t :json-false))))
     "has an invalid capture preference")
+   ((let ((id (plist-get (plist-get state :observation) :observed_session_id)))
+      (and id (not (and (stringp id)
+                       (let ((case-fold-search nil))
+                         (string-match-p "\\`[0-9a-f]\\{8\\}-[0-9a-f]\\{4\\}-4[0-9a-f]\\{3\\}-[89ab][0-9a-f]\\{3\\}-[0-9a-f]\\{12\\}\\'" id))))))
+    "has an invalid observation session identity")
    ((and (not (plist-get state :frozen_record))
          (>= (- (pmbah--time-to-ms (current-time)) (plist-get state :session_start_ms))
              pmbah-max-session-ms))
@@ -717,7 +763,8 @@ must repeat recovery rather than append with a partially installed cursor."
 ;;
 ;; File-visiting buffers keep their session in `pmbah-state-directory' so a
 ;; writer who closes the file, or Emacs, and returns later continues the
-;; same session. Every captured mutation saves before returning from its hook.
+;; same session. Interactive mutations enqueue a bounded numeric event; a worker
+;; acknowledges journal and metadata durability without blocking keyboard input.
 ;; State also saves on buffer/Emacs close, mode disable, and checkpoint outcomes
 ;; (the observation token must not be lost).
 
@@ -758,6 +805,7 @@ must repeat recovery rather than append with a partially installed cursor."
         :chain_tip_byte_offset pmbah--chain-tip-byte-offset
         :chain_tip_last_time pmbah--chain-tip-last-time
         :observation (list :state (symbol-name pmbah--observation-state)
+                           :observed_session_id (or pmbah--observation-session-id pmbah--session-id)
                            :last_failure pmbah--observation-last-failure
                            :token pmbah--observation-token
                            :committed_event_count pmbah--observation-committed-count
@@ -855,22 +903,235 @@ must repeat recovery rather than append with a partially installed cursor."
           (rename-file temp-path path t))
       (when (file-exists-p temp-path) (delete-file temp-path)))))
 
+(defun pmbah--schedule-storage ()
+  "Mark metadata dirty and schedule bounded background work for this buffer."
+  (when pmbah--session-id
+    (setq pmbah--writer-dirty t)
+    (pmbah--schedule-storage-pump)))
+
+(defun pmbah--schedule-storage-pump ()
+  "Schedule one bounded transport step without dirtying the metadata."
+  (unless (or pmbah--writer-timer pmbah--save-failure pmbah--writer-draining)
+    (let ((buffer (current-buffer)))
+      (setq pmbah--writer-timer
+            (run-with-timer
+             0 nil (lambda ()
+                     (when (buffer-live-p buffer)
+                       (with-current-buffer buffer
+                         (setq pmbah--writer-timer nil)
+                         (pmbah--pump-storage)))))))))
+
+(defun pmbah--arm-writer-watchdog ()
+  "Bound startup and one storage request, including transport time."
+  (when (timerp pmbah--writer-watchdog) (cancel-timer pmbah--writer-watchdog))
+  (let ((buffer (current-buffer)) (process pmbah--writer))
+    (setq pmbah--writer-watchdog
+          (run-with-timer
+           pmbah--writer-timeout nil
+           (lambda ()
+             (when (buffer-live-p buffer)
+               (with-current-buffer buffer
+                 (when (eq process pmbah--writer)
+                   (pmbah--storage-failed "Timed out saving the event journal")))))))))
+
+(defun pmbah--stop-writer ()
+  "Stop this buffer's worker after draining, or after retaining a failed request."
+  (when (timerp pmbah--writer-timer) (cancel-timer pmbah--writer-timer))
+  (when (timerp pmbah--writer-watchdog) (cancel-timer pmbah--writer-watchdog))
+  (setq pmbah--writer-timer nil pmbah--writer-watchdog nil)
+  (let ((process pmbah--writer))
+    ;; Invalidate callbacks before deleting the process.
+    (setq pmbah--writer nil pmbah--writer-output ""
+          pmbah--writer-ready nil pmbah--writer-credit nil)
+    (when (processp process) (delete-process process))))
+
+(defun pmbah--storage-failed (reason)
+  "Retain the exact uncertain request for idempotent retry, then stop capture."
+  (when pmbah--writer-request
+    (setq pmbah--writer-retry pmbah--writer-request))
+  (setq pmbah--writer-request nil pmbah--writer-dirty t)
+  (pmbah--stop-writer)
+  (pmbah--mark-save-failure (list 'error reason)))
+
+(defun pmbah--start-writer ()
+  "Lazily start one persistent worker for this buffer, outside modification hooks."
+  (unless (process-live-p pmbah--writer)
+    (let ((buffer (current-buffer)))
+      (setq pmbah--writer-ready nil pmbah--writer-credit nil
+            pmbah--writer-output ""
+            pmbah--writer
+            (make-process
+             :name "pmbah-storage" :buffer nil :noquery t
+             :command (list pmbah-node-command pmbah-writer-script)
+             :coding 'utf-8-unix :connection-type 'pipe
+             :filter (lambda (process output)
+                       (when (buffer-live-p buffer)
+                         (with-current-buffer buffer
+                           (when (eq process pmbah--writer)
+                             (pmbah--storage-output output)))))
+             :sentinel (lambda (process _event)
+                         (when (and (buffer-live-p buffer)
+                                    (memq (process-status process) '(exit signal failed)))
+                           (with-current-buffer buffer
+                             (when (eq process pmbah--writer)
+                               (pmbah--storage-failed "Background storage worker exited"))))))))
+    (pmbah--arm-writer-watchdog)))
+
+(defun pmbah--pump-storage ()
+  "Start storage or send one credited frame; never fill a worker's input pipe."
+  (unless (or pmbah--save-failure (not pmbah--session-id))
+    (when (or pmbah--writer-request pmbah--writer-retry pmbah--journal-pending pmbah--writer-dirty)
+      (condition-case error
+          (progn
+            (pmbah--start-writer)
+            (when pmbah--writer-ready
+              (unless pmbah--writer-request
+                (let* ((events (reverse pmbah--journal-pending))
+                       (path (pmbah--state-file)) (journal (pmbah--journal-file)))
+                  (pmbah--claim-state path)
+                  (pmbah--claim-state journal)
+                  (setq pmbah--writer-request
+                        (or (and pmbah--writer-retry
+                                 (plist-put (copy-sequence pmbah--writer-retry) :offset 0))
+                            (let* ((id (cl-incf pmbah--writer-sequence))
+                                   (bytes (+ pmbah--journal-bytes
+                                             (cl-loop for event in events
+                                                      sum (1+ (string-bytes (pmbah--json-encode event)))))))
+                              (list :id id :count (length events) :offset 0
+                                    :event-count (+ pmbah--journal-count (length events))
+                                    :byte-length bytes
+                                    :payload (pmbah--json-encode
+                                              (list :id id :state_path path :journal_path journal
+                                                    :expected_bytes pmbah--journal-bytes
+                                                    :expected_count pmbah--journal-count
+                                                    :events (vconcat events) :state (pmbah--state-snapshot)))))))
+                  ;; An exact retry uses old metadata. Always follow it with
+                  ;; the current snapshot, even if no additional edit arrived.
+                  (setq pmbah--writer-dirty (and pmbah--writer-retry t)
+                        pmbah--writer-retry nil)
+                  (pmbah--arm-writer-watchdog)))
+              (when pmbah--writer-credit
+                (let* ((request pmbah--writer-request)
+                       (payload (plist-get request :payload))
+                       (start (plist-get request :offset))
+                       (end (min (length payload) (+ start 1024))) frame)
+                  (while (progn
+                           (setq frame (concat
+                                        (pmbah--json-encode
+                                         (list :id (plist-get request :id)
+                                               :chunk (substring payload start end)
+                                               :final (if (= end (length payload)) t :json-false)))
+                                        "\n"))
+                           (> (string-bytes frame) 4096))
+                    (setq end (+ start (/ (- end start) 2))))
+                  (setq pmbah--writer-credit nil
+                        pmbah--writer-request (plist-put request :offset end))
+                  (process-send-string pmbah--writer frame)))))
+        ((error quit) (pmbah--storage-failed (error-message-string error)))))))
+
+(defun pmbah--storage-output (output)
+  "Consume bounded worker replies, including fragmented transport messages."
+  (condition-case error
+      (progn
+        (setq pmbah--writer-output (concat pmbah--writer-output output))
+        (when (> (length pmbah--writer-output) 8192)
+          (error "Storage worker returned an oversized reply"))
+        (let (newline)
+          (while (setq newline (string-match "\n" pmbah--writer-output))
+            (let ((reply (pmbah--parse-public-json (substring pmbah--writer-output 0 newline))))
+              (setq pmbah--writer-output (substring pmbah--writer-output (1+ newline)))
+              (pmbah--storage-reply reply)))))
+    ((error quit) (pmbah--storage-failed (error-message-string error)))))
+
+(defun pmbah--storage-reply (reply)
+  "Handle readiness, transport credit, or an atomic durable acknowledgement."
+  (cond
+   ((eq (alist-get 'ready reply) t)
+    (when (or pmbah--writer-ready pmbah--writer-request)
+      (error "Storage worker returned unexpected readiness"))
+    (when (timerp pmbah--writer-watchdog) (cancel-timer pmbah--writer-watchdog))
+    (setq pmbah--writer-watchdog nil pmbah--writer-ready t pmbah--writer-credit t)
+    (pmbah--schedule-storage-pump))
+   (t
+    (let ((request pmbah--writer-request))
+      (unless (and request (equal (alist-get 'id reply) (plist-get request :id)))
+        (error "Storage worker replied to an unexpected request"))
+      (if (eq (alist-get 'credit reply) t)
+          (progn
+            (when (or pmbah--writer-credit
+                      (>= (plist-get request :offset) (length (plist-get request :payload))))
+              (error "Storage worker returned unexpected transport credit"))
+            (setq pmbah--writer-credit t)
+            (pmbah--schedule-storage-pump))
+        (unless (and (eq (alist-get 'ok reply) t)
+                     (= (plist-get request :offset) (length (plist-get request :payload))))
+          (error "%s" (or (alist-get 'error reply) "Background save failed")))
+        (unless (and (eql (alist-get 'event_count reply) (plist-get request :event-count))
+                     (eql (alist-get 'byte_length reply) (plist-get request :byte-length)))
+          (error "Storage worker acknowledged an unexpected journal prefix"))
+        (when (timerp pmbah--writer-watchdog) (cancel-timer pmbah--writer-watchdog))
+        (let ((inhibit-quit t))
+          ;; Queue ownership and durable cursors commit together. Keyboard
+          ;; quits must never make an exact retry remove the same events twice.
+          (setq pmbah--writer-watchdog nil
+                pmbah--journal-pending (butlast pmbah--journal-pending (plist-get request :count))
+                pmbah--journal-count (alist-get 'event_count reply)
+                pmbah--journal-bytes (alist-get 'byte_length reply)
+                pmbah--journal-repair nil pmbah--writer-request nil
+                pmbah--writer-credit t))
+        (when (and pmbah--storage-backpressure
+                   (< (- pmbah--next-seq pmbah--journal-count) pmbah--pending-event-limit))
+          (setq pmbah--storage-backpressure nil)
+          (unless (or pmbah--save-failure pmbah--signing pmbah--frozen-record pmbah--recovery-job)
+            (pmbah--unlock-buffer)))
+        (unless pmbah--writer-draining
+          (when (and pmbah-mode (not pmbah--signing)) (pmbah--observation-after-event))
+          (when (or pmbah--journal-pending pmbah--writer-dirty)
+            (pmbah--schedule-storage-pump))))))))
+
+(defun pmbah--drain-writer ()
+  "Wait for queued writes before a lifecycle transition, then stop the writer.
+Only explicit lifecycle operations wait; modification hooks and checkpoint
+callbacks never call this barrier.  Retain ownership and events on failure."
+  (when (or pmbah--writer pmbah--writer-request pmbah--writer-retry pmbah--writer-timer)
+    (let ((pmbah--writer-draining t))
+      (when (timerp pmbah--writer-timer) (cancel-timer pmbah--writer-timer))
+      (setq pmbah--writer-timer nil)
+      (while (and (not pmbah--save-failure)
+                  (or pmbah--writer-request pmbah--writer-retry pmbah--journal-pending pmbah--writer-dirty))
+        (pmbah--pump-storage)
+        (when (process-live-p pmbah--writer) (accept-process-output pmbah--writer 0.02)))
+      (when pmbah--save-failure (error "%s" pmbah--save-failure))
+      (pmbah--stop-writer))))
+
+(defun pmbah--close-storage ()
+  "Durably save and stop storage before releasing this buffer's ownership."
+  (pmbah--write-state t))
+
+(defun pmbah--save-lifecycle ()
+  "Save capture intent immediately, preserving enabled session ownership on error."
+  (condition-case error (pmbah--write-state t)
+    ((error quit) (pmbah--mark-save-failure error))))
+
 (defun pmbah--write-state (&optional strict)
   "Write this buffer's content-blind recovery state.
 With STRICT, signal failures so signing cannot outrun durable storage.
 Otherwise report failures with `message' for hooks and timers."
-  (let ((path (pmbah--state-file)))
+  (if (and pmbah--background-persistence (not strict))
+      (pmbah--schedule-storage)
+    (pmbah--drain-writer)
+    (let ((path (pmbah--state-file)))
     (when (and path pmbah--session-id)
       (condition-case error
           (progn
             (pmbah--claim-state path)
             (pmbah--flush-journal)
             (pmbah--write-json-file path (pmbah--json-encode (pmbah--state-snapshot)))
-            (setq pmbah--state-path path))
+            (setq pmbah--state-path path pmbah--writer-dirty nil))
         ((error quit)
          (if strict
              (signal (car error) (cdr error))
-           (pmbah--mark-save-failure error)))))))
+           (pmbah--mark-save-failure error))))))))
 
 (defun pmbah--mark-save-failure (error)
   "Retain in-memory events and stop editable capture after a storage ERROR."
@@ -910,7 +1171,7 @@ No document text is persisted."
     (when (buffer-live-p buffer)
       (with-current-buffer buffer
         (when (and (local-variable-p 'pmbah--session-id) pmbah--session-id)
-          (pmbah--write-state))))))
+          (pmbah--write-state t))))))
 
 (defun pmbah--can-close-buffer ()
   "Keep the buffer open if its capture history cannot be saved."
@@ -931,6 +1192,7 @@ No document text is persisted."
 
 (defun pmbah--delete-state ()
   "Remove finished/discarded recovery metadata before its now-unreferenced journal."
+  (pmbah--drain-writer)
   (let ((path (pmbah--state-file)) (journal (pmbah--journal-file)))
     (condition-case error
         (progn
@@ -940,6 +1202,7 @@ No document text is persisted."
 
 (defun pmbah--follow-visited-file ()
   "Move recovery state after a visited-file rename without replacing another session."
+  (pmbah--drain-writer)
   (let* ((old-path (pmbah--state-file))
          (new-path (pmbah--preferred-state-file))
          (target (and new-path (file-exists-p new-path) (pmbah--read-state new-path))))
@@ -986,6 +1249,7 @@ No document text is persisted."
   "Forget everything the server has committed to for this session."
   (pmbah--observation-abandon-attempt)
   (setq pmbah--observation-state (if pmbah-observe-process 'unknown 'disabled)
+        pmbah--observation-session-id pmbah--session-id
         pmbah--observation-token nil
         pmbah--observation-committed-count 0
         pmbah--observation-last-attempt nil
@@ -1000,7 +1264,12 @@ No document text is persisted."
 BEG, END, and LEN are supplied by `after-change-functions` and are Emacs
 character positions/lengths, which match the PMBAH format's Unicode codepoint
 unit for these captured text buffers."
-  (unless (or (not pmbah-mode) (not pmbah--session-id) pmbah--save-failure pmbah--signing pmbah--frozen-record)
+  (when (and pmbah-mode pmbah--storage-backpressure)
+    ;; Deliberate read-only bypasses do not grow the bounded queue or imply
+    ;; continuous observation when capture resumes.
+    (setq pmbah--pending-gap t))
+  (unless (or (not pmbah-mode) (not pmbah--session-id) pmbah--save-failure
+              pmbah--storage-backpressure pmbah--signing pmbah--frozen-record)
     (let* ((inserted-len (- end beg))
            (op (cond
                 ((and (= len 0) (> inserted-len 0)) "insert")
@@ -1037,10 +1306,14 @@ unit for these captured text buffers."
     (push event pmbah--journal-pending)
     (setq pmbah--pending-gap nil)
     (setq pmbah--next-seq (1+ pmbah--next-seq))
-    ;; Save before returning from this mutation hook. Failure never escapes the
-    ;; hook (Emacs would remove it), and the event remains available for retry.
+    ;; Interactive capture performs no filesystem or process work in this hook.
+    ;; The worker queue remains bounded even if a disk stalls indefinitely.
     (pmbah--write-state)
-    (unless pmbah--save-failure (pmbah--observation-after-event))))
+    (if pmbah--background-persistence
+        (when (>= (- pmbah--next-seq pmbah--journal-count) pmbah--pending-event-limit)
+          (setq pmbah--storage-backpressure t)
+          (pmbah--lock-buffer))
+      (unless pmbah--save-failure (pmbah--observation-after-event)))))
 
 (defun pmbah--source-for-current-command ()
   "Return a conservative PMBAH source for `this-command`.
@@ -1077,6 +1350,10 @@ declare source_attribution."
       (setq status "PMBAH is recovering this session in the background. This buffer is read-only until verification finishes; other buffers remain usable. Close the buffer to cancel."))
     (when pmbah--save-failure
       (setq status (concat status " Recovery save failed; recording paused: " pmbah--save-failure)))
+    (when (and pmbah--session-id pmbah--background-persistence)
+      (setq status (concat status
+                           (format "; %d events saved, %d awaiting storage"
+                                   pmbah--journal-count (- pmbah--next-seq pmbah--journal-count)))))
     (when pmbah--recovery-error
       (setq status (concat status " Recovery failed; buffer is read-only: " pmbah--recovery-error
                            ". Retry with M-x pmbah-mode, or use C-u -1 M-x pmbah-mode to edit without recording.")))
@@ -1500,7 +1777,7 @@ compute the content-blind text binding and is never persisted or uploaded."
 
 (defun pmbah--observation-due-p ()
   "Return non-nil when uncommitted events warrant a checkpoint now."
-  (let* ((delta (- pmbah--next-seq pmbah--observation-committed-count))
+  (let* ((delta (- pmbah--journal-count pmbah--observation-committed-count))
          (since-last-attempt (and pmbah--observation-last-attempt
                                   (- (float-time) pmbah--observation-last-attempt))))
     (cond
@@ -1530,7 +1807,7 @@ Errors and quits become transient failures, preserving the capture hook."
         (let* ((source (current-buffer))
                (session-id pmbah--session-id)
                (attempt pmbah--observation-attempt)
-               (event-count pmbah--next-seq)
+               (event-count pmbah--journal-count)
                (payload (pmbah--chain-tip-payload))
                (process
                 (pmbah--run-node-script-async
@@ -1653,7 +1930,7 @@ attempt the watchdog already failed, or delivered twice are dropped."
   "Return the checkpoint URL for the current session."
   (format "%s/api/observed-sessions/%s/checkpoints"
           (string-remove-suffix "/" (or pmbah-observation-base-url pmbah-api-base-url))
-          pmbah--session-id))
+          (or pmbah--observation-session-id pmbah--session-id)))
 
 (defun pmbah--observation-post (event-count chain-tip)
   "POST a checkpoint for EVENT-COUNT events with CHAIN-TIP asynchronously."
@@ -1764,7 +2041,11 @@ Return (KIND HTTP-STATUS BODY-OR-REASON) where KIND is `ok', `unavailable',
     ('unavailable
      (let ((failure pmbah--observation-last-failure))
        (pmbah--observation-reset)
-       (setq pmbah--observation-last-failure failure)))
+       ;; The server may have committed the first checkpoint but lost its
+       ;; token-bearing response. Retrying that identity without its token can
+       ;; never succeed. Rotate only observation; the writing chain stays intact.
+       (setq pmbah--observation-session-id (pmbah--uuid-v4)
+             pmbah--observation-last-failure failure)))
     ((or 'conflict 'client_bug)
      (setq pmbah--observation-state 'diverged
            pmbah--observation-backoff-ms 0))
@@ -1841,7 +2122,8 @@ commitments."
   (cond
    ((not pmbah-observe-process) nil)
    ((and pmbah--observation-token (not (eq pmbah--observation-state 'diverged)))
-    (list :observed_session_id pmbah--session-id :token pmbah--observation-token))
+    (list :observed_session_id (or pmbah--observation-session-id pmbah--session-id)
+          :token pmbah--observation-token))
    (t (list :state "unobserved"))))
 
 (defun pmbah--observation-upload-note ()

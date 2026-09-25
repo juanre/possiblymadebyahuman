@@ -37,7 +37,7 @@ try {
   const scriptPath = join(directory, "benchmark.el");
   await writeFile(scriptPath, `;;; benchmark.el -*- lexical-binding: t; -*-
 (load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
-(setq pmbah-observe-process nil pmbah-state-directory ${JSON.stringify(directory)})
+(setq pmbah--background-persistence t pmbah-observe-process nil pmbah-state-directory ${JSON.stringify(directory)})
 (let (results)
   (dolist (id '${JSON.stringify(sessionIds).replaceAll('[', '(').replaceAll(']', ')').replaceAll(',', ' ')})
     (with-temp-buffer
@@ -48,6 +48,7 @@ try {
                (initial-count pmbah--next-seq)
                (before-bytes pmbah--journal-bytes)
                (write-bytes 0)
+               (edit-times nil)
                (writer (symbol-function 'write-region))
                (append-start (float-time)))
           (cl-letf (((symbol-function 'write-region)
@@ -55,7 +56,18 @@ try {
                        (cl-incf write-bytes (if (stringp start) (string-bytes start)
                                                (string-bytes (buffer-substring-no-properties (or start (point-min)) (or end (point-max))))))
                        (apply writer start end arguments))))
-            (dotimes (_ ${appendCount}) (insert "x")))
+            (dotimes (index ${appendCount})
+              (let ((edit-start (float-time)))
+                (insert "x")
+                (push (* 1000 (- (float-time) edit-start)) edit-times))
+              ;; Let the same background pipeline used by interactive Emacs
+              ;; acknowledge bounded batches. These waits are not edit latency.
+              (when (= (% (1+ index) 64) 0)
+                (while (or pmbah--journal-pending pmbah--writer-request)
+                  (when pmbah--save-failure (error "%s" pmbah--save-failure))
+                  (accept-process-output nil 0.01)))))
+          (pmbah--drain-writer)
+          (setq edit-times (sort edit-times #'<))
           (let* ((append-ms (* 1000 (- (float-time) append-start)))
                  (payload (append (list :operation "inspect") (pmbah--chain-tip-payload)))
                  (suffix-start (float-time))
@@ -64,7 +76,10 @@ try {
             (push (list :initial_events initial-count :final_events pmbah--next-seq
                         :buffer_characters (buffer-size)
                         :recovery_ms recovery-ms :append_ms append-ms
-                        :bytes_written_per_edit (/ (float write-bytes) ${appendCount})
+                        :foreground_write_bytes write-bytes
+                        :edit_p50_ms (nth (/ ${appendCount} 2) edit-times)
+                        :edit_p95_ms (nth (floor (* ${appendCount} 0.95)) edit-times)
+                        :edit_max_ms (car (last edit-times))
                         :journal_growth (- pmbah--journal-bytes before-bytes)
                         :memory_tail_events (length pmbah--events)
                         :metadata_bytes (file-attribute-size (file-attributes (pmbah--state-file)))
@@ -89,8 +104,9 @@ try {
     assert.equal(result.buffer_characters, result.initial_events + appendCount);
     assert.ok(result.last_event_ms >= twoYears);
   }
-  assert.ok(results[1].bytes_written_per_edit <= results[0].bytes_written_per_edit + 128,
-    "per-edit writes grew with historical event count");
+  for (const result of results) {
+    assert.equal(result.foreground_write_bytes, 0, "interactive capture wrote to disk on the foreground thread");
+  }
   process.stdout.write(`${JSON.stringify({ event_count: events, node_heap_limit_mb: 96, append_count: appendCount, results }, null, 2)}\n`);
 } finally {
   await rm(directory, { recursive: true, force: true });

@@ -727,6 +727,117 @@ test("Emacs producer commits server-observed checkpoints while writing and binds
   }
 });
 
+for (const scenario of ["lost first response", "legacy saved token"]) {
+  test(`Emacs observation survives ${scenario} and buffer reopen`, { skip: emacs ? false : "emacs binary not available" }, async () => {
+    const { createServer } = await import("node:http");
+    const { createIngestApi } = await import("../apps/ingest-api/src/index.ts");
+    const { InMemoryRecordStore } = await import("../packages/storage/src/index.ts");
+    const api = createIngestApi({ store: new InMemoryRecordStore() });
+    const checkpoints = [];
+    const lostResponse = scenario === "lost first response";
+    const server = createServer(async (req, res) => {
+      const chunks = [];
+      for await (const chunk of req) chunks.push(chunk);
+      const body = Buffer.concat(chunks);
+      const response = await api.handleRequest(new Request(`http://localhost${req.url}`, {
+        method: req.method, headers: req.headers, ...(body.length ? { body } : {}),
+      }));
+      if (req.url.endsWith("/checkpoints")) {
+        checkpoints.push({ path: req.url, body: JSON.parse(body), status: response.status });
+        if (lostResponse && checkpoints.length === 1) {
+          // Commit at the real API, but lose the token-bearing HTTP response.
+          req.socket.destroy();
+          return;
+        }
+      }
+      res.writeHead(response.status, Object.fromEntries(response.headers));
+      res.end(Buffer.from(await response.arrayBuffer()));
+    });
+    await new Promise(resolveListen => server.listen(0, "127.0.0.1", resolveListen));
+    const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-observation-recovery-"));
+    const documentPath = join(temp, "essay.txt");
+    const scriptPath = join(temp, "scenario.el");
+    const outputPath = join(temp, "output.json");
+    await writeFile(documentPath, "");
+    await writeFile(scriptPath, `;;; observation recovery -*- lexical-binding: t; -*-
+(require 'cl-lib)
+(load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
+(let (session observed state-path saved-token response)
+  (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+    (pmbah-mode 1)
+    (setq session pmbah--session-id)
+    (insert "a")
+    (unless (pmbah--observation-wait 10) (error "First checkpoint did not finish"))
+    ${lostResponse ? `
+    (unless (and (null pmbah--observation-token)
+                 (string-prefix-p "transient" pmbah--observation-last-failure))
+      (error "Expected lost first response"))
+    (setq pmbah--observation-backoff-ms 0)
+    (insert "b")
+    (unless (pmbah--observation-wait 10) (error "Unavailable checkpoint did not finish"))
+    (unless (and (null pmbah--observation-token)
+                 (string-prefix-p "unavailable" pmbah--observation-last-failure))
+      (error "Expected unavailable observation"))` : ""}
+    (setq observed pmbah--observation-session-id
+          state-path (pmbah--state-file)
+          saved-token pmbah--observation-token)
+    (unless (equal observed (plist-get (plist-get (pmbah--read-state state-path) :observation) :observed_session_id))
+      (error "Observation identity was not persisted on completion"))
+    (set-buffer-modified-p nil)
+    (kill-buffer (current-buffer)))
+  ${lostResponse ? "" : `
+  ;; Old metadata had a token but no independent observation identity.
+  (let* ((state (json-parse-string (pmbah--read-file state-path)
+                                 :object-type 'plist :array-type 'array
+                                 :null-object nil :false-object :json-false))
+         (observation (plist-get state :observation)))
+    (cl-remf observation :observed_session_id)
+    (setq state (plist-put state :observation observation))
+    (pmbah--write-json-file state-path (pmbah--json-encode state)))`}
+  (with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+    (pmbah-mode 1)
+    (unless (and (equal session pmbah--session-id)
+                 (equal observed pmbah--observation-session-id)
+                 (equal saved-token pmbah--observation-token))
+      (error "Recovery changed a writing identity, observation identity or token"))
+    (insert "c")
+    ${lostResponse ? `(unless (pmbah--observation-wait 10) (error "Fresh checkpoint did not finish"))` : ""}
+    (setq response (pmbah-sign-buffer (list :surface "emacs") t)))
+  (with-temp-file ${JSON.stringify(outputPath)}
+    (insert (pmbah--json-encode (list :session session :observed observed :response response)))))
+`);
+    try {
+      const result = await runEmacs(scriptPath, { PMBAH_API_BASE_URL: `http://127.0.0.1:${server.address().port}` });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const output = JSON.parse(await readFile(outputPath, "utf8"));
+      const fetched = await api.getRecord(output.response.short_signature);
+      assert.equal(fetched.status, 200);
+      assert.equal(fetched.body.manifest.session_id, output.session);
+      assert.equal(fetched.body.observation.state, "observed");
+      assert.equal(fetched.body.observation.observed_session_id, output.observed);
+      assert.equal(fetched.body.events.length, lostResponse ? 3 : 2);
+      assert.equal(fetched.body.observation.commitments.at(-1).event_count, fetched.body.events.length);
+      assert.equal(verifyRecord(fetched.body).valid, true, "writing chain survives observation recovery");
+      if (lostResponse) {
+        assert.deepEqual(checkpoints.map(c => c.status), [201, 404, 201]);
+        assert.notEqual(output.session, output.observed);
+        assert.equal(checkpoints[0].path, checkpoints[1].path);
+        assert.notEqual(checkpoints[1].path, checkpoints[2].path);
+        assert.ok(checkpoints.every(c => !c.body.token));
+      } else {
+        assert.deepEqual(checkpoints.map(c => c.status), [201, 201]);
+        assert.equal(output.session, output.observed);
+        assert.equal(checkpoints[0].path, checkpoints[1].path);
+        assert.equal(typeof checkpoints[1].body.token, "string");
+      }
+    } finally {
+      server.closeAllConnections();
+      await new Promise(resolveClose => server.close(resolveClose));
+      await rm(temp, { recursive: true, force: true });
+    }
+  });
+}
+
 test("Emacs producer uploads an explicit unobserved state when no checkpoint ever succeeded", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const { createIngestApi } = await import("../apps/ingest-api/src/index.ts");
   const { createRuntimeServer } = await import("../apps/ingest-api/src/server.ts");

@@ -5,7 +5,7 @@ group: "Write a record"
 weight: 3
 ---
 
-This guide describes extension source **0.3.3**, which supports starting in fields that already contain text. It requires the matching **0.3.3 API and viewer**, including database migration **005**, for resumable publication. Developer-mode ZIP packages are distributed through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases); Chrome Web Store availability is not confirmed. Check the package version before installing.
+This guide describes extension source **0.3.4**, which supports starting in fields that already contain text. It requires the **0.3.3 or newer API and viewer**, including database migration **005**, for resumable publication. Developer-mode ZIP packages are distributed through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases); Chrome Web Store availability is not confirmed. Check the package version before installing.
 
 ## Install or update
 

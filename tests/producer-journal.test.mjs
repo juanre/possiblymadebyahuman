@@ -6,7 +6,7 @@ import { uploadJournal } from '../packages/browser-storage/src/upload.ts';
 
 const origin = { origin:'https://example.test', path:'/', tab_id:1, frame_id:0 };
 const descriptor = { tag_name:'TEXTAREA',field_kind:'textarea',name:null,id:null,aria_label:null,nearest_form_id:null,dom_signature:'test',index_among_similar:0 };
-function setup({ retain = true } = {}) {
+function setup({ retain = true, checkpoint } = {}) {
   const metadata = new Map(), events = new Map();
   let count = 0, now = 0, fail = false, maxBatch = 0, commits = 0;
   const storage = { read:async()=>structuredClone([...metadata.values()]), write:async()=>assert.fail('snapshot hot path'), journal:{
@@ -29,12 +29,60 @@ function setup({ retain = true } = {}) {
     async readEvents(id,start,limit) { return structuredClone((events.get(id)??[]).slice(start,start+limit)); }
   }};
   let uuid = 0;
-  const options = {storage,clock:{now:()=>now},uuid:{uuid:()=>`00000000-0000-4000-8000-${String(++uuid).padStart(12,'0')}`},producer:{id:'test',version:'1',capabilities:['timing']},signedFinishTime:true};
+  const options = {storage,clock:{now:()=>now},uuid:{uuid:()=>`00000000-0000-4000-8000-${String(++uuid).padStart(12,'0')}`},producer:{id:'test',version:'1',capabilities:['timing']},signedFinishTime:true,checkpoint};
   const registry = new SessionRegistry(options);
   const create = () => registry.findOrCreate(origin,descriptor,{surface:'web-draft'},{fresh:true});
   return {registry,storage,options,create,metadata,events,setNow:value=>now=value,setFail:value=>fail=value,stats:()=>({count,maxBatch,commits})};
 }
 const mutation = {op:'insert',pos:null,ins_len:1,del_len:0,source:'typing'};
+
+for (const resume of ['next edit', 'finish flush']) {
+  test(`checkpointing resumes after a coalesced journal save fails: ${resume}`, async () => {
+    let release;
+    const pending = new Promise(resolve => { release = resolve; });
+    const calls = [];
+    const h = setup({ checkpoint: {
+      async postCheckpoint(request) {
+        calls.push(request);
+        if (calls.length === 1) await pending;
+        return { ok: true, response: {
+          ...request, token: 't'.repeat(32), checkpoint_id: `cp-${calls.length}`,
+          server_t: '2026-09-25T00:00:00.000Z',
+        } };
+      },
+    } });
+    const { session_id: id } = h.create();
+    await h.registry.persist();
+    h.registry.appendMutation(id, mutation);
+    h.registry.appendMutation(id, mutation);
+    h.setFail(true);
+    release();
+    await h.registry.awaitObservationIdle(id);
+    assert.equal(calls.length, 1);
+    assert.equal(h.registry.get(id).observation.in_flight, false);
+    assert.equal(h.registry.get(id).observation.queued, true);
+    h.setFail(false);
+    await h.registry.persist();
+    assert.equal(h.metadata.get(id).observation.in_flight, false);
+    assert.equal(h.events.get(id).length, 2);
+    if (resume === 'next edit') {
+      // No new 50-event/60-second cadence interval is needed for queued work.
+      h.registry.appendMutation(id, mutation);
+      await h.registry.awaitObservationIdle(id);
+    } else {
+      h.registry.sign(id);
+      await h.registry.persist();
+      await h.registry.flushObservation(id);
+    }
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].token, 't'.repeat(32));
+    assert.equal(calls[1].observed_session_id, calls[0].observed_session_id);
+    assert.equal(calls[1].event_count, resume === 'next edit' ? 3 : 2);
+    assert.equal(h.registry.get(id).observation.state, 'known');
+    assert.equal(h.registry.get(id).observation.in_flight, false);
+    assert.equal(h.registry.get(id).observation.queued, false);
+  });
+}
 
 test('journal append/sign/restart uses metadata-only reads and exact frozen publication', async()=>{
  const h=setup();const session=h.create();

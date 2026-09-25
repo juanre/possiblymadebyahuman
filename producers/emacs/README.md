@@ -65,11 +65,35 @@ days later.
 - `scripts/event-journal.mjs` — local helper that uses the shared TypeScript
   format package to recover/verify journals, seal manifests, and publish event
   chunks without loading the complete history into memory.
+- `scripts/session-writer.mjs` — persistent background worker that commits bounded
+  numeric-event batches and metadata; no disk synchronization runs in interactive
+  editing hooks or checkpoint callbacks.
 - `scripts/chain-tip.mjs` — local helper that computes the public hash-chain
   tip of the events captured so far for a checkpoint.
 - `scripts/build-record.mjs` — compatibility entry point for existing local
   configurations; new journal descriptors delegate to `event-journal.mjs`.
   Its old array-input interface remains for explicit legacy CLI exports only.
+
+## Responsive capture and durability
+
+Interactive editing queues numeric events without filesystem writes or process
+launches in the modification hook. A persistent local worker appends and syncs
+bounded batches, then atomically saves metadata before acknowledging them.
+Transport waits for worker readiness and sends at most 4096 bytes per credit, so
+startup and a busy disk cannot fill the worker's pipe from the editing thread.
+Checkpoints reference only the acknowledged durable journal prefix.
+
+`M-x pmbah-show-session-status` reports saved events and events awaiting storage.
+Up to 256 captured events can await acknowledgement; if storage falls that far
+behind, `PMBAH:saving` temporarily makes the buffer read-only until it catches up.
+Storage errors or a worker timeout show `PMBAH:save!`; keep the buffer open and use
+`M-x pmbah-retry-save` after resolving the failure. Exact retries preserve event
+order even if the worker committed a batch before its acknowledgement was lost.
+
+Normal close, exit, pause, rename, and signing wait for queued writes. An abrupt
+Emacs/process or machine failure can lose events that have not reached durable
+storage; complete journal appends are verified on recovery. Document text still
+needs to be saved normally. Batch Lisp callers retain synchronous persistence.
 
 ## Requirements
 
@@ -202,6 +226,12 @@ Checkpoints go to `pmbah-api-base-url`. `pmbah-observation-base-url` (default
 in normal use, because a checkpoint token is only valid on the service that
 issued it.
 
+If the server reports an observation as unavailable (including after a lost
+first response), the next edit starts a fresh observation identity. The writing
+session and its event chain stay intact. This identity is saved with its token
+and restored when the buffer is reopened; older saved sessions without a
+separate observation identity keep using their original session ID and token.
+
 ### Session state directory
 
 `pmbah-state-directory` (default `~/.emacs.d/pmbah/`, via
@@ -235,20 +265,20 @@ synced between machines:
   recovery files without a saved preference are treated as enabled.
 - The session survives `M-x <major-mode>` and `revert-buffer`, which otherwise
   wipe buffer-local state: recording continues into the same session.
-- Every captured mutation appends one numeric journal line and saves small
-  metadata before capture returns. Both writes request a file flush; directory
-  rename durability still depends on the filesystem, so this is not a guarantee
-  against every power-loss scenario. State also saves when Emacs is killed, when the mode is
-  turned off, and whenever the server accepts a checkpoint. Reopening
+- Each captured mutation queues one numeric event. A background worker appends
+  and syncs batches and atomically saves small metadata before acknowledging
+  durability. Checkpoint metadata also saves in the background. Normal close,
+  exit, pause, rename, and signing wait for pending saves. Reopening
   an opted-in file resumes the session: earlier events are
   kept and new event times continue from the original start, so a break of
   hours, days or months shows up as a pause, not as a new record.
-- If saving fails, the event remains in memory and capture makes the buffer
+- If saving fails, unacknowledged events remain in memory and capture makes the buffer
   read-only. `M-x pmbah-retry-save` saves the pending state and resumes unsigned
   capture; a frozen upload remains frozen, and explicitly paused capture stays
-  paused. Each edit writes only its new event
+  paused. Each batch writes only new events
   and bounded metadata; it never rewrites the preceding history. Emacs retains
-  at most 256 events in its capture tail. Ordinary buffer close and Emacs exit
+  at most 256 events in its recent capture tail and at most 256 unacknowledged
+  events in its storage queue. Ordinary buffer close and Emacs exit
   are cancelled if recovery state still cannot be saved. This does not prevent
   a forced process termination or replace saving your document with `C-x C-s`.
 - If automatic recovery fails, the buffer stays read-only with

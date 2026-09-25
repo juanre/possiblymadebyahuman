@@ -18,6 +18,7 @@ import {
   aggregateMutationSizes,
   computeEventHashChain,
   isB3Hash,
+  validateEvent,
   verifyRecord,
   type B3Hash,
   type EventLog,
@@ -50,6 +51,12 @@ export const DEFAULT_SHORT_SIGNATURE_LENGTH = 10;
 export const RESERVED_ROUTE_PREFIXES = ["api", "docs", "blog", "write", "assets", "record-assets", "images", "health", "ready", "live"] as const;
 export const MAX_ERROR_DETAILS = 25;
 export const MAX_PAYLOAD_DEPTH = 32;
+// Above the number of minimum-size events that fit the default 10 MB legacy
+// body limit. Current producers publish at most 4096 events per chunk.
+export const MAX_LEGACY_EVENTS = 131_072;
+const MAX_PAYLOAD_NODES = 2_000_000;
+const MAX_PAYLOAD_OBJECT_FIELDS = 64;
+const MAX_PAYLOAD_KEY_LENGTH = 128;
 
 export type IngestApiOptions = {
   store: RecordStore;
@@ -157,6 +164,18 @@ export function createIngestApi(options: IngestApiOptions) {
 
     const manifestFieldErrors = validatePublicManifestFields(parse.record.manifest);
     if (manifestFieldErrors.length > 0) return failure(400, "invalid_manifest", manifestFieldErrors);
+
+    // Stop collecting malformed-event diagnostics before the full verifier's
+    // array checks. A small JSON array of invalid events must not create millions
+    // of validation error strings. Valid legacy logs still verify in full below.
+    if (Array.isArray(parse.record.events)) {
+      const eventErrors: string[] = [];
+      for (let index = 0; index < parse.record.events.length; index++) {
+        eventErrors.push(...validateEvent(parse.record.events[index], index));
+        if (eventErrors.length > MAX_ERROR_DETAILS) break;
+      }
+      if (eventErrors.length) return failure(400, "verification_failed", eventErrors);
+    }
 
     const stampedRecord: WritingRecord = {
       manifest: {
@@ -455,24 +474,48 @@ function validatePublicManifestFields(manifest: unknown): string[] {
 const CONTENT_BEARING_KEYS = new Set(["text", "plaintext", "content", "ins_text", "ins_hash", "final_text", "final_text_hash", "final_text_length"]);
 
 function findContentBearingFields(input: unknown): string[] {
+  if (!isPlainObject(input)) return ["body must be an object"];
   const errors: string[] = [];
-  const pending: Array<{ value: unknown; path: string; depth: number }> = [{ value: input, path: "$", depth: 0 }];
-  while (pending.length > 0) {
-    const { value, path, depth } = pending.pop() as { value: unknown; path: string; depth: number };
+  let visited = 0;
+  // Visit one child at a time: auxiliary memory depends on depth, never array
+  // width. Limit work and diagnostic sizes before allocating paths or errors.
+  function visit(value: unknown, path: string, depth: number): boolean {
+    if (++visited > MAX_PAYLOAD_NODES) {
+      errors.push("payload exceeds the validation work limit");
+      return false;
+    }
     if (depth > MAX_PAYLOAD_DEPTH) {
-      return [`${path} is nested deeper than ${MAX_PAYLOAD_DEPTH} levels`];
+      errors.push(`payload is nested deeper than ${MAX_PAYLOAD_DEPTH} levels`);
+      return false;
     }
     if (Array.isArray(value)) {
-      value.forEach((item, index) => pending.push({ value: item, path: `${path}[${index}]`, depth: depth + 1 }));
-      continue;
+      // Only the event log is an unbounded-format array. The remaining public
+      // arrays are capabilities (at most 5) and attestations (at most 16).
+      const limit = path === "$.events" ? MAX_LEGACY_EVENTS : 16;
+      if (value.length > limit) {
+        errors.push(`${path} must contain at most ${limit} entries`);
+        return false;
+      }
+      for (let index = 0; index < value.length; index++) {
+        if (!visit(value[index], `${path}[${index}]`, depth + 1)) return false;
+      }
+      return true;
     }
-    if (!isPlainObject(value)) continue;
-    for (const [key, child] of Object.entries(value)) {
+    if (!isPlainObject(value)) return true;
+    let fields = 0;
+    for (const key in value) {
+      if (!Object.hasOwn(value, key)) continue;
+      if (++fields > MAX_PAYLOAD_OBJECT_FIELDS || key.length > MAX_PAYLOAD_KEY_LENGTH) {
+        errors.push("payload object exceeds the field count or field name limit");
+        return false;
+      }
       const childPath = `${path}.${key}`;
       if (CONTENT_BEARING_KEYS.has(key)) errors.push(`${childPath} is not allowed in public content-blind records`);
-      pending.push({ value: child, path: childPath, depth: depth + 1 });
+      if (errors.length >= MAX_ERROR_DETAILS || !visit(value[key], childPath, depth + 1)) return false;
     }
+    return true;
   }
+  visit(input, "$", 0);
   return errors;
 }
 
