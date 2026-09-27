@@ -137,6 +137,13 @@ its `upload_id` until publication succeeds, and beginning a deleted upload stage
 it again from event zero. Finalized uploads own published pages and are never
 deleted. Observed sessions and checkpoints have no expiry.
 
+Migration `007_record_removal.sql` supports operator removal of reported
+records (see [record removal](../../docs/operations-record-removal.md)). A
+removed hash is kept in the private `removed_records` table; publishing it again
+through `POST /api/records`, begin or finalize returns 410 `record_removed`,
+while every read of it returns 404. Parent references are no longer a foreign
+key, so continuations of a removed record stay published and verifiable.
+
 Default analyzers share one incremental implementation with bounded legacy array
 callers. Configured custom analyzers that require a complete event array return
 an explicit unavailable signal during chunked publication; they are not replaced

@@ -30,6 +30,7 @@ import {
   DuplicateRecordConflictError,
   ObservedCheckpointConflictError,
   ObservedSessionTokenError,
+  RecordRemovedError,
   observationFromCheckpoints,
   unobservedObservation,
   type AnalysisResult,
@@ -247,6 +248,7 @@ export function createIngestApi(options: IngestApiOptions) {
         },
       };
     } catch (error) {
+      if (error instanceof RecordRemovedError) return { status: 410, body: { error: "record_removed" } };
       if (error instanceof DuplicateRecordConflictError) {
         return { status: 409, body: { error: "immutable_record_conflict", details: [error.message] } };
       }

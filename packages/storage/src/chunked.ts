@@ -1,5 +1,5 @@
 import { canonicalizeJson, type B3Hash, type EventLog, type RecordManifest } from "../../format/src/index.ts";
-import { insertRecordData, notRequestedObservation, observationFromCheckpoints, unobservedObservation,
+import { insertRecordData, isRemovedRecordViolation, notRequestedObservation, observationFromCheckpoints, unobservedObservation,
   type AnalysisResult, type ObservedSession, type ObservationCommitment, type PostgresDatabase,
   type PostgresQueryable, type RecordObservation, type RecordStats, type StoredRecord } from "./index.ts";
 
@@ -129,7 +129,7 @@ export class PostgresChunkedStore implements ChunkedStore {
   async #transaction<T>(work: (client: PostgresQueryable) => Promise<T>): Promise<T> {
     const client = this.db.connect ? await this.db.connect() : this.db;
     try { await client.query("begin"); const result = await work(client); await client.query("commit"); return result; }
-    catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+    catch (error) { await client.query("rollback").catch(() => undefined); throw isRemovedRecordViolation(error) ? new ChunkedUploadError(410, "record_removed") : error; }
     finally { if ("release" in client) client.release?.(); }
   }
   async #read(client: PostgresQueryable, id: string, lock = false): Promise<UploadState | null> {
@@ -138,6 +138,7 @@ export class PostgresChunkedStore implements ChunkedStore {
   }
   async begin(state: UploadState): Promise<UploadState> {
     return this.#transaction(async client => {
+      if ((await client.query("select 1 from removed_records where record_hash=$1", [state.manifest.record_hash])).rows.length) throw new ChunkedUploadError(410, "record_removed");
       await client.query(`insert into record_uploads(upload_id,manifest,observation,analysis_state) values($1,$2::jsonb,$3::jsonb,$4::jsonb) on conflict(upload_id) do nothing`,
         [state.upload_id, JSON.stringify(state.manifest), JSON.stringify(state.observation ?? null), JSON.stringify(state.analysis_state)]);
       const existing = (await this.#read(client, state.upload_id, true))!;

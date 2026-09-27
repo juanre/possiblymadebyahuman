@@ -89,6 +89,8 @@ make delete-abandoned-uploads DATABASE_URL='postgresql://...' OLDER_THAN_DAYS=60
 
 Producers keep a frozen record and its `upload_id` until publication succeeds and restart a deleted upload from event zero, so no record is lost. Published records, finalized uploads, observed sessions and checkpoints are never deleted by this command.
 
+Reported abusive records are removed by the operator, never through the public API. `make remove-record SIGNATURE=<short signature or hash> DATABASE_URL=...` previews the removal; add `CONFIRM=yes` to remove. See [record removal](docs/operations-record-removal.md).
+
 See [`apps/ingest-api/README.md`](apps/ingest-api/README.md) for details.
 
 Run migrations before starting a production container:
