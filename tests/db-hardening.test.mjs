@@ -255,7 +255,7 @@ test("runtime POST body limit returns 413 before API handling", async () => {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const { port } = server.address();
-    const response = await fetch(`http://127.0.0.1:${port}/api/records`, { method: "POST", body: "123456" });
+    const response = await fetch(`http://127.0.0.1:${port}/api/records`, { method: "POST", headers: { "content-type": "application/json" }, body: "123456" });
     assert.equal(response.status, 413);
     assert.deepEqual(await response.json(), { error: "request_body_too_large", max_bytes: 5 });
     assert.equal(handled, false);

@@ -31,3 +31,22 @@ test("HEAD answers every GET route with the GET status and headers but no body",
   }
   assert.equal((await fetch(`${base}/health`, { method: "HEAD" })).status, 200);
 });
+
+test("API writes require a JSON media type before the body is buffered or handled", async t => {
+  let handled = 0;
+  const base = await runtime(t, { api: { handleRequest: async () => { handled++; return new Response("{}"); } } });
+  const routes = ["/api/records", "/api/record-uploads", "/api/record-uploads/00000000-0000-4000-8000-000000000001/chunks",
+    "/api/record-uploads/00000000-0000-4000-8000-000000000001/finalize", "/api/observed-sessions/00000000-0000-4000-8000-000000000001/checkpoints"];
+  for (const path of routes) {
+    for (const headers of [{ "content-type": "text/plain" }, { "content-type": "application/x-www-form-urlencoded" }, { "content-type": "multipart/form-data; boundary=x" },
+      { "content-type": "application/jsonp" }, {}]) {
+      const response = await fetch(`${base}${path}`, { method: "POST", headers, body: headers["content-type"] ? "{}" : new Uint8Array([123, 125]) });
+      assert.equal(response.status, 415, `${path} ${JSON.stringify(headers)}`);
+      assert.deepEqual(await response.json(), { error: "unsupported_media_type" });
+    }
+    for (const type of ["application/json", "application/json; charset=utf-8", "Application/JSON;charset=UTF-8"]) {
+      assert.equal((await fetch(`${base}${path}`, { method: "POST", headers: { "content-type": type }, body: "{}" })).status, 200, `${path} ${type}`);
+    }
+  }
+  assert.equal(handled, routes.length * 3);
+});

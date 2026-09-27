@@ -171,6 +171,12 @@ export async function readiness(
 
 async function route(req: IncomingMessage, res: ServerResponse, options: RuntimeServerOptions, requestUrl: URL): Promise<void> {
   if (requestUrl.pathname.startsWith("/api/")) {
+    // Every API write is JSON. Requiring the JSON media type keeps other sites
+    // from submitting cross-origin "simple" form or text/plain POSTs.
+    if (req.method === "POST" && !isJsonMediaType(req.headers["content-type"])) {
+      json(res, 415, { error: "unsupported_media_type" });
+      return;
+    }
     const checkpoint = /^\/api\/observed-sessions\/[^/]+\/checkpoints$/.test(requestUrl.pathname);
     const upload = requestUrl.pathname === "/api/record-uploads" || requestUrl.pathname.startsWith("/api/record-uploads/");
     const bodyLimit = upload ? Math.min(1024 * 1024, options.recordBodyLimitBytes ?? DEFAULT_RECORD_BODY_LIMIT_BYTES) : checkpoint ? Math.min(options.checkpointBodyLimitBytes ?? DEFAULT_CHECKPOINT_BODY_LIMIT_BYTES,
@@ -336,6 +342,10 @@ function contentType(path: string): string {
     case ".webmanifest": return "application/manifest+json";
     default: return "application/octet-stream";
   }
+}
+
+function isJsonMediaType(value: string | undefined): boolean {
+  return value?.split(";")[0]?.trim().toLowerCase() === "application/json";
 }
 
 function isUndefinedTableError(error: unknown): boolean {

@@ -15,7 +15,7 @@ async function runtime(t, handleRequest, options = {}) {
 function incompleteRequest(url, length, path) {
   let request;
   const response = new Promise((resolve, reject) => {
-    request = httpRequest(url, { method: "POST", ...(path ? { path } : {}), headers: { "content-length": String(length) } }, result => {
+    request = httpRequest(url, { method: "POST", ...(path ? { path } : {}), headers: { "content-type": "application/json", "content-length": String(length) } }, result => {
       const chunks = [];
       result.on("data", chunk => chunks.push(chunk));
       result.on("end", () => resolve({ status: result.statusCode, headers: result.headers, body: Buffer.concat(chunks).toString() }));
@@ -34,12 +34,12 @@ test("checkpoint requests have a smaller body allowance than full records", asyn
   assert.equal(DEFAULT_CHECKPOINT_BODY_LIMIT_BYTES, 16_384);
   assert.equal(server.requestTimeout, DEFAULT_HTTP_REQUEST_TIMEOUT_MS);
   const checkpoint = `${base}/api/observed-sessions/00000000-0000-4000-8000-000000000001/checkpoints`;
-  const rejected = await fetch(checkpoint, { method: "POST", body: "x".repeat(17) });
+  const rejected = await fetch(checkpoint, { method: "POST", headers: { "content-type": "application/json" }, body: "x".repeat(17) });
   assert.equal(rejected.status, 413);
   assert.deepEqual(await rejected.json(), { error: "request_body_too_large", max_bytes: 16 });
   assert.equal(handled, 0);
-  assert.equal((await fetch(`${base}/api/records`, { method: "POST", body: "x".repeat(17) })).status, 200);
-  assert.equal((await fetch(checkpoint, { method: "POST", body: "{}" })).status, 200);
+  assert.equal((await fetch(`${base}/api/records`, { method: "POST", headers: { "content-type": "application/json" }, body: "x".repeat(17) })).status, 200);
+  assert.equal((await fetch(checkpoint, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 200);
   assert.equal(handled, 2);
 });
 
@@ -52,7 +52,7 @@ test("API admission rejects before buffering and releases capacity after success
     if (calls === 1) { started(); await held; }
     return new Response("{}");
   }, { maxInFlightApiRequests: 1, recordBodyLimitBytes: 5 });
-  const first = fetch(`${base}/api/records`, { method: "POST", body: "{}" });
+  const first = fetch(`${base}/api/records`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
   await entered;
   const unfinished = incompleteRequest(`${base}/api/records`, 100_000);
   try {
@@ -69,8 +69,8 @@ test("API admission rejects before buffering and releases capacity after success
     assert.equal((await fetch(`${base}/health`)).status, 200, "liveness remains available during overload");
   } finally { unfinished.request.destroy(); release(); }
   assert.equal((await first).status, 200);
-  assert.equal((await fetch(`${base}/api/records`, { method: "POST", body: "too big" })).status, 413);
-  assert.equal((await fetch(`${base}/api/records`, { method: "POST", body: "{}" })).status, 200);
+  assert.equal((await fetch(`${base}/api/records`, { method: "POST", headers: { "content-type": "application/json" }, body: "too big" })).status, 413);
+  assert.equal((await fetch(`${base}/api/records`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 200);
   assert.equal(calls, 2);
 });
 
@@ -86,7 +86,7 @@ test("slow unfinished bodies time out and release their API admission slot", asy
   assert.equal(response.status, 408);
   assert.equal(calls, 0);
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal((await fetch(`${base}/api/records`, { method: "POST", body: "{}" })).status, 200);
+  assert.equal((await fetch(`${base}/api/records`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 200);
   assert.equal(calls, 1);
 });
 
@@ -94,11 +94,11 @@ test("resumable upload bodies stay bounded independently of legacy record allowa
   let handled = 0;
   const { base } = await runtime(t, async () => { handled++; return new Response("{}"); }, { recordBodyLimitBytes: 2 * 1024 * 1024 });
   for (const route of ["record-uploads", "record-uploads/00000000-0000-4000-8000-000000000001/chunks"]) {
-    const response = await fetch(`${base}/api/${route}`, { method: "POST", body: "x".repeat(1024 * 1024 + 1) });
+    const response = await fetch(`${base}/api/${route}`, { method: "POST", headers: { "content-type": "application/json" }, body: "x".repeat(1024 * 1024 + 1) });
     assert.equal(response.status, 413);
     assert.equal((await response.json()).max_bytes, 1024 * 1024);
   }
   assert.equal(handled, 0);
-  assert.equal((await fetch(`${base}/api/record-uploads`, { method: "POST", body: "{}" })).status, 200);
+  assert.equal((await fetch(`${base}/api/record-uploads`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 200);
   assert.equal(handled, 1);
 });
