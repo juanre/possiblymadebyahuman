@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildActivityBins, buildDelayHistogram, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeRecordSummary, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
+import { buildActivityColumns, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeRecordSummary, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 const SITE_NAME = "possiblymadebyahuman";
@@ -193,9 +193,8 @@ const TIMELINE_PAD_L = 12;
 const TIMELINE_PAD_R = 12;
 const TIMELINE_PAD_T = 34;
 const TIMELINE_PAD_B = 44;
-const TIMELINE_MIN_TICK_SPACING_PX = 56;
-const TIMELINE_TICK_STEPS_SECONDS = [10, 30, 60, 300, 600, 1800, 3600];
 const CHART_FONT = "Inter, ui-sans-serif, system-ui, sans-serif";
+const SERIF_FONT = "'Iowan Old Style', 'New York', ui-serif, Georgia, serif";
 
 // Width of an element's content box, tracked as it resizes.
 function useContentWidth<T extends Element>(fallback: number): [React.RefObject<T | null>, number] {
@@ -212,16 +211,6 @@ function useContentWidth<T extends Element>(fallback: number): [React.RefObject<
     return () => observer.disconnect();
   }, []);
   return [ref, width];
-}
-
-// The coarsest step that keeps tick labels at least the minimum spacing apart.
-function timelineTickStepSeconds(totalSeconds: number, plotW: number): number {
-  const maxTicks = Math.max(1, Math.floor(plotW / TIMELINE_MIN_TICK_SPACING_PX));
-  for (const step of TIMELINE_TICK_STEPS_SECONDS) {
-    if (totalSeconds / step <= maxTicks) return step;
-  }
-  const largest = TIMELINE_TICK_STEPS_SECONDS[TIMELINE_TICK_STEPS_SECONDS.length - 1]!;
-  return largest * Math.ceil(totalSeconds / (largest * maxTicks));
 }
 
 function sourceFill(source: string): string {
@@ -249,16 +238,6 @@ const SOURCE_NAMES: Record<string, string> = {
   programmatic: "Programmatic edit",
 };
 
-function formatTimelineTick(seconds: number): string {
-  if (seconds >= 86400) return `${Math.floor(seconds / 86400)}d ${Math.floor(seconds / 3600) % 24}h`;
-  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds / 60) % 60}m`;
-  // The end of a record shorter than a minute keeps its fraction of a second.
-  if (seconds < 60 && !Number.isInteger(seconds)) return `${seconds.toFixed(1)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return s === 0 ? `${m}:00` : `${m}:${String(s).padStart(2, "0")}`;
-}
-
 function describeTimelinePoint(point: { source: string; t: number; ins_len: number | null; del_len: number | null; documentLength: number | null }): string {
   const name = SOURCE_NAMES[point.source] ?? "Edit of unknown source";
   const inserted = point.ins_len === null ? "unknown amount added" : `${formatCharacters(point.ins_len)} added`;
@@ -278,9 +257,8 @@ export function PencilHatch({ id }: { id: string }) {
   );
 }
 
-export // Waits shorter than this before the first edit or after the last one are
-// too small to see on the timeline, so they are not described in words.
-const NARRATED_WAIT_MS = 1000;
+// Width given to each pause cut out of the time axis.
+const TIMELINE_BREAK_W = 28;
 
 function EditTimeline({ record }: { record: RecordApiResponse }) {
   const timing = recordTimingDetails(record);
@@ -288,21 +266,21 @@ function EditTimeline({ record }: { record: RecordApiResponse }) {
   const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
   // The length curve is drawn for the prefix of events whose document length can
   // be inferred; from the first event with an unknown position onwards only
-  // markers and pauses are shown.
+  // markers are shown.
   const firstUnknown = points.findIndex((point) => point.documentLength === null);
   const knownPoints = firstUnknown === -1 ? points : points.slice(0, firstUnknown);
   const lengthKnown = knownPoints.length > 0;
   const lengthKnownThroughout = points.length > 0 && firstUnknown === -1;
   const maxLength = timelineLengthScale(points, record.stats.observed_final_length);
-  const observedDurationMs = Math.max(record.manifest.duration_ms, points.at(-1)?.t ?? 0);
-  const duration = Math.max(1, observedDurationMs);
+  const endMs = Math.max(record.manifest.duration_ms, points.at(-1)?.t ?? 0);
   const [chartRef, chartW] = useContentWidth<SVGSVGElement>(TIMELINE_FALLBACK_W);
   const plotW = Math.max(1, chartW - TIMELINE_PAD_L - TIMELINE_PAD_R);
   const plotH = TIMELINE_VB_H - TIMELINE_PAD_T - TIMELINE_PAD_B;
   const baseline = TIMELINE_PAD_T + plotH;
-  const activity = buildActivityBins(record.events, duration, Math.floor(plotW / 10));
-  const maxActivity = activity.reduce((max, bin) => Math.max(max, bin.count), 1);
-  const tx = (t: number) => TIMELINE_PAD_L + (Math.min(duration, Math.max(0, t)) / duration) * plotW;
+  const axis = useMemo(() => buildTimeAxis(record.events.map(event => event.t), endMs, plotW, TIMELINE_BREAK_W), [record.events, endMs, plotW]);
+  const activity = useMemo(() => buildActivityColumns(record.events, axis), [record.events, axis]);
+  const maxActivity = activity.reduce((max, column) => Math.max(max, column.count), 1);
+  const tx = (t: number) => TIMELINE_PAD_L + axis.x(t);
   const ly = (len: number) => baseline - (Math.min(maxLength, Math.max(0, len)) / maxLength) * plotH;
   // With no inferable length there is no curve; markers sit on a neutral mid line.
   const markerY = (point: { documentLength: number | null }) => point.documentLength !== null ? ly(point.documentLength) : baseline - plotH / 2;
@@ -316,32 +294,34 @@ function EditTimeline({ record }: { record: RecordApiResponse }) {
   const areaPath = firstStep && lastStep
     ? `M ${tx(firstStep.t)} ${baseline} L ${tx(firstStep.t)} ${ly(firstStep.length)} ${steps.slice(1).map(point => `L ${tx(point.t)} ${ly(point.length)}`).join(" ")} L ${tx(lastStep.t)} ${baseline} Z`
     : "";
+  // The length held across a cut pause, when the curve reaches that far.
+  const lengthAt = (t: number) => lastStep && t < lastStep.t ? [...steps].reverse().find(step => step.t <= t)?.length ?? null : null;
 
-  const pauseSpans = points.filter((point) => point.isLongPause && point.delayFromPreviousMs > 0);
-  // Only NOTABLE events get a marker — pastes, drops, cuts/deletes, and large
-  // atomic inserts. Per-keystroke ticks turn into illegible mush on a long
-  // record; the rising curve already carries the typing story, and these few
-  // markers stay legible at any density.
+  // Only notable events get a marker: pastes, drops, cuts and deletions, and
+  // large insertions. The curve already carries the typing itself, including
+  // multi-character deletions; where there is no curve, those get a marker too.
+  const isDeletion = (point: TimelinePoint) => point.source === "cut" || point.source === "delete"
+    || (point.documentLength === null && (point.del_len ?? 0) > 1);
   const notable = points.filter((point) =>
     point.isLargeInsert
     || point.source === "paste"
     || point.source === "drop"
-    || point.source === "cut"
-    || point.source === "delete"
-    || (point.del_len ?? 0) > 1,
+    || isDeletion(point),
   );
-  const notableSources = new Set(notable.map((point) => point.source));
+  const markerSource = (point: TimelinePoint) => isDeletion(point) && point.source !== "cut" ? "delete" : point.source;
+  const notableSources = new Set(notable.map(markerSource));
   const hasLargeInsert = points.some((point) => point.isLargeInsert);
-  const hasLongPause = pauseSpans.length > 0;
-
-  const totalSeconds = duration / 1000;
-  const tickEverySeconds = timelineTickStepSeconds(totalSeconds, plotW);
-  const ticks: number[] = [];
-  for (let seconds = 0; seconds <= totalSeconds; seconds += tickEverySeconds) ticks.push(seconds);
-  // Mark the end of the record too, unless its label would sit on the last tick's.
-  const lastTickSeconds = ticks[ticks.length - 1] ?? 0;
-  if (((totalSeconds - lastTickSeconds) / totalSeconds) * plotW >= TIMELINE_MIN_TICK_SPACING_PX) ticks.push(totalSeconds);
-  const tickAnchor = (x: number) => x < TIMELINE_PAD_L + 16 ? "start" : x > chartW - TIMELINE_PAD_R - 16 ? "end" : "middle";
+  const cutPauses = axis.breaks.length;
+  const labels = layoutTimeAxisLabels(axis, { endPrefix: timing.signedFinish ? "signed at " : "" });
+  // Pause lengths that would collide sit on a second row below the axis.
+  const secondRowH = labels.some(label => label.row === 1) ? 16 : 0;
+  const pauseSentence = cutPauses > 0 ? ` ${cutPauses === 1 ? "A pause" : "Pauses"} of 5 minutes or more ${cutPauses === 1 ? "is" : "are"} cut short and marked with how long ${cutPauses === 1 ? "it" : "they"} lasted.` : "";
+  const finalLength = lastStep?.length ?? null;
+  const chartLabel = [
+    lengthKnown ? `Document length over time${finalLength === null ? "" : `, ending at ${formatCharacters(finalLength)}`}.` : "Edits over time.",
+    timing.signedFinish && timing.afterLastEditMs > 0 ? `Signed ${formatDuration(timing.afterLastEditMs)} after the last edit.` : "",
+    cutPauses > 0 ? `${cutPauses} ${cutPauses === 1 ? "pause" : "pauses"} of 5 minutes or more cut from the time axis.` : "",
+  ].filter(Boolean).join(" ");
 
   return (
     <section className="record-section edit-timeline" aria-labelledby="edit-timeline-heading">
@@ -349,76 +329,71 @@ function EditTimeline({ record }: { record: RecordApiResponse }) {
       {points.length === 0 ? (
         <p className="section-intro">No edit events were included in this record.</p>
       ) : lengthKnownThroughout ? (
-        <p className="section-intro">Document length over time. Pastes, cuts, and large insertions are marked on the curve; shaded bands are pauses of 30 seconds or more.</p>
+        <p className="section-intro">Document length over time. Pastes, cuts, and large insertions are marked on the curve.{pauseSentence}</p>
       ) : lengthKnown ? (
-        <p className="section-intro">Document length over time, up to edit {knownPoints.length} of {points.length}. Later events lack enough measurements to reconstruct length. Editing activity remains visible below; shaded bands mark long pauses.</p>
+        <p className="section-intro">Document length over time, up to edit {knownPoints.length} of {points.length}. Later events lack enough measurements to reconstruct length, so editing activity continues below.{pauseSentence}</p>
       ) : (
-        <p className="section-intro">Document length is unknown because this record lacks enough measurements to reconstruct it. The bars show when edits happened and how many were captured, not document length. Shaded bands mark long pauses.</p>
+        <p className="section-intro">Document length is unknown because this record lacks enough measurements to reconstruct it. The bars show when edits happened and how many were captured, not document length.{pauseSentence}</p>
       )}
-      {timing.signedFinish && (timing.beforeFirstEditMs >= NARRATED_WAIT_MS || timing.afterLastEditMs >= NARRATED_WAIT_MS) && <p className="section-intro signed-finish-summary">Signed finish at {formatDuration(record.manifest.duration_ms)} from the session start.
-        {timing.beforeFirstEditMs >= NARRATED_WAIT_MS && <> No edits were captured during the first {formatDuration(timing.beforeFirstEditMs)}.</>}
-        {timing.afterLastEditMs >= NARRATED_WAIT_MS && <> The final {formatDuration(timing.afterLastEditMs)} contains no captured edits. The length curve ends at the last measurable edit; it does not describe that later interval.</>}
-      </p>}
-      <svg ref={chartRef} className="timeline-chart" viewBox={`0 0 ${chartW} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
+      <svg ref={chartRef} className="timeline-chart" viewBox={`0 0 ${chartW} ${TIMELINE_VB_H + secondRowH}`} role="img" aria-label={chartLabel} preserveAspectRatio="xMidYMid meet">
         <PencilHatch id={hatchId} />
-        {timing.signedFinish && timing.beforeFirstEditMs > 0 && <rect className="before-first-edit-gap" x={tx(0)} y={TIMELINE_PAD_T}
-          width={Math.max(1, tx(timing.beforeFirstEditMs) - tx(0))} height={plotH} fill="#dce3e8" opacity={0.65}>
-          <title>{`No captured edits before the first edit: ${formatDuration(timing.beforeFirstEditMs)}`}</title>
-        </rect>}
-        {timing.signedFinish && timing.afterLastEditMs > 0 && <rect className="signed-finish-gap" x={tx(points.at(-1)?.t ?? 0)} y={TIMELINE_PAD_T}
-          width={Math.max(1, tx(record.manifest.duration_ms) - tx(points.at(-1)?.t ?? 0))} height={plotH} fill="#dce3e8" opacity={0.65}>
-          <title>{`No captured edits between the last edit and signed finish: ${formatDuration(timing.afterLastEditMs)}`}</title>
-        </rect>}
-        {pauseSpans.map((point) => {
-          const startT = Math.max(0, point.t - point.delayFromPreviousMs);
-          const x = tx(startT);
-          const width = Math.max(2, tx(point.t) - x);
-          return <rect key={`pause-${point.seq}`} x={x} y={TIMELINE_PAD_T} width={width} height={plotH} fill="#ead9b8" opacity={0.4} />;
-        })}
-        {!lengthKnown && activity.filter(bin => bin.count > 0).map(bin => {
-          const height = Math.max(3, bin.count / maxActivity * plotH);
-          return <rect className="activity-bar" key={bin.start} x={tx(bin.start)} y={baseline - height}
-            width={Math.max(1, tx(bin.end) - tx(bin.start) - 1)} height={height} fill={`url(#${hatchId})`} stroke="#3d2f17" strokeWidth={0.8}>
-            <title>{`${bin.count} edit${bin.count === 1 ? "" : "s"} from ${formatDuration(bin.start)} to ${formatDuration(bin.end)}`}</title>
+        {!lengthKnown && activity.filter(column => column.count > 0).map(column => {
+          const height = Math.max(3, column.count / maxActivity * plotH);
+          return <rect className="activity-bar" key={`${column.start}-${column.x0}`} x={TIMELINE_PAD_L + column.x0} y={baseline - height}
+            width={Math.max(1, column.x1 - column.x0 - 1)} height={height} fill={`url(#${hatchId})`} stroke="#3d2f17" strokeWidth={0.8}>
+            <title>{`${column.count} edit${column.count === 1 ? "" : "s"} from ${formatDuration(column.start)} to ${formatDuration(column.end)}`}</title>
           </rect>;
         })}
         {!lengthKnown && points.length > 0 && <text x={TIMELINE_PAD_L} y={TIMELINE_PAD_T - 12} fontSize={12} fill="#514a40" fontFamily={CHART_FONT}>edits per interval (peak {maxActivity})</text>}
         <line x1={TIMELINE_PAD_L} y1={baseline} x2={chartW - TIMELINE_PAD_R} y2={baseline} stroke="#3d2f17" strokeWidth={1} />
         {lengthKnown ? <path className="length-area" d={areaPath} fill={`url(#${hatchId})`} stroke="none" /> : null}
         {lengthKnown ? <path className="length-curve" d={linePath} fill="none" stroke="#3d2f17" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" /> : null}
-        {knownPoints.length === 1 && !notable.some(point => point.seq === knownPoints[0]!.seq) && <circle className="length-single" cx={tx(knownPoints[0]!.t)} cy={ly(knownPoints[0]!.documentLength ?? 0)} r={3.5} fill="#3d2f17">
-          <title>{`${formatCharacters(knownPoints[0]!.documentLength)} after the first edit`}</title>
-        </circle>}
-        {notable.map((point) => {
-          const x = tx(point.t);
-          const y = markerY(point);
-          const r = point.isLargeInsert ? 5.5 : 4.5;
+        {axis.breaks.map((gap) => {
+          const x0 = TIMELINE_PAD_L + gap.x0;
+          const x1 = TIMELINE_PAD_L + gap.x1;
+          const held = lengthAt(gap.start);
           return (
-            <circle key={point.seq} cx={x} cy={y} r={r} fill={sourceFill(point.source)} stroke="#fbf8f2" strokeWidth={1.8}>
-              <title>{describeTimelinePoint(point)}</title>
-            </circle>
-          );
-        })}
-        {lengthKnown ? <text className="length-scale" x={TIMELINE_PAD_L} y={TIMELINE_PAD_T - 12} fontSize={12} fill="#514a40" fontFamily={CHART_FONT}>{formatCharacters(maxLength)}</text> : null}
-        {ticks.map((seconds) => {
-          const x = tx(seconds * 1000);
-          return (
-            <g key={`tick-${seconds}`}>
-              <line x1={x} y1={baseline} x2={x} y2={baseline + 5} stroke="#3d2f17" strokeWidth={1} />
-              <text x={x} y={baseline + 20} fontSize={12} fill="#5e554a" fontFamily={CHART_FONT} textAnchor={tickAnchor(x)} style={{ fontVariantNumeric: "tabular-nums" }}>{formatTimelineTick(seconds)}</text>
+            <g className="timeline-break" key={`break-${gap.start}`}>
+              <title>{`No edits for ${formatPauseLength(gap.end - gap.start)}`}</title>
+              <rect x={x0} y={TIMELINE_PAD_T - 4} width={x1 - x0} height={plotH + 12} fill="#fbf8f2" />
+              {held !== null && <line x1={x0} y1={ly(held)} x2={x1} y2={ly(held)} stroke="#3d2f17" strokeWidth={1.5} strokeDasharray="2 4" strokeLinecap="round" />}
+              <line x1={x0 + 2} y1={baseline + 6} x2={x0 + 8} y2={baseline - 6} stroke="#3d2f17" strokeWidth={1.2} />
+              <line x1={x1 - 8} y1={baseline + 6} x2={x1 - 2} y2={baseline - 6} stroke="#3d2f17" strokeWidth={1.2} />
             </g>
           );
         })}
-        <text x={chartW - TIMELINE_PAD_R} y={baseline + 38} fontSize={11} fill="#756b60" fontFamily={CHART_FONT} textAnchor="end">time since the session started</text>
+        {knownPoints.length === 1 && !notable.some(point => point.seq === knownPoints[0]!.seq) && <circle className="length-single" cx={tx(knownPoints[0]!.t)} cy={ly(knownPoints[0]!.documentLength ?? 0)} r={3.5} fill="#3d2f17">
+          <title>{`${formatCharacters(knownPoints[0]!.documentLength)} after the first edit`}</title>
+        </circle>}
+        {notable.map((point) => (
+          <circle key={point.seq} cx={tx(point.t)} cy={markerY(point)} r={point.isLargeInsert ? 5 : 4} fill={sourceFill(markerSource(point))} stroke="#fbf8f2" strokeWidth={1.5}>
+            <title>{describeTimelinePoint(point)}</title>
+          </circle>
+        ))}
+        {lengthKnown && lastStep ? <text className="length-scale" x={tx(lastStep.t)} y={ly(lastStep.length) - 10} fontSize={12} fill="#514a40" fontFamily={CHART_FONT}
+          textAnchor={tx(lastStep.t) > chartW / 2 ? "end" : "start"}>{formatCharacters(lastStep.length)}</text> : null}
+        {labels.map((label) => {
+          const x = TIMELINE_PAD_L + label.x;
+          return (
+            <g key={`${label.kind}-${label.x}`} className={`axis-label axis-label-${label.kind}`}>
+              {label.kind !== "break" && <line x1={x} y1={baseline} x2={x} y2={baseline + 5} stroke="#3d2f17" strokeWidth={1} />}
+              <text x={label.anchor === "start" ? TIMELINE_PAD_L + label.left : label.anchor === "end" ? TIMELINE_PAD_L + label.right : x} y={baseline + 20 + label.row * 16}
+                fontSize={label.kind === "break" ? 13 : 12} fill={label.kind === "break" ? "#6e665d" : "#5e554a"}
+                fontFamily={label.kind === "break" ? SERIF_FONT : CHART_FONT} fontStyle={label.kind === "break" ? "italic" : undefined}
+                textAnchor={label.anchor} style={{ fontVariantNumeric: "tabular-nums" }}>{label.text}</text>
+            </g>
+          );
+        })}
+        <text x={chartW - TIMELINE_PAD_R} y={baseline + 38 + secondRowH} fontSize={11} fill="#756b60" fontFamily={CHART_FONT} textAnchor="end">time since the session started</text>
       </svg>
       {lengthKnown && !lengthKnownThroughout && <div className="activity-strip" aria-label="Editing activity for the complete record">
         <p className="muted">All {points.length} edits over time; bar height is the number of edits per interval.</p>
         <svg viewBox={`0 0 ${chartW} 56`} role="img" aria-label="Edit counts over time">
-          {activity.filter(bin => bin.count > 0).map(bin => {
-            const height = Math.max(3, bin.count / maxActivity * 48);
-            return <rect className="activity-bar" key={bin.start} x={tx(bin.start)} y={52 - height}
-              width={Math.max(1, tx(bin.end) - tx(bin.start) - 1)} height={height} fill={`url(#${hatchId})`} stroke="#3d2f17" strokeWidth={0.8}>
-              <title>{`${bin.count} edits from ${formatDuration(bin.start)} to ${formatDuration(bin.end)}`}</title>
+          {activity.filter(column => column.count > 0).map(column => {
+            const height = Math.max(3, column.count / maxActivity * 48);
+            return <rect className="activity-bar" key={`${column.start}-${column.x0}`} x={TIMELINE_PAD_L + column.x0} y={52 - height}
+              width={Math.max(1, column.x1 - column.x0 - 1)} height={height} fill={`url(#${hatchId})`} stroke="#3d2f17" strokeWidth={0.8}>
+              <title>{`${column.count} edits from ${formatDuration(column.start)} to ${formatDuration(column.end)}`}</title>
             </rect>;
           })}
         </svg>
@@ -433,8 +408,6 @@ function EditTimeline({ record }: { record: RecordApiResponse }) {
         {notableSources.has("autocomplete") && <span><span className="dot source-autocomplete" /> autocomplete</span>}
         {notableSources.has("programmatic") && <span><span className="dot source-programmatic" /> programmatic</span>}
         {hasLargeInsert && <span><span className="dot large" /> large insertion</span>}
-        {hasLongPause && <span><span className="dot pause" /> long pause</span>}
-        {timing.signedFinish && (timing.beforeFirstEditMs > 0 || timing.afterLastEditMs > 0) && <span><span className="dot gap" /> no captured edits before the first edit or after the last</span>}
       </div>
     </section>
   );

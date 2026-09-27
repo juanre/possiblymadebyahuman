@@ -128,6 +128,8 @@ for (const width of [390, 1280]) {
     expect(geometry.coords).toHaveLength(6);
     expect(geometry.coords[1]).toBe(geometry.coords[3]);
     expect(geometry.coords[2]).toBe(geometry.coords[4]);
+    await expect(page.locator('.timeline-break')).toHaveCount(1);
+    await expect(page.locator('.axis-label-break')).toHaveText('60d');
     await expect(page.locator('.fp-overflow')).toHaveAttribute('data-count', '1');
     await expect(page.locator('.rhythm-overflow-summary')).toContainText('1 gap longer than 100 seconds');
     expect(await page.locator('.fp-bin').evaluateAll(bins => bins.reduce((sum, bin) => sum + Number(bin.dataset.count), 0))).toBe(0);
@@ -169,7 +171,7 @@ test('simultaneous edits remain visible in the explicitly labelled short-gap buc
 });
 
 
-test('sub-second waits at either end of a signed finish are not narrated', async ({page, request}) => {
+test('a signed finish is labelled at the end of the time axis', async ({page, request}) => {
   const record = await activityRecord(request, [{...ordinary(0, 0), t: 9}, {...ordinary(1, 1), t: 2000}]);
   record.manifest.format_version = '0.3';
   record.manifest.duration_ms = 2400;
@@ -178,8 +180,9 @@ test('sub-second waits at either end of a signed finish are not narrated', async
   await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
   await page.goto(`/${slug}`);
   await expect(page.locator('.chain-status.ok')).toContainText('Hash chain recomputed in your browser.');
-  await expect(page.locator('.timeline-chart')).toBeVisible();
-  await expect(page.locator('.signed-finish-summary')).toHaveCount(0);
+  await expect(page.locator('.axis-label-end')).toHaveText('signed at 2.4s');
+  await expect(page.locator('.timeline-break')).toHaveCount(0);
+  await expect(page.locator('.timeline-chart')).toHaveAttribute('aria-label', /Signed 400ms after the last edit/);
 });
 
 test('signed finish displays endpoint waits separately without extending the document-length curve', async ({page, request}) => {
@@ -193,10 +196,13 @@ test('signed finish displays endpoint waits separately without extending the doc
   await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
   await page.goto(`/${slug}`);
   await expect(page.locator('.chain-status.ok')).toContainText('Hash chain recomputed in your browser.');
-  await expect(page.locator('.signed-finish-summary')).toContainText('The final 60d 0h contains no captured edits');
-  await expect(page.locator('.signed-finish-summary')).toContainText('during the first 1.0s');
-  await expect(page.locator('.signed-finish-gap')).toBeVisible();
-  await expect(page.locator('.before-first-edit-gap')).toBeVisible();
+  // Sixty days between the last edit and signing are cut from the time axis
+  // and labelled; the one-second wait before the first edit stays to scale.
+  const cut = page.locator('.timeline-break');
+  await expect(cut).toHaveCount(1);
+  await expect(cut.locator('title')).toHaveText('No edits for 60d');
+  await expect(page.locator('.axis-label-break')).toHaveText('60d');
+  await expect(page.locator('.axis-label-end')).toHaveText('signed at 60d');
   const editingTime = page.locator('.record-fact').filter({hasText: 'Editing time'}).locator('dd');
   await expect(editingTime).toHaveText('60 days');
   const quickFacts = page.locator('.timing-counts');
@@ -205,17 +211,17 @@ test('signed finish displays endpoint waits separately without extending the doc
   await expect(quickFacts).toContainText('1.0s active, 0ms in pauses of 30 seconds or more');
   const geometry = await page.locator('.timeline-chart').evaluate(chart => {
     const line = chart.querySelector('.length-curve');
-    const gap = chart.querySelector('.signed-finish-gap');
-    return { lineEnd: line.getPointAtLength(line.getTotalLength()).x, gapStart: gap.x.baseVal.value, gapWidth: gap.width.baseVal.value, width: chart.viewBox.baseVal.width };
+    const cut = chart.querySelector('.timeline-break rect');
+    return { lineEnd: line.getPointAtLength(line.getTotalLength()).x, cutStart: cut.x.baseVal.value, cutWidth: cut.width.baseVal.value, width: chart.viewBox.baseVal.width };
   });
-  expect(geometry.lineEnd).toBeCloseTo(geometry.gapStart, 4);
-  expect(geometry.gapWidth).toBeGreaterThan(geometry.width / 2);
+  expect(geometry.lineEnd).toBeCloseTo(geometry.cutStart, 4);
+  expect(geometry.cutWidth).toBeLessThan(geometry.width / 10);
   // The exact same legacy duration is still usable but carries no finish seal.
   record.manifest.format_version = '0.2';
   record.manifest.record_hash = computeRecordHash(record.events, record.manifest.session_id, '0.2');
   await page.reload();
-  await expect(page.locator('.signed-finish-summary')).toHaveCount(0);
-  await expect(page.locator('.signed-finish-gap')).toHaveCount(0);
+  await expect(page.locator('.axis-label-break')).toHaveText('60d');
+  await expect(page.locator('.edit-timeline')).not.toContainText('signed at');
   await expect(quickFacts).toContainText('Reported duration');
   await expect(quickFacts).not.toContainText('Signed duration');
   await expect(editingTime).toHaveText('60 days (estimated)');

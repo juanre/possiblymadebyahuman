@@ -15,29 +15,196 @@ export type TimelinePoint = {
   source: string;
   documentLength: number | null;
   isLargeInsert: boolean;
-  isLongPause: boolean;
   delayFromPreviousMs: number;
 };
 
 export const LARGE_INSERT_CODEPOINTS = 50;
-export const LONG_PAUSE_MS = 30_000;
 
 export type ActivityBin = { start: number; end: number; count: number };
 
-// Activity is independent of document-length inference. A bounded histogram
-// remains useful for legacy rich-text records and very dense event logs.
-export function buildActivityBins(events: BufferMutation[], durationMs: number, maxBins = 80): ActivityBin[] {
-  if (events.length === 0) return [];
-  const duration = Math.max(1, durationMs, events.at(-1)?.t ?? 0);
-  const count = Math.max(1, Math.min(200, Math.floor(maxBins) || 1));
-  const bins = Array.from({ length: count }, (_, i) => ({
-    start: duration * i / count, end: duration * (i + 1) / count, count: 0,
-  }));
-  for (const event of events) {
-    const index = Math.min(count - 1, Math.max(0, Math.floor(event.t / duration * count)));
-    bins[index]!.count++;
+// Pauses at least this long are cut out of the edit timeline's time axis and
+// drawn as a short labelled break, so hours or days away do not squeeze the
+// writing itself into slivers.
+export const ELIDED_PAUSE_MS = 5 * 60_000;
+// Beyond this many, only the longest pauses are cut; the rest stay to scale.
+export const MAX_ELIDED_PAUSES = 12;
+const MIN_SPAN_PX = 8;
+
+export type TimeSpan = { start: number; end: number; x0: number; x1: number };
+export type TimeAxis = { spans: TimeSpan[]; breaks: TimeSpan[]; width: number; x: (t: number) => number };
+
+/**
+ * Map session time onto a horizontal axis of the given width. Stretches of
+ * writing share the width in proportion to their duration; each cut pause
+ * takes a fixed break width regardless of its length.
+ */
+export function buildTimeAxis(times: readonly number[], endMs: number, width: number, breakWidth = 28): TimeAxis {
+  const end = Math.max(0, endMs, times.at(-1) ?? 0);
+  const boundaries = [0, ...times, end];
+  const pauses: { start: number; end: number }[] = [];
+  for (let index = 1; index < boundaries.length; index++) {
+    const start = boundaries[index - 1]!, stop = boundaries[index]!;
+    if (stop - start >= ELIDED_PAUSE_MS) pauses.push({ start, end: stop });
   }
-  return bins;
+  const cut = pauses
+    .sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start)
+    .slice(0, MAX_ELIDED_PAUSES)
+    .sort((a, b) => a.start - b.start);
+
+  let ranges: { start: number; end: number }[] = [];
+  let cursor = 0;
+  for (const pause of cut) { ranges.push({ start: cursor, end: pause.start }); cursor = pause.end; }
+  ranges.push({ start: cursor, end });
+  // A cut wait at either end leaves an empty stretch with no edit in it.
+  const firstTime = times[0], lastTime = times.at(-1);
+  ranges = ranges.filter((range, index) => range.end > range.start
+    || (index === 0 ? firstTime === range.start : index === ranges.length - 1 ? lastTime === range.end : true));
+
+  const gapWidth = cut.length === 0 ? 0 : Math.min(breakWidth, width * 0.5 / cut.length);
+  const available = Math.max(0, width - cut.length * gapWidth);
+  const minSpan = ranges.length === 0 ? 0 : Math.min(MIN_SPAN_PX, available / ranges.length);
+  const total = ranges.reduce((sum, range) => sum + (range.end - range.start), 0);
+  const share = available - minSpan * ranges.length;
+
+  const spans: TimeSpan[] = [];
+  const breaks: TimeSpan[] = [];
+  const items = [...ranges.map(range => ({ ...range, kind: "span" as const })), ...cut.map(pause => ({ ...pause, kind: "break" as const }))]
+    .sort((a, b) => a.start - b.start || (a.kind === "break" ? 1 : -1));
+  let x = 0;
+  for (const item of items) {
+    const itemWidth = item.kind === "break" ? gapWidth
+      : minSpan + (total > 0 ? share * (item.end - item.start) / total : share / ranges.length);
+    const placed = { start: item.start, end: item.end, x0: x, x1: x + itemWidth };
+    (item.kind === "break" ? breaks : spans).push(placed);
+    x += itemWidth;
+  }
+
+  const locate = (list: TimeSpan[], t: number) => list.find(item => t >= item.start && t <= item.end);
+  const place = (item: TimeSpan, t: number) => item.end > item.start
+    ? item.x0 + (t - item.start) / (item.end - item.start) * (item.x1 - item.x0)
+    : (item.x0 + item.x1) / 2;
+  return {
+    spans,
+    breaks,
+    width,
+    x(t: number) {
+      const clamped = Math.min(end, Math.max(0, t));
+      const item = locate(spans, clamped) ?? locate(breaks, clamped);
+      return item ? place(item, clamped) : 0;
+    },
+  };
+}
+
+export type ActivityColumn = { start: number; end: number; count: number; x0: number; x1: number };
+
+// Activity is independent of document-length inference. Columns about
+// columnPx wide keep dense logs bounded, and none spans a cut pause.
+export function buildActivityColumns(events: BufferMutation[], axis: TimeAxis, columnPx = 10): ActivityColumn[] {
+  if (events.length === 0) return [];
+  const groups = axis.spans.map(span => {
+    const count = Math.max(1, Math.floor((span.x1 - span.x0) / columnPx));
+    return Array.from({ length: count }, (_, index) => ({
+      start: span.start + (span.end - span.start) * index / count,
+      end: span.start + (span.end - span.start) * (index + 1) / count,
+      count: 0,
+      x0: span.x0 + (span.x1 - span.x0) * index / count,
+      x1: span.x0 + (span.x1 - span.x0) * (index + 1) / count,
+    }));
+  });
+  for (const event of events) {
+    const spanIndex = Math.max(0, axis.spans.findIndex(span => event.t >= span.start && event.t <= span.end));
+    const span = axis.spans[spanIndex]!;
+    const columns = groups[spanIndex]!;
+    const index = span.end > span.start ? Math.floor((event.t - span.start) / (span.end - span.start) * columns.length) : 0;
+    columns[Math.min(columns.length - 1, Math.max(0, index))]!.count++;
+  }
+  return groups.flat();
+}
+
+export type TimeAxisLabel = { x: number; text: string; kind: "break" | "end" | "resume" | "tick"; left: number; right: number; anchor: "start" | "middle" | "end"; row: 0 | 1 };
+
+const LABEL_CHAR_PX = 7;
+const LABEL_GAP_PX = 12;
+const TICK_SPACING_PX = 72;
+const TICK_STEPS_SECONDS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400];
+
+function tickStepSeconds(minimumSeconds: number): number {
+  const step = TICK_STEPS_SECONDS.find(candidate => candidate >= minimumSeconds);
+  if (step !== undefined) return step;
+  const days = minimumSeconds / 86400;
+  const magnitude = 10 ** Math.floor(Math.log10(days));
+  return 86400 * ([1, 2, 5, 10].map(factor => factor * magnitude).find(candidate => candidate >= days) ?? 10 * magnitude);
+}
+
+/**
+ * Axis labels, in priority order: the length of each cut pause, the end of
+ * the session, its start, the time writing resumed after each cut, then
+ * regular ticks. A label is dropped when it would overlap one already placed,
+ * except a pause length or the end of the session, which move to a second
+ * row first.
+ */
+export function layoutTimeAxisLabels(axis: TimeAxis, options: { endPrefix?: string } = {}): TimeAxisLabel[] {
+  const candidates: Omit<TimeAxisLabel, "left" | "right" | "anchor" | "row">[] = [];
+  for (const gap of axis.breaks) candidates.push({ x: (gap.x0 + gap.x1) / 2, text: formatPauseLength(gap.end - gap.start), kind: "break" });
+  const end = Math.max(0, ...axis.spans.map(span => span.end), ...axis.breaks.map(gap => gap.end));
+  if (end > 0) candidates.push({ x: axis.x(end), text: `${options.endPrefix ?? ""}${formatTimelineTick(end / 1000)}`, kind: "end" });
+  if (axis.spans[0]?.start === 0) candidates.push({ x: axis.x(0), text: formatTimelineTick(0), kind: "tick" });
+  for (const span of axis.spans) {
+    if (axis.breaks.some(gap => gap.end === span.start)) candidates.push({ x: axis.x(span.start), text: formatTimelineTick(span.start / 1000), kind: "resume" });
+  }
+  for (const span of axis.spans) {
+    const widthPx = span.x1 - span.x0;
+    const seconds = (span.end - span.start) / 1000;
+    if (seconds <= 0 || widthPx <= 0) continue;
+    const step = tickStepSeconds(seconds * TICK_SPACING_PX / widthPx);
+    for (let tick = Math.ceil(span.start / 1000 / step) * step; tick * 1000 <= span.end; tick += step) {
+      candidates.push({ x: axis.x(tick * 1000), text: formatTimelineTick(tick), kind: "tick" });
+    }
+  }
+  const placed: TimeAxisLabel[] = [];
+  for (const candidate of candidates) {
+    const labelWidth = candidate.text.length * LABEL_CHAR_PX;
+    let anchor: TimeAxisLabel["anchor"] = "middle";
+    let left = candidate.x - labelWidth / 2;
+    if (left < 0) { anchor = "start"; left = Math.max(0, candidate.x); }
+    if (left + labelWidth > axis.width) { anchor = "end"; left = Math.min(candidate.x, axis.width) - labelWidth; }
+    const rows: (0 | 1)[] = candidate.kind === "break" || candidate.kind === "end" ? [0, 1] : [0];
+    for (const row of rows) {
+      const label = { ...candidate, anchor, left, right: left + labelWidth, row };
+      if (placed.some(other => (label.kind !== "break" && other.text === label.text) || (label.kind === "tick" && Math.abs(other.x - label.x) < 1))) break;
+      if (placed.some(other => other.row === row && label.left < other.right + LABEL_GAP_PX && other.left < label.right + LABEL_GAP_PX)) continue;
+      placed.push(label);
+      break;
+    }
+  }
+  return placed.sort((a, b) => a.x - b.x);
+}
+
+/** Elapsed session time for an axis tick. */
+export function formatTimelineTick(seconds: number): string {
+  if (seconds >= 86400) {
+    const hours = Math.floor(seconds / 3600) % 24;
+    return hours ? `${Math.floor(seconds / 86400)}d ${hours}h` : `${Math.floor(seconds / 86400)}d`;
+  }
+  if (seconds >= 3600) {
+    const minutes = Math.floor(seconds / 60) % 60;
+    return minutes ? `${Math.floor(seconds / 3600)}h ${minutes}m` : `${Math.floor(seconds / 3600)}h`;
+  }
+  // The end of a record shorter than a minute keeps its fraction of a second.
+  if (seconds < 60 && !Number.isInteger(seconds)) return `${seconds.toFixed(1)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** The length of a cut pause, to the minute. */
+export function formatPauseLength(ms: number): string {
+  const minutes = Math.floor(ms / 60_000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor(minutes / 60) % 24;
+  if (days) return hours ? `${days}d ${hours}h` : `${days}d`;
+  if (hours) return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`;
+  return `${minutes}m`;
 }
 
 export function verifyRecordChain(record: RecordApiResponse): VerificationState {
@@ -74,7 +241,6 @@ export function buildTimelinePoints(events: BufferMutation[]): TimelinePoint[] {
       source: event.source,
       documentLength,
       isLargeInsert: (event.ins_len ?? 0) >= LARGE_INSERT_CODEPOINTS,
-      isLongPause: delayFromPreviousMs >= LONG_PAUSE_MS,
       delayFromPreviousMs,
     };
   });

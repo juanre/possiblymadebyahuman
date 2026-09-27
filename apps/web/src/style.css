@@ -225,8 +225,6 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   border-top: 2px solid var(--pencil);
 }
 .dot.large { background: transparent; outline: 2px solid #202124; outline-offset: 1px; }
-.dot.pause { border-radius: 2px; background: #ead9b8; }
-.dot.gap { border-radius: 2px; background: #dce3e8; }
 
 /* Document check. */
 .check-unavailable { color: var(--pencil); font-weight: 600; margin: 0 0 12px; }
