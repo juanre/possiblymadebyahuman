@@ -51,6 +51,16 @@ prefixes. Lifecycle transitions drain writes before changing ownership or
 publication state. An abrupt failure can lose not-yet-durable events; normal
 close and exit drain them. Batch Lisp persistence remains synchronous.
 
+/write drafts amendment, 27 September 2026: the owner requires that
+`/write` keep several drafts, with their text saved only in the writer's
+browser, so a reload or crash never loses writing. Draft text lives in its own
+IndexedDB database (`pmbah.write.drafts.v1`), apart from the content-blind
+event journal, and is never uploaded, sent in checkpoints or logged. Each
+saved text is tagged with the session, event count and chain tip it
+corresponds to; a restored draft resumes without a capture gap only when that
+tag matches the journal, and otherwise its next edit starts after a gap. One
+tab at a time owns the drafts. Public records remain plaintext-free.
+
 ---
 
 ## 1. Product promise
@@ -331,7 +341,7 @@ All v0 producers record the writing process captured after a user starts a sessi
 
 - **Emacs** may enable `pmbah-mode` in a non-empty buffer. It records only mutations after capture starts, using Emacs' absolute positions and lengths for those later mutations. Its helper receives only process metadata (a private journal descriptor, producer info, capture context, duration), not inserted text, text hashes-for-anything-else, initial snapshots/baselines, or text replay fixtures. **Local transient-binding exception:** at sign time the helper may receive the active region when `use-region-p` is true, otherwise the whole buffer, *solely* to compute the approved content-blind text binding (the `canon-letters/0.1` commitment) locally via the shared `packages/format` implementation. The helper must discard that text without persisting, logging, replaying, uploading, or passing it onward; only the sealed binding object (`scheme`, `canonical_length`, `commitment`) and the record survive. The text never leaves the user's machine — this is a local-compute exception, not a storage-policy exception, and plaintext storage/upload remains forbidden.
 - **Browser extension** requires explicit start in an editor for a new independent session; existing text does not prevent starting. Only subsequent mutations are captured. No initial text or length baseline is imported, so a session started in a non-empty editor must preserve unknown total document length rather than infer an empty starting document. Explicit resumption or linked continuation may attach to a non-empty editor on the same site origin; missing edits remain unknown and are never reconstructed. It never enrolls another field by heuristic matching. An additional editor may explicitly join the same active document session; this is a user choice, not an automatic inference. Reload, full-document navigation, stop, and finish retire capture authorization. Historical local drafts remain stopped. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths. Normal extension publication includes a text binding without an opt-out checkbox. If its scope is unavailable or computation fails, offer cancellation or an explicit editing-activity-only fallback. At sign time, the content script may transiently read selected text in the active field/editor, or all current content of that field/editor when no in-field selection is available, solely to compute the content-blind binding commitment; only the binding object may cross to the service worker/upload. It must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
-- **`/write` first-party page** starts from an empty textarea and clears/discards the visible canvas independently of the persisted content-blind session record. At sign time, if binding is enabled, it binds selected text in the writing canvas, or all current canvas content when nothing is selected.
+- **`/write` first-party page** keeps a list of drafts. Each draft's text is saved only in the browser, in a database separate from the content-blind session journal, and restored when the draft is reopened; see the /write drafts amendment above. A new draft starts from an empty textarea. At sign time, if binding is enabled, it binds selected text in the writing canvas, or all current canvas content when nothing is selected.
 - **`packages/producer-core`** accepts only public mutation shapes and session metadata. It must not require plaintext, final text, inserted text, text hashes, or text replay to sign/verify a record.
 
 Tests and audits for each producer must cover this invariant before release.
@@ -936,7 +946,7 @@ Extension local retention and resumption:
 - Resume preserves session identity, event history, checkpoint credentials and original clock. The next real edit includes the intervening pause. If prior edits may have been missed, its position is unknown (`pos: null`), so the viewer does not invent a continuous document-length curve. Reattachment adds no event.
 - The extension and `/write` opt into `signedFinishTime`; active 0.2 drafts finish as 0.3 without changing event/checkpoint prefixes. Elapsed finish includes a pause followed only by publication. Old 0.1 drafts retain last-edit timing and failed legacy uploads retain their frozen version/hash. After resumption, a text check remains unavailable until another real edit; publication of editing activity alone is allowed.
 - Published records cannot be resumed or mutated in place. **Continue in chosen field** explicitly starts a new session with a sealed parent hash and only new mutations. Its clock begins at the prior signed finish; legacy saved anchors use their retained local upload time as an approximate boundary. Saved links remain. Reattachment never infers document identity or claims missed edits were captured.
-- Producer-core retains its configurable default TTL. The extension and `/write` disable automatic draft/link expiry. `/write` recovers logs and frozen uploads on reload without restoring writing, and serializes local storage ownership across tabs. Emacs uses durable private recovery files. All three producers now create format 0.3 signed finishes.
+- Producer-core retains its configurable default TTL. The extension and `/write` disable automatic draft/link expiry. `/write` restores each draft's text and history on reload, resuming without a gap only when the saved text matches the recorded chain tip, and serializes local storage ownership across tabs. Emacs uses durable private recovery files. All three producers now create format 0.3 signed finishes.
 
 ### 13.2 Emacs UI
 

@@ -1,6 +1,6 @@
 # possiblymadebyahuman
 
-`possiblymadebyahuman` records the *shape* of a writing process — operation positions, lengths, timing, and source classification — and presents it as a content-blind, hash-addressed process record. The record never contains, stores, or reconstructs the text that was written.
+`possiblymadebyahuman` records the *shape* of a writing process (where each edit landed, how large it was, when it happened, and whether it was typed or pasted) and publishes it as a content-blind, hash-addressed record at a short link. The record never contains, stores, or reconstructs the text that was written. Try it at [possiblymadebyahuman.com](https://possiblymadebyahuman.com), or see [an example record](https://possiblymadebyahuman.com/8MxUYwiQ3q).
 
 It is **not** a human/AI detector. It does not emit humanness verdicts, confidence percentages, or certification-style badges. The allowed claim is just: this record shows the shape of an editing process.
 
@@ -8,13 +8,13 @@ The public service is content-blind by default: uploaded records store mutation 
 
 `possiblymadebyahuman` is most certainly _not_ made by a human. It is instead made by a team of agents coordinating with [aweb.ai](https://aweb.ai). The human is only the instigator, and also somehow responsible for the result even though he has not actually looked at the code. His only real contribution has been the line drawing in the home page. He also plans to document how long it took from the first idea to the release of the site, as a note for posterity.
 
-## Current milestone
+## Status
 
-Release-readiness work is in progress. Implemented pieces include the content-blind record format, ingest API, immutable Postgres storage, analyzer facts, Docker/local Postgres stack, and Vite public record page. Remaining release work is tracked in aweb tasks; do not treat a local feature demo as release-ready until the release-readiness task is reviewed.
+The service runs at [possiblymadebyahuman.com](https://possiblymadebyahuman.com). It has three producers: the `/write` drafting page, the Emacs `pmbah-mode`, and a Chrome extension. The architecture and milestone boundaries live in [`docs/sot.md`](docs/sot.md); open work is tracked in aweb tasks and [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues).
 
 ## Producer installation docs
 
-- First-party browser drafting page: `/write` in a running service.
+- First-party browser drafting page: [`/write`](https://possiblymadebyahuman.com/write), which keeps several drafts in the writer's browser.
 - Browser extension packaging/release details: [`docs/browser-extension-release.md`](docs/browser-extension-release.md) and [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md).
 - Emacs producer installation and troubleshooting: [`producers/emacs/README.md`](producers/emacs/README.md).
 

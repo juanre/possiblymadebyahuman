@@ -67,20 +67,21 @@ test("browser extension explicitly starts in existing text without importing it 
   assert.match(canary, /FieldEntry type carries no text-bearing string field/);
 });
 
-test("/write starts empty and has no retained-text audit", async () => {
-  const page = await text("apps/web/src/write-page.tsx");
+test("/write drafts start empty and keep their text only in the browser drafts database", async () => {
+  const shell = await text("apps/web/src/write-page.tsx");
+  const editor = await text("apps/web/src/draft-editor.tsx");
   const audit = await text("tests/write-page-audit.test.mjs");
   const browser = await text("tests/browser/write-page.spec.mjs");
+  const sot = await text("docs/sot.md");
 
-  // The /write page renders a blank, placeholderless textarea — the empty
-  // start is the invitation. The empty-start invariant is structurally
-  // enforced by the producer-core eligibility policy and the explicit
-  // textarea reset on upload; this audit anchors on those, not on placeholder
-  // copy. The `aria-label="Writing canvas"` is the stable a11y anchor.
-  assert.match(page, /aria-label="Writing canvas"/);
-  assert.match(page, /textareaRef\.current\.value = ""/);
+  // A new draft is an empty row; its text is restored only from the drafts
+  // database, which the audit keeps apart from the content-blind journal.
+  assert.match(editor, /aria-label="Writing canvas"/);
+  assert.match(shell, /name: null, text: "",/);
   assert.match(audit, /does not retain or name plaintext snapshots/);
+  assert.match(audit, /keeps draft text only in its own drafts database, never in the event journal/);
   assert.match(browser, /uploads no plaintext/);
+  assert.match(sot, /\/write drafts amendment/);
 });
 
 test("producer-core contract excludes plaintext, text hashes, and replay", async () => {

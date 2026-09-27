@@ -34,7 +34,7 @@ Oh well. It cannot be done but we are doing it anyway. You can at least assert t
 
 </div>
 
-<p class="home-pitch">You write — in your browser, on <a href="/write">/write</a>, or in <a href="/docs/emacs/">Emacs</a>. We record the shape of your editing as you go, sign it with a hash chain, and give you a short URL anyone can check.</p>
+<p class="home-pitch">You write in your browser on <a href="/write">/write</a>, or in <a href="/docs/emacs/">Emacs</a>. We record the shape of your editing as you go, sign it with a hash chain, and give you a short URL anyone can check. <a href="/8MxUYwiQ3q">Here is one</a>.</p>
 
 <p class="home-closer">Think of it as a reverse Turing test.<br>This is what it's come to!</p>
 

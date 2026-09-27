@@ -1,30 +1,45 @@
 ---
 title: "Write in the browser"
-summary: "Use the first-party drafting page when you want a no-install PMBAH record for text written inside that page."
+summary: "Use the drafting page to write, keep several drafts in your browser, and publish a writing record when a piece is ready."
 group: "Write a record"
 weight: 1
 ---
 
-The `/write` page is the no-install producer. It gives you an empty drafting canvas, records content-blind edit events from that canvas, and signs/uploads a PMBAH record when you choose **sign** and confirm with **sign & upload**. You can keep editing after signing; signing again produces a new record covering the whole writing process so far.
+The [drafting page](/write) needs no installation. Write there, and it records how the text was edited: when each edit happened, where it landed and how large it was. When a piece is ready, sign it to publish that record at a short link you can share.
 
-Your writing is not saved. Copy it before closing or refreshing the page. Uploading saves the process record, not the canvas text. A failed upload keeps the canvas frozen so retry sends the same signed record.
+## Drafts
 
-What it captures:
+`/write` keeps a list of your drafts. Each draft is saved in this browser as you type, so you can close the tab, reload, or come back months later and carry on. Drafts have no automatic expiry; they stay until you delete them.
 
-- mutation timing and edit shape from the `/write` textarea;
-- Unicode codepoint positions and lengths where the browser exposes enough input detail;
-- server-observed process checkpoints for the same event hash chain.
+The draft's words are saved only in this browser. They are never sent to the service. Clearing your browser's site data, using a private window, or switching to another browser or device means those drafts are not there. If the browser warns that it may clear saved data when it runs short of space, keep a copy of anything important.
 
-What it does not capture:
+A draft is named after its first line until you rename it. Names are private to this browser and are not part of any published record.
 
-- document text;
-- text from other browser tabs or sites;
-- text you wrote before opening the empty canvas.
+One tab at a time works with your drafts. If they are open in another tab, close that tab and try again.
 
-For arbitrary websites, use the browser extension producer. The `/write` page is intentionally scoped to text written inside the first-party drafting page.
+## What is recorded
 
-The capture context `/write` uploads is fixed and non-identifying: the surface `web-draft`, the label "First-party drafting page", and the page's own URL with no query string. There is nothing to review or redact, which is why the sign sheet does not show one.
+- when each edit happened, and how long you paused between edits;
+- where each edit landed and how many characters it inserted or deleted, where the browser reports enough detail to measure it;
+- whether an edit was typed, pasted, cut, dropped, or came from composition input, autocomplete or an unknown source;
+- server-observed checkpoints: while you write, the page sends the service the number of recorded edits and a hash of them, so the service can confirm when it saw the writing unfold.
 
-## Binding the document when you sign
+The record never contains the text. It does not capture other tabs or websites; for those, use the [browser extension](/docs/browser-extension/) or [Emacs](/docs/emacs/).
 
-When you choose **sign**, you can also **bind** the document: commit the record to the specific text you wrote, so a reader can later check that a document is the one signed. Binding is on by default; you can opt out and sign the process only. If text is selected in the writing canvas, `/write` binds that selection; otherwise it binds all current canvas content. The binding is computed in your browser and only a content-blind commitment is uploaded; the text never leaves the page. See [Bind and check a document](/docs/checking-a-document/) for what a later match does and does not mean.
+When you return to a draft, the page checks that the saved text is exactly what the recorded edits produced. If it is, the record continues seamlessly. If it is not (for example, the browser closed before the last edit was saved), the record marks a gap at your next edit instead of pretending the writing was continuous.
+
+## Signing and publishing
+
+Choose **Sign** and confirm with **Sign & publish**. The signed record includes the time from the start of the draft to the moment you publish, including pauses.
+
+Publishing can also let readers check a copy of the text against the record. This is on by default. The page computes a salted fingerprint of the selected text, or of the whole draft if nothing is selected, and publishes only that fingerprint. Anyone can test guesses of the wording against it, so short or predictable text can be guessed. See [Bind and check a document](/docs/checking-a-document/) for what a match means.
+
+If publishing fails, the signed record stays saved in this browser, and **Retry publishing** sends exactly the same record.
+
+After publishing, the draft keeps its link. Choose **Keep writing** to add to it: your next edits become a new record that names the earlier one, and the earlier link never changes.
+
+The published record carries a fixed description of where it was written: "First-party drafting page" and the address of `/write`. It carries no draft names or text.
+
+## Deleting a draft
+
+**Delete draft** removes the draft's text and editing history from this browser. Records you already published stay online; their links are no longer listed in the draft list, so copy any link you want to keep first.

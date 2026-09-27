@@ -13,7 +13,7 @@ Binding does not establish that the recorded edits produced the selected text. T
 
 In `/write`, the browser extension, and Emacs, signing can **bind the document**:
 
-- Browser extension 0.3.1 includes binding when you confirm publication. If the text-check scope is unavailable or its hash cannot be computed, it offers cancellation or explicit publication of editing activity only.
+- The browser extension includes binding when you confirm publication. If the text-check scope is unavailable or its hash cannot be computed, it offers cancellation or explicit publication of editing activity only.
 - `/write` and Emacs enable binding by default and let you opt out to sign the **process only** (no document bound).
 - The text being bound is producer-specific:
   - `/write`: selected text in the writing canvas if there is a selection; otherwise all current canvas content.

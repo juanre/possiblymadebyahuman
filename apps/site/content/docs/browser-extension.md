@@ -5,7 +5,7 @@ group: "Write a record"
 weight: 3
 ---
 
-This guide describes extension source **0.3.4**, which supports starting in fields that already contain text. It requires the **0.3.3 or newer API and viewer**, including database migration **005**, for resumable publication. Developer-mode ZIP packages are distributed through [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases); Chrome Web Store availability is not confirmed. Check the package version before installing.
+The extension records the editors you choose on any website: a comment box, a forum reply, the body of an email. Until it is available in the Chrome Web Store, it is distributed as a ZIP package on [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases).
 
 ## Install or update
 
@@ -33,7 +33,7 @@ Choose **Finish & get link**. The review identifies the draft being finished; mo
 
 Publishing includes a text check. The scope appears separately as **Selected text** or **Whole field**. It checks the text present when you finish, which may include text written before capture started; it does not claim that earlier writing was captured. If the selection changes before confirmation, review the updated scope and confirm again. A match does not establish exact text equality, authorship, or that these edits produced that text. The check is public and permits wording guesses; it is not encryption.
 
-Choose **Confirm & publish** to stop capture and publish. For a new 0.3 record, signed duration includes elapsed time up to this finish action, including time away before finishing. It is a client claim, not evidence that the server watched the whole interval. The viewer separately shows server-observed span and intervals with no captured edits.
+Choose **Confirm & publish** to stop capture and publish. The signed duration includes elapsed time up to this finish action, including time away before finishing. It is a client claim, not evidence that the server watched the whole interval. The viewer separately shows server-observed span and intervals with no captured edits.
 
 The result shows the complete URL, **Open record** and **Copy link**. Copying happens only when you choose it. If copying fails, select the visible URL and copy it yourself. Choose **Done** to dismiss the result; its link remains in saved history.
 
@@ -41,11 +41,11 @@ If the text-check scope is unavailable or its hash cannot be computed, nothing i
 
 ## Stop and return later
 
-**Stop** pauses capture and keeps the unfinished draft. It does not publish or compute a text check. To return later—even after months—click its field, select the draft in the panel and choose **Resume in chosen field**. The field may already contain text; resumption is restricted to the same site origin. You choose which draft belongs there; PMBAH does not infer document identity from similar fields.
+**Stop** pauses capture and keeps the unfinished draft. It does not publish or compute a text check. To return later, even after months, click its field, select the draft in the panel and choose **Resume in chosen field**. The field may already contain text; resumption is restricted to the same site origin. You choose which draft belongs there; PMBAH does not infer document identity from similar fields.
 
-Resume keeps the original session and clock. The next captured edit includes the time away, and a 0.3 finish includes the pause even if you return only to publish. Edits made while capture was stopped are not recovered. The document-length curve stops where measurements no longer establish it; the extension does not pretend the text was unchanged during the pause.
+Resume keeps the original session and clock. The next captured edit includes the time away, and the signed finish includes the pause even if you return only to publish. Edits made while capture was stopped are not recovered. The document-length curve stops where measurements no longer establish it; the extension does not pretend the text was unchanged during the pause.
 
-If you finish immediately after resuming without another captured edit, you can publish the earlier editing activity, but cannot attach a check of the current field text. To include that check, resume again and make an edit before finishing. Older format 0.1 drafts retain their last-edit timing; failed uploads of older records also keep their original format and hash. The new signed-finish behavior does not change existing records, `/write`, or the Emacs producer.
+If you finish immediately after resuming without another captured edit, you can publish the earlier editing activity, but cannot attach a check of the current field text. To include that check, resume again and make an edit before finishing. Records you already published never change.
 
 Reloading or navigating to a new page document ends capture authorization. Typing afterward does not automatically start or resume a session. The website must preserve your text: PMBAH does not store or restore your words.
 
@@ -61,6 +61,6 @@ To start an independent record, choose **Start writing record** in the intended 
 
 **Saved records** is last and collapsed by default. Expand it to search by private name, site, date or link, and page through older entries. Each row has Open/Copy actions and expandable details. **Export all links** downloads the complete saved-link list as JSON, including private names and site information; it does not export document text or unfinished drafts.
 
-Drafts and saved links have no automatic expiry or age-based eviction. **Discard draft**, **Remove saved link** and **Remove all saved links** are explicit local removals. Removing a saved link does not delete the public record. Export a backup before uninstalling or clearing browser data; history belongs to this browser and is not account-synced. Previously expired links cannot be restored from missing local data.
+Drafts and saved links have no automatic expiry or age-based eviction. **Discard draft**, **Remove saved link** and **Remove all saved links** are explicit local removals. Removing a saved link does not delete the public record. Export a backup before uninstalling or clearing browser data; history belongs to this browser and is not account-synced.
 
-Authenticated Gmail and other complex sites still need acceptance testing with this candidate. Report a problem through [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues), including the extension version and the action that failed; do not post private writing.
+If an editor does not record correctly, report a problem through [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues), including the extension version and the action that failed; do not post private writing.
