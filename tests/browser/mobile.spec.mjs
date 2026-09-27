@@ -97,7 +97,7 @@ test("keyboard focus draws a visible ring on record page links", async ({ page }
   expect(focused.outlineWidth).toBeGreaterThan(0);
 });
 
-for (const path of ["/docs/privacy/", "/docs/checking-a-document/", "/docs/server-observed-commitments/", "/docs/verification/"]) {
+for (const path of ["/docs/browser-extension/", "/docs/privacy/", "/docs/checking-a-document/", "/docs/server-observed-commitments/", "/docs/verification/"]) {
   test(`Hugo ${path} fits a phone viewport`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(path);

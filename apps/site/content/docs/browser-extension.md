@@ -1,27 +1,37 @@
 ---
 title: "Use the browser extension"
-summary: "Choose an editor, keep a draft, and publish a writing record with a shareable link."
+summary: "Record your writing in the text boxes you already use, and publish it with a shareable link."
 group: "Write a record"
-weight: 3
+weight: 1
 ---
 
-The extension records the editors you choose on any website: a comment box, a forum reply, the body of an email. Until it is available in the Chrome Web Store, it is distributed as a ZIP package on [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases).
+The possiblymadebyahuman extension for Chrome records your writing in the text boxes you already use: a comment box, a forum reply, the body of an email. It records only the editor you choose, and only the shape of your editing; your words stay in the page. When you finish, it publishes a writing record at a short link you can share.
+
+Until it is available in the Chrome Web Store, install it from the ZIP package on [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases).
+
+## Quick start
+
+1. [Install the extension](#install-or-update) and pin **possiblymadebyahuman** in Chrome's toolbar.
+2. Right-click the text box you want to write in and choose **Start writing record**. The extension's side panel opens.
+3. Write as you normally would.
+4. In the side panel, choose **Finish & get link**, review what will be public, and choose **Confirm & publish**.
+5. Choose **Copy link** and share it.
 
 ## Install or update
 
-Use Chrome 120 or newer. Extract the ZIP. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked** on the extracted directory. Pin PMBAH in Chrome's toolbar, then reload any page that was already open.
+Use Chrome 120 or newer. Extract the ZIP. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked** on the extracted directory. Pin **possiblymadebyahuman** in Chrome's toolbar, then reload any page that was already open.
 
-To update an unpacked installation, replace its files in the same directory and choose **Reload** on its `chrome://extensions` card. Keep only one enabled PMBAH installation; adding a second extension does not stop the old version. Reload already-open pages after the update.
+To update an unpacked installation, replace its files in the same directory and choose **Reload** on its `chrome://extensions` card. Keep only one enabled possiblymadebyahuman installation; adding a second extension does not stop the old version. Reload already-open pages after the update.
 
 ## Start only where you choose
 
-Right-click an **editor** and choose **Start writing record**. You can also focus the editor and use **Alt+Shift+W**, or open PMBAH from the toolbar and choose **Start in focused editor**. Shortcuts are configurable at `chrome://extensions/shortcuts`.
+Right-click an **editor** and choose **Start writing record**. You can also focus the editor and use **Alt+Shift+W**, or click the extension's toolbar icon to open its side panel and choose **Start in focused editor**. Shortcuts are configurable at `chrome://extensions/shortcuts`.
 
 You can start with text already in the field. The record captures edits from that point onward; it does not import earlier text or reconstruct how it was written. The editing timeline still shows later activity, but the total document length is unknown when capture starts partway through.
 
 Opening the panel or focusing a field does not start capture. Other fields remain inactive. Editors can be text fields or supported rich-text areas on different sites; this is not limited to email. In an email, the body, recipient and subject fields are separate: choose the one you intend to work in.
 
-The panel's **This editor** section follows the focused editor in the active tab of that browser window. It shows the matching draft or tells you that the field has no active writing record. **Other drafts** remain below. No label or controls cover the webpage.
+The side panel's **This editor** section follows the focused editor in the active tab of that browser window. It shows the matching draft or tells you that the field has no active writing record. **Other drafts** remain below. No label or controls cover the webpage.
 
 Each draft gets a name based on its site, available field label and a distinguishing number. Choose **Rename** to give it a private name. This name stays in your browser and is separate from the **Public label** reviewed before publication. Field contents are not read to invent a name.
 
@@ -41,13 +51,13 @@ If the text-check scope is unavailable or its hash cannot be computed, nothing i
 
 ## Stop and return later
 
-**Stop** pauses capture and keeps the unfinished draft. It does not publish or compute a text check. To return later, even after months, click its field, select the draft in the panel and choose **Resume in chosen field**. The field may already contain text; resumption is restricted to the same site origin. You choose which draft belongs there; PMBAH does not infer document identity from similar fields.
+**Stop** pauses capture and keeps the unfinished draft. It does not publish or compute a text check. To return later, even after months, click its field, select the draft in the panel and choose **Resume in chosen field**. The field may already contain text; resumption is restricted to the same site origin. You choose which draft belongs there; the extension does not infer document identity from similar fields.
 
 Resume keeps the original session and clock. The next captured edit includes the time away, and the signed finish includes the pause even if you return only to publish. Edits made while capture was stopped are not recovered. The document-length curve stops where measurements no longer establish it; the extension does not pretend the text was unchanged during the pause.
 
 If you finish immediately after resuming without another captured edit, you can publish the earlier editing activity, but cannot attach a check of the current field text. To include that check, resume again and make an edit before finishing. Records you already published never change.
 
-Reloading or navigating to a new page document ends capture authorization. Typing afterward does not automatically start or resume a session. The website must preserve your text: PMBAH does not store or restore your words.
+Reloading or navigating to a new page document ends capture authorization. Typing afterward does not automatically start or resume a session. The website must preserve your text: the extension does not store or restore your words.
 
 ## Continue a saved record
 
