@@ -75,7 +75,6 @@ export function DraftEditor({ registry, store, draft, createSession, onDraftChan
   const [bindDocument, setBindDocument] = useState(true);
   const [canBind, setCanBind] = useState(false);
   const signDialogRef = useRef<HTMLDialogElement | null>(null);
-  const signButtonRef = useRef<HTMLButtonElement | null>(null);
 
   // Draft text is written after the events it corresponds to, so a saved
   // tag never names events that are not durable. If the journal cannot be
@@ -84,16 +83,15 @@ export function DraftEditor({ registry, store, draft, createSession, onDraftChan
     let savedTag = tag;
     try { await registry.persist(); }
     catch { savedTag = null; }
-    const next = { ...draftRef.current, text, text_tag: savedTag, updated_ms: Date.now() };
-    await store.put(next);
-    draftRef.current = next;
-    onDraftChange(next);
+    const changes = { text, text_tag: savedTag, updated_ms: Date.now() };
+    if (!(await store.update(draftRef.current.draft_id, changes))) return;
+    draftRef.current = { ...draftRef.current, ...changes };
+    onDraftChange(draftRef.current);
   }), [onDraftChange, registry, store]);
 
   const saveText = useCallback((snapshot: SavedText) => {
     setSaveState({ kind: "saving" });
-    textWriter.schedule(snapshot);
-    void textWriter.flush().then(
+    textWriter.schedule(snapshot).then(
       () => { if (!textWriter.hasPending()) setSaveState({ kind: "saved" }); },
       error => setSaveState({ kind: "failed", reason: errorText(error) }),
     );
@@ -198,6 +196,9 @@ export function DraftEditor({ registry, store, draft, createSession, onDraftChan
     };
   }, [status, textWriter]);
 
+  // Leaving the editor for the drafts list saves at once.
+  useEffect(() => () => { void textWriter.flush().catch(() => undefined); }, [textWriter]);
+
   const signAndPublish = useCallback(async () => {
     if (!session) return;
     if (capturePending.current?.()) {
@@ -279,10 +280,8 @@ export function DraftEditor({ registry, store, draft, createSession, onDraftChan
     setConfirming(true);
   }, []);
 
-  const closeSignDialog = useCallback(() => {
-    setConfirming(false);
-    signButtonRef.current?.focus();
-  }, []);
+  // Closing the native dialog returns focus to the control that opened it.
+  const closeSignDialog = useCallback(() => setConfirming(false), []);
 
   useEffect(() => {
     const dialog = signDialogRef.current;
@@ -296,10 +295,10 @@ export function DraftEditor({ registry, store, draft, createSession, onDraftChan
     try {
       const next = registry.continueFrom(session.session_id);
       await registry.persist();
-      const row = { ...draftRef.current, session_ids: [...draftRef.current.session_ids, next.session_id], updated_ms: Date.now() };
-      await store.put(row);
-      draftRef.current = row;
-      onDraftChange(row);
+      const changes = { session_ids: [...draftRef.current.session_ids, next.session_id], updated_ms: Date.now() };
+      if (!(await store.update(draftRef.current.draft_id, changes))) throw new Error("this draft is no longer in this browser");
+      draftRef.current = { ...draftRef.current, ...changes };
+      onDraftChange(draftRef.current);
       signedDraft.current = null;
     } catch (error) {
       setStatus("storage_error");
@@ -347,11 +346,10 @@ export function DraftEditor({ registry, store, draft, createSession, onDraftChan
   const rename = useCallback(async (value: string) => {
     setRenaming(false);
     const name = value.trim() || null;
-    const row = { ...draftRef.current, name };
     try {
-      await store.put(row);
-      draftRef.current = row;
-      onDraftChange(row);
+      if (!(await store.update(draftRef.current.draft_id, { name }))) return;
+      draftRef.current = { ...draftRef.current, name };
+      onDraftChange(draftRef.current);
     } catch (error) {
       setSaveState({ kind: "failed", reason: errorText(error) });
     }
@@ -363,12 +361,16 @@ export function DraftEditor({ registry, store, draft, createSession, onDraftChan
       ? "Delete this draft from this browser? Its published records stay online; their links will no longer be listed here."
       : "Delete this draft? Its writing and editing history will be removed from this browser.";
     if (!window.confirm(question)) return;
-    try { await onDelete(draftRef.current); }
+    try {
+      // A save still in flight must land before deletion, never after it.
+      await textWriter.flush().catch(() => undefined);
+      await onDelete(draftRef.current);
+    }
     catch (error) {
       setStatus("storage_error");
       setMessage(`The draft could not be deleted: ${errorText(error)}. Your writing is still here.`);
     }
-  }, [draft.session_ids, onDelete, registry]);
+  }, [draft.session_ids, onDelete, registry, textWriter]);
 
   const eventCount = session ? sessionEventCount(session) : 0;
   const elapsed = session && eventCount > 0 ? Math.max(0, sessionLastEventTime(session)) : 0;
@@ -481,7 +483,6 @@ export function DraftEditor({ registry, store, draft, createSession, onDraftChan
         <button className="ml-button" type="button" disabled={status === "signing"} onClick={deleteDraft}>Delete draft</button>
         {status === "storage_error" ? <button className="write-button write-button-primary" type="button" onClick={retrySaving}>Retry saving</button> : !uploaded ? (
           <button
-            ref={signButtonRef}
             className="write-button write-button-primary"
             type="button"
             disabled={!canSign && !canRetry}

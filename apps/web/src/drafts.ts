@@ -140,6 +140,18 @@ export class DraftStore {
     await done;
   }
 
+  /** Changes a stored draft; a draft deleted meanwhile stays deleted. */
+  async update(draft_id: string, changes: Partial<Omit<DraftRow, "draft_id">>): Promise<boolean> {
+    const database = await this.#open();
+    const transaction = database.transaction("drafts", "readwrite", { durability: "strict" });
+    const done = complete(transaction);
+    const store = transaction.objectStore("drafts");
+    const current = await result(store.get(draft_id)) as DraftRow | undefined;
+    if (current) store.put({ ...current, ...changes, draft_id });
+    await done;
+    return current !== undefined;
+  }
+
   async delete(draft_id: string): Promise<void> {
     const database = await this.#open();
     const transaction = database.transaction("drafts", "readwrite", { durability: "strict" });
@@ -150,33 +162,48 @@ export class DraftStore {
 }
 
 /**
- * Serializes writes of a frequently changing value: only the latest pending
- * value is written, writes never overlap, and a failed value stays pending
- * until a later flush succeeds or a newer value replaces it.
+ * Serializes writes of a frequently changing value: only the latest value
+ * scheduled within `delayMs` is written, writes never overlap, and a failed
+ * value stays pending until a later write succeeds or a newer value replaces
+ * it. Each schedule settles when the value it scheduled, or a newer one, has
+ * been written, and rejects if that write fails.
  */
 export function createCoalescingWriter<T>(write: (value: T) => Promise<void>, delayMs = 400) {
   let pending: { value: T } | null = null;
   let running: Promise<void> = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let waiters: { resolve: () => void; reject: (error: unknown) => void }[] = [];
   const drain = (): Promise<void> => {
     running = running.catch(() => undefined).then(async () => {
-      while (pending) {
-        const next = pending;
-        pending = null;
-        try { await write(next.value); }
-        catch (error) {
-          pending ??= next;
-          throw error;
+      const settling = waiters;
+      waiters = [];
+      try {
+        while (pending) {
+          const next = pending;
+          pending = null;
+          try { await write(next.value); }
+          catch (error) {
+            pending ??= next;
+            throw error;
+          }
         }
+        for (const waiter of settling) waiter.resolve();
+      } catch (error) {
+        for (const waiter of settling) waiter.reject(error);
+        throw error;
       }
     });
     return running;
   };
   return {
-    schedule(value: T) {
+    schedule(value: T): Promise<void> {
       pending = { value };
       clearTimeout(timer);
+      const settled = new Promise<void>((resolve, reject) => { waiters.push({ resolve, reject }); });
+      // Callers may ignore the outcome; a failed value stays pending either way.
+      settled.catch(() => undefined);
       timer = setTimeout(() => { void drain().catch(() => undefined); }, delayMs);
+      return settled;
     },
     flush(): Promise<void> {
       clearTimeout(timer);

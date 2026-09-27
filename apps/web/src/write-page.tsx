@@ -214,9 +214,9 @@ export function WritePage() {
     const draft = editorDraftRef.current;
     if (!draft) throw new Error("This draft is no longer in this browser.");
     const record = await newSession(options);
-    const row = { ...draft, session_ids: [...draft.session_ids, record.session_id], text_tag: null };
-    await store.put(row);
-    replaceDraft(row);
+    const changes = { session_ids: [...draft.session_ids, record.session_id], text_tag: null };
+    if (!(await store.update(draft.draft_id, changes))) throw new Error("This draft is no longer in this browser.");
+    replaceDraft({ ...draft, ...changes });
     return record;
   }, [newSession, replaceDraft, store]);
   const retryStorage = useCallback(() => setAttempt(value => value + 1), []);

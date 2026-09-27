@@ -116,3 +116,31 @@ test("a failed coalesced write is reported and the value stays pending for retry
   await writer.flush();
   assert.deepEqual(written, ["draft"]);
 });
+
+test("saving text updates an existing draft and never recreates a deleted one", async () => {
+  const store = freshStore();
+  await store.put(draft({ draft_id: "kept", text: "one" }));
+  assert.equal(await store.update("kept", { text: "two", updated_ms: 2 }), true);
+  assert.equal((await store.get("kept")).text, "two");
+  await store.delete("kept");
+  assert.equal(await store.update("kept", { text: "late save", updated_ms: 3 }), false);
+  assert.equal(await store.get("kept"), undefined);
+});
+
+test("a scheduled value settles after the debounced write and reports its failure", async () => {
+  const written = [];
+  let fail = false;
+  const writer = createCoalescingWriter(async value => {
+    if (fail) throw new Error("disk full");
+    written.push(value);
+  }, 10);
+  const first = writer.schedule("a");
+  const second = writer.schedule("b");
+  assert.equal(writer.hasPending(), true);
+  await Promise.all([first, second]);
+  assert.deepEqual(written, ["b"]);
+  assert.equal(writer.hasPending(), false);
+  fail = true;
+  await assert.rejects(writer.schedule("c"), /disk full/);
+  assert.equal(writer.hasPending(), true);
+});

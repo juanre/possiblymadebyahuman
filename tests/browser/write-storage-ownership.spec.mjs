@@ -106,6 +106,7 @@ test("a new draft starts an exact empty capture without an invented gap and keep
   await page.getByRole("button", { name: "New draft" }).click();
   await expect(canvas).toHaveValue("");
   await canvas.pressSequentially("n");
+  await expect(page.getByRole("status", { name: "Save state" })).toHaveText("Saved in this browser");
   await expect.poll(async () => (await sessions(page)).find(session => session.session_id !== first.session_id)?.events).toMatchObject([
     { seq: 0, op: "insert", pos: 0, ins_len: 1, del_len: 0 },
   ]);
