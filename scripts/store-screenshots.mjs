@@ -205,7 +205,7 @@ async function main() {
     await record.waitForTimeout(800);
     await record.screenshot({ path: join(screenshotsDir, "4-record.png") });
 
-    await record.getByRole("heading", { name: "Quick facts" }).evaluate(heading => window.scrollTo(0, heading.getBoundingClientRect().top + window.scrollY - 12));
+    await record.getByRole("heading", { name: "Edit timeline" }).evaluate(heading => window.scrollTo(0, heading.getBoundingClientRect().top + window.scrollY - 12));
     await record.waitForTimeout(300);
     await record.screenshot({ path: join(screenshotsDir, "5-timeline.png") });
     await promoTile(composer);
