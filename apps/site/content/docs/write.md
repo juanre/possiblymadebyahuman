@@ -2,10 +2,12 @@
 title: "Write in the browser"
 summary: "Use the drafting page to write, keep several drafts in your browser, and publish a writing record when a piece is ready."
 group: "Write a record"
-weight: 1
+weight: 2
 ---
 
 The [drafting page](/write) needs no installation. Write there, and it records how the text was edited: when each edit happened, where it landed and how large it was. When a piece is ready, sign it to publish that record at a short link you can share.
+
+To record writing in the text boxes of other websites, such as comments, forum replies or email, use the [browser extension](/docs/browser-extension/).
 
 ## Drafts
 
