@@ -19,10 +19,12 @@ const requiredDocPages = [
   "routing.md",
   "server-observed-commitments.md",
   "emacs.md",
+  "browser-extension.md",
 ];
 
 const sectionsCoveringProductPromise = [
-  { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/write", "/docs/emacs/"] },
+  { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/docs/browser-extension/", "/write", "/docs/emacs/"] },
+  { file: "docs/browser-extension.md", needs: ["Quick start", "Start writing record", "Finish & get link", "possiblymadebyahuman"] },
   { file: "docs/emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open a writing buffer", "length-derived stats may be unknown"] },
   { file: "docs/what-pmbah-does.md", needs: ["the words stay with you", "without actually storing your text", "do not prove that you wrote it"] },
   { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system", "chrome.storage.local", "bearer", "Server-observed checkpoints", "GitHub issues"] },
@@ -60,15 +62,18 @@ test("hugo config is configured for the content-blind landing + docs surface", a
   assert.match(hugo, /unsafe = true/);
 });
 
-test("home content names the two producers, the not-a-detector framing, and no fake CWS install URL", async () => {
+test("home content names the three producers, the not-a-detector framing, and no fake CWS install URL", async () => {
   const home = await read(join(contentRoot, "_index.md"));
   // Headline + counter + closer voice.
   assert.match(home, /We cannot prove a human wrote it/);
   assert.match(home, /But we can record the writing process/);
   assert.match(home, /reverse Turing test/);
-  // The two producers the page invites the reader to try.
+  // The three producers the page invites the reader to try, extension first.
+  assert.match(home, /\/docs\/browser-extension\//, "home must link to /docs/browser-extension/");
   assert.match(home, /\/write/, "home must link to /write");
   assert.match(home, /\/docs\/emacs\//, "home must link to /docs/emacs/");
+  const ctas = [...home.matchAll(/class="home-cta" href="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ctas, ["/docs/browser-extension/", "/write", "/docs/emacs/"], "home CTAs must lead with the extension");
   // Hard rules: no blog, no per-record standing-claim block in body, no
   // detector wording, no placeholder Chrome Web Store install URL on home
   // (gated until .26 records the real listing).
@@ -112,9 +117,9 @@ test("layout base sets the candid description, provides site nav with producer C
   assert.match(base, /aria-label="Site sections"/);
   // Left rail: Home + Docs.
   assert.match(base, /href="\/docs\/"/);
-  // Center CTAs: Write + Emacs.
-  assert.match(base, /class="site-nav-cta" href="\/write"/);
-  assert.match(base, /class="site-nav-cta" href="\/docs\/emacs\/"/);
+  // Center CTAs: Extension, Write, Emacs, in that order.
+  const navCtas = [...base.matchAll(/class="site-nav-cta" href="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(navCtas, ["/docs/browser-extension/", "/write", "/docs/emacs/"]);
   // Right rail: GitHub.
   assert.match(base, /href="https:\/\/github\.com\/juanre\/possiblymadebyahuman"/);
   assert.match(base, /class="site-nav-repo"/);
@@ -126,6 +131,15 @@ test("layout base sets the candid description, provides site nav with producer C
   assert.match(base, /Brought to you by/);
   assert.match(base, /href="https:\/\/aweb\.ai"/);
   assert.doesNotMatch(base, /href="\/blog\/"/);
+});
+
+test("Write a record docs list the extension first", async () => {
+  const expected = { "browser-extension.md": 1, "write.md": 2, "emacs.md": 3, "checking-a-document.md": 4 };
+  for (const [file, weight] of Object.entries(expected)) {
+    const body = await read(join(contentRoot, "docs", file));
+    assert.match(body, /^group: "Write a record"$/m, `${file} group`);
+    assert.match(body, new RegExp(`^weight: ${weight}$`, "m"), `${file} weight`);
+  }
 });
 
 test("SOT M5 milestone is reflected by the implemented site structure", async () => {

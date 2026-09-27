@@ -10,10 +10,11 @@ The public service is content-blind by default: uploaded records store mutation 
 
 ## Status
 
-The service runs at [possiblymadebyahuman.com](https://possiblymadebyahuman.com). It has three producers: the `/write` drafting page, the Emacs `pmbah-mode`, and a Chrome extension. The architecture and milestone boundaries live in [`docs/sot.md`](docs/sot.md); open work is tracked in aweb tasks and [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues).
+The service runs at [possiblymadebyahuman.com](https://possiblymadebyahuman.com). It has three producers: a Chrome extension that records the text boxes writers already use (comments, forum replies, email), the `/write` drafting page, and the Emacs `pmbah-mode`. The architecture and milestone boundaries live in [`docs/sot.md`](docs/sot.md); open work is tracked in aweb tasks and [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues).
 
 ## Producer installation docs
 
+- Browser extension installation and use: [`/docs/browser-extension/`](https://possiblymadebyahuman.com/docs/browser-extension/).
 - First-party browser drafting page: [`/write`](https://possiblymadebyahuman.com/write), which keeps several drafts in the writer's browser.
 - Browser extension packaging/release details: [`docs/browser-extension-release.md`](docs/browser-extension-release.md), [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md) and [`docs/chrome-web-store-listing.md`](docs/chrome-web-store-listing.md).
 - Emacs producer installation and troubleshooting: [`producers/emacs/README.md`](producers/emacs/README.md).
