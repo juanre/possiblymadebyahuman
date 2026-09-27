@@ -349,6 +349,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   align-items: center;
   margin: 0;
 }
+.measure-grid dt { overflow-wrap: anywhere; }
 .measure-grid dd { margin: 0; font-variant-numeric: tabular-nums; }
 
 .observation-status {

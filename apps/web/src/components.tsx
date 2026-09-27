@@ -13,11 +13,21 @@ export function usePageTitle(title: string) {
   }, [title]);
 }
 
+// The site's infinity mark, drawn inline so it needs no separate image file.
+function SiteMark({ size, className }: { size: number; className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 32 32" width={size} height={size} aria-hidden="true" focusable="false">
+      <path d="M6 16C6 11 11 11 16 16C21 21 26 21 26 16C26 11 21 11 16 16C11 21 6 21 6 16Z"
+        fill="none" stroke="#8b5e34" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function HomeLink() {
   return (
     <p className="record-home-line">
       <a className="record-home" href="/">
-        <img src="/favicon.svg" alt="" width="22" height="22" />
+        <SiteMark size={22} />
         {SITE_NAME}
       </a>
     </p>
@@ -430,13 +440,18 @@ const MEASURE_DEFINITIONS: Record<string, string> = {
   deletion_cluster_count: "Number of runs of consecutive deletions.",
 };
 
+// Measure names are long snake_case keys; let them wrap after underscores.
+function BreakableName({ name }: { name: string }) {
+  return <>{name.split("_").map((part, index, parts) => <React.Fragment key={index}>{part}{index < parts.length - 1 && <>_<wbr /></>}</React.Fragment>)}</>;
+}
+
 function MeasureTerm({ name }: { name: string }) {
   const definition = MEASURE_DEFINITIONS[name];
   const [open, setOpen] = useState(false);
-  if (!definition) return <>{name}</>;
+  if (!definition) return <BreakableName name={name} />;
   return (
     <span className="measure-term">
-      {name}
+      <BreakableName name={name} />
       <button
         type="button"
         className="measure-info"
@@ -818,7 +833,7 @@ export function RecordFooter() {
   return (
     <footer className="record-footer">
       <div className="record-footer-rule" aria-hidden="true" />
-      <p className="record-footer-mark"><img className="record-footer-seal" src="/favicon.svg" alt="" width="24" height="24" /> possiblymadebyahuman</p>
+      <p className="record-footer-mark"><SiteMark className="record-footer-seal" size={24} /> possiblymadebyahuman</p>
       <p className="record-footer-tagline">We cannot prove a human wrote it. But we can record the writing process, and sign it for you.</p>
       <nav className="record-footer-links" aria-label="Site">
         <a href="/">Home</a>

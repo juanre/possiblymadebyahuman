@@ -106,3 +106,31 @@ for (const path of ["/docs/browser-extension/", "/docs/privacy/", "/docs/checkin
     expect(measured.scroll).toBeLessThanOrEqual(measured.inner);
   });
 }
+
+test.describe("analyzer measures on a phone", () => {
+  test.use({ viewport: { width: 375, height: 812 } });
+
+  test("long measure names wrap instead of running into their values", async ({ page, request }) => {
+    const record = await (await request.get("/api/records/smoke")).json();
+    record.signals[1].measures.push(
+      { key: "unknown_process_measurement_count", value: 0 },
+      { key: "large_atomic_insert_threshold_codepoints", value: 50, unit: "codepoints" },
+      { key: "revision_deleted_codepoint_ratio", value: 0.3144 },
+    );
+    await page.route("**/api/records/smoke", route => route.fulfill({ json: record }));
+    await page.goto("/smoke");
+    await page.locator("details.technical-details > summary").click();
+    const rows = await page.locator("dl.measure-grid dt").evaluateAll(terms => terms.map(term => {
+      const value = term.nextElementSibling;
+      const name = term.getBoundingClientRect();
+      const box = value.getBoundingClientRect();
+      return { text: term.textContent, nameRight: name.right, scrollWidth: term.scrollWidth, clientWidth: term.clientWidth, valueLeft: box.left };
+    }));
+    expect(rows.length).toBeGreaterThan(8);
+    for (const row of rows) {
+      expect(row.scrollWidth, `${row.text} overflows its column`).toBeLessThanOrEqual(row.clientWidth);
+      expect(row.nameRight, `${row.text} runs into its value`).toBeLessThanOrEqual(row.valueLeft);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+});

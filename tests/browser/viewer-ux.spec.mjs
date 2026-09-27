@@ -227,3 +227,17 @@ test('signed finish displays endpoint waits separately without extending the doc
   await expect(editingTime).toHaveText('60 days (estimated)');
   await expect(page.locator('.record-summary')).toContainText('over an estimated 60 days');
 });
+
+test('the site mark draws without fetching any image', async ({page}) => {
+  const imageRequests = [];
+  page.on('request', r => { if (r.resourceType() === 'image') imageRequests.push(r.url()); });
+  await page.route('**/favicon.svg', route => route.abort());
+  await page.goto(`/${slug}`);
+  await expect(page.getByRole('heading', {name: 'Signed writing record', exact: true})).toBeVisible();
+  for (const mark of [page.locator('.record-home svg'), page.locator('.record-footer-mark svg')]) {
+    const box = await mark.boundingBox();
+    expect(box.width).toBeGreaterThan(10);
+  }
+  expect(await page.locator('main img').count()).toBe(0);
+  expect(imageRequests.filter(url => !url.endsWith('/favicon.svg') && !url.endsWith('/favicon.ico'))).toEqual([]);
+});
