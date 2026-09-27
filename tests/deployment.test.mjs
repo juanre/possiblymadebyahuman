@@ -27,6 +27,20 @@ test("deployment files define single-container and local Postgres paths", async 
   assert.doesNotMatch(prodCompose, /postgres:16-alpine/);
 });
 
+test("the runtime image installs only production dependencies; build tooling stays in the build stage", async () => {
+  const dockerfile = await read("Dockerfile");
+  assert.match(dockerfile, /AS runtime-deps\nRUN npm ci --omit=dev/);
+  assert.match(dockerfile, /COPY --from=runtime-deps --chown=pmbah:pmbah \/app\/node_modules \/app\/node_modules/);
+  assert.doesNotMatch(dockerfile, /COPY --from=deps [^\n]*node_modules/);
+  for (const path of ["package.json", "apps/web/package.json"]) {
+    const manifest = JSON.parse(await read(path));
+    for (const tool of ["vite", "@vitejs/plugin-react", "react", "react-dom"]) {
+      assert.equal(manifest.dependencies?.[tool], undefined, `${path} ${tool} is a build-time dependency`);
+    }
+  }
+  assert.deepEqual(Object.keys(JSON.parse(await read("package.json")).dependencies).sort(), ["@noble/hashes", "pg"]);
+});
+
 test("Makefile is the primary management surface", async () => {
   const makefile = await read("Makefile");
   for (const target of [

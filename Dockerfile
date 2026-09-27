@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM node:24-slim AS deps
+FROM node:24-slim AS manifests
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/ingest-api/package.json apps/ingest-api/package.json
@@ -14,7 +14,13 @@ COPY packages/storage/package.json packages/storage/package.json
 COPY packages/producer-core/package.json packages/producer-core/package.json
 COPY packages/browser-capture/package.json packages/browser-capture/package.json
 COPY packages/browser-storage/package.json packages/browser-storage/package.json
+
+# Build stages need the bundlers; the runtime image gets production packages only.
+FROM manifests AS deps
 RUN npm ci
+
+FROM manifests AS runtime-deps
+RUN npm ci --omit=dev
 
 FROM deps AS web-builder
 COPY packages packages
@@ -39,8 +45,8 @@ ENV NODE_ENV=production
 ENV PORT=8000
 ENV WEB_DIST_DIR=/app/web/dist
 ENV SITE_DIST_DIR=/app/site/public
-COPY --from=deps --chown=pmbah:pmbah /app/node_modules /app/node_modules
-COPY --from=deps --chown=pmbah:pmbah /app/package.json /app/package-lock.json /app/
+COPY --from=runtime-deps --chown=pmbah:pmbah /app/node_modules /app/node_modules
+COPY --from=runtime-deps --chown=pmbah:pmbah /app/package.json /app/package-lock.json /app/
 COPY --chown=pmbah:pmbah apps/ingest-api /app/apps/ingest-api
 COPY --chown=pmbah:pmbah packages /app/packages
 COPY --from=web-builder --chown=pmbah:pmbah /app/apps/web/dist /app/web/dist

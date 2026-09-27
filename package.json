@@ -24,16 +24,16 @@
   "devDependencies": {
     "@playwright/test": "^1.60.0",
     "@types/pg": "^8.20.0",
+    "@vitejs/plugin-react": "^6.0.2",
     "fake-indexeddb": "^6.2.5",
-    "typescript": "^5.8.3"
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "typescript": "^5.8.3",
+    "vite": "^8.0.14"
   },
   "dependencies": {
     "@noble/hashes": "^2.2.0",
-    "@vitejs/plugin-react": "^6.0.2",
-    "pg": "^8.21.0",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6",
-    "vite": "^8.0.14"
+    "pg": "^8.21.0"
   },
   "license": "MIT"
 }
