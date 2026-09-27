@@ -334,56 +334,57 @@ async function summaryFixture() {
   record.stats.paste_event_count = 0;
   record.stats.largest_atomic_insert_codepoints = 12;
   record.stats.observed_final_length = 1204;
+  record.stats.active_time_ms = 18 * 60_000;
   record.observation = { state: "observed", observed_session_id: null, commitments: [], checkpoint_count: 0, first_observed_at: null, last_observed_at: null, server_observed_span_ms: null };
   return record;
 }
 
-test("record summary sentence is strictly descriptive and uses the signed duration", async () => {
+test("record summary sentence says where and over what span, leaving the numbers to the facts", async () => {
   const { describeRecordSummary } = await import("../apps/web/src/record-utils.ts");
   const record = await summaryFixture();
-  assert.equal(describeRecordSummary(record), "Written in Emacs over 24 minutes: 312 edits, no pastes, largest single insertion 12 characters. Published 28 May 2026.");
+  assert.equal(describeRecordSummary(record), "Written in Emacs over 24 minutes and published 28 May 2026.");
   record.manifest.capture_context = { surface: "browser" };
-  record.stats.paste_event_count = 1;
-  assert.match(describeRecordSummary(record), /^Written in a browser text field over 24 minutes: 312 edits, 1 paste,/);
+  assert.equal(describeRecordSummary(record), "Written in a browser text field over 24 minutes and published 28 May 2026.");
   record.manifest.capture_context = { surface: "web-draft" };
-  record.stats.paste_event_count = 3;
-  assert.match(describeRecordSummary(record), /^Written on the possiblymadebyahuman writing page over 24 minutes: 312 edits, 3 pastes,/);
-  for (const phrase of [/\bonly\b/i, /\bjust\b/i, /suspicious/i, /natural/i, /simply/i]) {
+  assert.equal(describeRecordSummary(record), "Written on the possiblymadebyahuman writing page over 24 minutes and published 28 May 2026.");
+  for (const phrase of [/\bonly\b/i, /\bjust\b/i, /suspicious/i, /natural/i, /simply/i, /\bedits?\b/, /paste/]) {
     assert.doesNotMatch(describeRecordSummary(record), phrase);
   }
 });
 
-test("record summary sentence marks estimated durations and unknown measurements", async () => {
+test("record summary sentence marks estimated spans", async () => {
   const { describeRecordSummary } = await import("../apps/web/src/record-utils.ts");
   const record = await summaryFixture();
   record.manifest.format_version = "0.2";
   record.manifest.capture_context = null;
   record.manifest.ingested_server_t = null;
-  record.stats.event_count = 1;
-  record.stats.largest_atomic_insert_codepoints = null;
-  assert.equal(describeRecordSummary(record), "Written over an estimated 24 minutes: 1 edit, no pastes, and insertion sizes were not fully measured.");
+  assert.equal(describeRecordSummary(record), "Written over an estimated 24 minutes.");
   record.manifest.duration_ms = 240;
   record.manifest.format_version = "0.3";
-  assert.match(describeRecordSummary(record), /^Written in under a second: 1 edit,/);
+  assert.equal(describeRecordSummary(record), "Written in under a second.");
 });
 
-test("record facts show each measurement once with plain unknown and zero values", async () => {
+test("record facts show each measurement once, with writing time that leaves out pauses", async () => {
   const { recordFacts } = await import("../apps/web/src/record-utils.ts");
   const record = await summaryFixture();
   assert.deepEqual(recordFacts(record), [
-    { label: "Editing time", value: "24 minutes" },
+    { label: "Writing time", value: "18 minutes" },
     { label: "Edits", value: "312" },
     { label: "Pastes", value: "none" },
     { label: "Largest insertion", value: "12 characters" },
     { label: "Length", value: "1,204 characters" },
     { label: "Server-confirmed timing", value: "yes, whole session" },
   ]);
+  record.manifest.text_binding = { scheme: "canon-letters/0.1", commitment: "b3:00", canonical_length: 950 };
+  assert.deepEqual(recordFacts(record).find(fact => fact.label === "Signed text"), { label: "Signed text", value: "950 letters and digits" });
+  assert.deepEqual(recordFacts(record).map(fact => fact.label).slice(4, 7), ["Length", "Signed text", "Server-confirmed timing"]);
   record.manifest.format_version = "0.2";
+  record.stats.active_time_ms = 400;
   record.stats.paste_event_count = 2;
   record.stats.largest_atomic_insert_codepoints = null;
   record.stats.observed_final_length = null;
   const facts = Object.fromEntries(recordFacts(record).map(({ label, value }) => [label, value]));
-  assert.equal(facts["Editing time"], "24 minutes (estimated)");
+  assert.equal(facts["Writing time"], "under a second");
   assert.equal(facts.Pastes, "2");
   assert.equal(facts["Largest insertion"], "not measured");
   assert.equal(facts.Length, "not measured");

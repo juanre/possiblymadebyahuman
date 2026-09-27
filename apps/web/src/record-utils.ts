@@ -384,10 +384,6 @@ function durationPhrase(record: SummarySource): string {
   return signed ? `over ${duration}` : `over an estimated ${duration}`;
 }
 
-function pastePhrase(count: number): string {
-  return count === 0 ? "no pastes" : plural(count, "paste", "pastes");
-}
-
 function publishedDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
   const date = new Date(iso);
@@ -399,18 +395,16 @@ export function formatCharacters(count: number | null): string {
   return count === null ? "not measured" : plural(count, "character", "characters");
 }
 
-/** A descriptive one-sentence account of the record, with no evaluation. */
+/**
+ * A descriptive one-sentence account of the record, with no evaluation: where
+ * it was written, over what span, and when it was published. The measurements
+ * themselves are in the facts beside it.
+ */
 export function describeRecordSummary(record: SummarySource): string {
   const context = CAPTURE_SURFACE_PHRASES[String(record.manifest.capture_context?.surface ?? "")];
-  const stats = record.stats;
-  const largest = stats.largest_atomic_insert_codepoints;
-  const counts = [plural(stats.event_count, "edit", "edits"), pastePhrase(stats.paste_event_count)];
-  const measured = largest === null
-    ? `${counts.join(", ")}, and insertion sizes were not fully measured.`
-    : `${counts.join(", ")}, largest single insertion ${formatCharacters(largest)}.`;
   const written = ["Written", context, durationPhrase(record)].filter(Boolean).join(" ");
   const date = publishedDate(record.manifest.ingested_server_t);
-  return `${written}: ${measured}${date ? ` Published ${date}.` : ""}`;
+  return `${written}${date ? ` and published ${date}` : ""}.`;
 }
 
 const SERVER_TIMING: Record<string, string> = {
@@ -422,16 +416,18 @@ const SERVER_TIMING: Record<string, string> = {
 
 export type RecordFact = { label: string; value: string };
 
+// Writing time is the time between the first and last edit, leaving out
+// pauses of 30 seconds or more; the span in the summary sentence includes them.
 export function recordFacts(record: SummarySource): RecordFact[] {
   const stats = record.stats;
-  const signed = record.manifest.format_version === "0.3";
-  const duration = readableDuration(record.manifest.duration_ms) ?? "under a second";
+  const binding = record.manifest.text_binding;
   return [
-    { label: "Editing time", value: signed ? duration : `${duration} (estimated)` },
+    { label: "Writing time", value: readableDuration(stats.active_time_ms) ?? "under a second" },
     { label: "Edits", value: countFormat.format(stats.event_count) },
     { label: "Pastes", value: stats.paste_event_count === 0 ? "none" : countFormat.format(stats.paste_event_count) },
     { label: "Largest insertion", value: formatCharacters(stats.largest_atomic_insert_codepoints) },
     { label: "Length", value: formatCharacters(stats.observed_final_length) },
+    ...(binding ? [{ label: "Signed text", value: formatSignedTextLength(binding.canonical_length) }] : []),
     { label: "Server-confirmed timing", value: SERVER_TIMING[record.observation.state] ?? "not requested" },
   ];
 }

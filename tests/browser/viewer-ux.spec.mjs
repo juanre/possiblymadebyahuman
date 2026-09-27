@@ -203,8 +203,10 @@ test('signed finish displays endpoint waits separately without extending the doc
   await expect(cut.locator('title')).toHaveText('No edits for 60d');
   await expect(page.locator('.axis-label-break')).toHaveText('60d');
   await expect(page.locator('.axis-label-end')).toHaveText('signed at 60d');
-  const editingTime = page.locator('.record-fact').filter({hasText: 'Editing time'}).locator('dd');
-  await expect(editingTime).toHaveText('60 days');
+  // The span in the summary includes the wait before signing; writing time does not.
+  await expect(page.locator('.record-summary')).toContainText('over 60 days');
+  const writingTime = page.locator('.record-fact').filter({hasText: 'Writing time'}).locator('dd');
+  await expect(writingTime).toHaveText('1 second');
   const quickFacts = page.locator('.timing-counts');
   await expect(quickFacts).toContainText('Signed duration');
   await expect(quickFacts).toContainText('Editing span, first to last edit1.0s');
@@ -224,7 +226,6 @@ test('signed finish displays endpoint waits separately without extending the doc
   await expect(page.locator('.edit-timeline')).not.toContainText('signed at');
   await expect(quickFacts).toContainText('Reported duration');
   await expect(quickFacts).not.toContainText('Signed duration');
-  await expect(editingTime).toHaveText('60 days (estimated)');
   await expect(page.locator('.record-summary')).toContainText('over an estimated 60 days');
 });
 

@@ -22,7 +22,7 @@ test.describe("public record page", () => {
   test("header summarizes the process in one descriptive sentence and states its limit once", async ({ page }) => {
     const header = page.locator("header.record-header");
     await expect(header.locator(".record-summary")).toHaveText(
-      "Written in a browser text field in under a second (estimated): 4 edits, 1 paste, largest single insertion 6 characters. Published 28 May 2026.",
+      "Written in a browser text field in under a second (estimated) and published 28 May 2026.",
     );
     await expect(header.locator(".record-limit")).toContainText("This record shows how the text was edited. Who had the ideas, and who typed them, is for you to judge.");
     const text = (await page.locator("main").innerText()).toLowerCase();
@@ -35,7 +35,7 @@ test.describe("public record page", () => {
     const facts = page.locator("header.record-header .record-fact");
     const pairs = await facts.evaluateAll((items) => items.map((item) => [item.querySelector("dt").textContent, item.querySelector("dd").textContent]));
     expect(pairs).toEqual([
-      ["Editing time", "under a second (estimated)"],
+      ["Writing time", "under a second"],
       ["Edits", "4"],
       ["Pastes", "1"],
       ["Largest insertion", "6 characters"],
@@ -261,7 +261,7 @@ test.describe("text binding — bound record", () => {
   });
 
   test("the document check comes right after the timeline", async ({ page }) => {
-    await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Edit timeline", "Check a document", "How this was written", "Technical details"]);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Edit timeline", "Check a document", "Technical details"]);
   });
 
   test("exact paste of the signed text matches as same wording", async ({ page }) => {
@@ -335,14 +335,12 @@ test.describe("text binding — bound record", () => {
     await expect(card.locator(".binding-result")).toHaveClass(/ok/);
   });
 
-  test("how this was written gives the signed size in letters and digits, not a verdict", async ({ page }) => {
-    const card = region(page, "How this was written");
-    await expect(card).toContainText("The signed text has 95 letters and digits.");
-    await expect(card).toContainText("yours to weigh");
-    const text = (await card.innerText()).toLowerCase();
-    for (const term of ["verified", "humanness", "score", "authentic", "canonical"]) {
-      expect(text.includes(term), `commensurability section leaked term: ${term}`).toBe(false);
-    }
+  test("the header gives the signed text's size in letters and digits beside the length", async ({ page }) => {
+    const facts = page.locator("header.record-header .record-fact");
+    const labels = await facts.locator("dt").allTextContents();
+    expect(labels.slice(4, 7)).toEqual(["Length", "Signed text", "Server-confirmed timing"]);
+    await expect(facts.filter({ hasText: "Signed text" }).locator("dd")).toHaveText("95 letters and digits");
+    await expect(region(page, "How this was written")).toHaveCount(0);
   });
 
   test("the document being checked is never sent to the server", async ({ page }) => {
@@ -369,7 +367,7 @@ test("unknown size statistics display not measured rather than numeric zero or n
   await page.route('**/api/records/bound', route => route.fulfill({ json: record }));
   await page.goto('/bound');
   await expect(page.locator('.record-fact').filter({ hasText: 'Largest insertion' }).locator('dd')).toHaveText('not measured');
-  await expect(page.locator('.record-summary')).toContainText('2 pastes, and insertion sizes were not fully measured.');
+  await expect(page.locator('.record-fact').filter({ hasText: 'Pastes' }).locator('dd')).toHaveText('2');
   await expect(page.locator('.signal-card dd')).toHaveText('not measured');
   await expect(page.locator('main')).not.toContainText(/\bnull\b|unknown codepoints/);
 });

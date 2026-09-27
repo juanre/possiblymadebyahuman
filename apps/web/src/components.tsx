@@ -666,12 +666,7 @@ export function TextBindingSection({ record, verification }: { record: RecordApi
       </section>
     );
   }
-  return (
-    <>
-      <DocumentCheckCard record={record} verification={verification} />
-      <CommensurabilityCard record={record} />
-    </>
-  );
+  return <DocumentCheckCard record={record} verification={verification} />;
 }
 
 export function DocumentCheckCard({ record, verification: suppliedVerification }: { record: RecordApiResponse; verification?: VerificationState }) {
@@ -747,20 +742,6 @@ function BindingResult({ result }: { result: BindingCheckResult }) {
         )}
       </div>
     </div>
-  );
-}
-
-// The comparison is left to the reader: the header states the process, and
-// this section adds only the size of the text that was signed with it.
-export function CommensurabilityCard({ record }: { record: RecordApiResponse }) {
-  const binding = record.manifest.text_binding!;
-  return (
-    <section className="record-section commensurability" aria-label="How this was written">
-      <h2>How this was written</h2>
-      <p className="section-intro">
-        The signed text has <strong>{formatSignedTextLength(binding.canonical_length)}</strong>. Set that against the writing process summarized at the top of this page: whether the two fit together is yours to weigh.
-      </p>
-    </section>
   );
 }
 
