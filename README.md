@@ -1,27 +1,52 @@
 # possiblymadebyahuman
 
-`possiblymadebyahuman` records the *shape* of a writing process (where each edit landed, how large it was, when it happened, and whether it was typed or pasted) and publishes it as a content-blind, hash-addressed record at a short link. The record never contains, stores, or reconstructs the text that was written. Try it at [possiblymadebyahuman.com](https://possiblymadebyahuman.com), or see [an example record](https://possiblymadebyahuman.com/8MxUYwiQ3q).
+`possiblymadebyahuman` records how a piece of writing was edited and publishes that record at a short link anyone can check. A record holds the shape of the editing: when each edit happened, where it landed, how large it was, and whether it was typed, pasted or cut. It never contains the text itself.
 
-It is **not** a human/AI detector. It does not emit humanness verdicts, confidence percentages, or certification-style badges. The allowed claim is just: this record shows the shape of an editing process.
+Try it at [possiblymadebyahuman.com](https://possiblymadebyahuman.com), or open [an example record](https://possiblymadebyahuman.com/8MxUYwiQ3q).
 
-The public service is content-blind by default: uploaded records store mutation structure, metadata, statistics, and analyzer facts, not plaintext writing. Producers may transiently inspect editor text only to derive numeric process metadata, then must discard it; they do not retain, reconstruct, or upload document text. At sign time, optional format 0.2 binding computes a salted commitment to canonical wording locally; only that commitment is uploaded.
+A record describes a writing process and leaves its meaning to the reader. It carries no humanness score, verdict or badge; the site explains [what a record can and cannot show](https://possiblymadebyahuman.com/docs/what-pmbah-does/).
 
 `possiblymadebyahuman` is most certainly _not_ made by a human. It is instead made by a team of agents coordinating with [aweb.ai](https://aweb.ai). The human is only the instigator, and also somehow responsible for the result even though he has not actually looked at the code. His only real contribution has been the line drawing in the home page. He also plans to document how long it took from the first idea to the release of the site, as a note for posterity.
 
-## Status
+## Ways to write a record
 
-The service runs at [possiblymadebyahuman.com](https://possiblymadebyahuman.com). It has three producers: a Chrome extension that records the text boxes writers already use (comments, forum replies, email), the `/write` drafting page, and the Emacs `pmbah-mode`. The architecture and milestone boundaries live in [`docs/sot.md`](docs/sot.md); open work is tracked in aweb tasks and [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues).
+- **Chrome extension.** Records the text boxes you choose on any website: comments, forum replies, email. See [how to install and use it](https://possiblymadebyahuman.com/docs/browser-extension/). Until the Chrome Web Store listing is live, it installs from the ZIP attached to each [GitHub release](https://github.com/juanre/possiblymadebyahuman/releases).
+- **The writing page.** [`/write`](https://possiblymadebyahuman.com/write) needs no installation and keeps several drafts in your browser. See [writing in the browser](https://possiblymadebyahuman.com/docs/write/).
+- **Emacs.** `pmbah-mode` records a buffer. See [the Emacs guide](https://possiblymadebyahuman.com/docs/emacs/) and [`producers/emacs/README.md`](producers/emacs/README.md).
 
-## Producer installation docs
+## How a record works
 
-- Browser extension installation and use: [`/docs/browser-extension/`](https://possiblymadebyahuman.com/docs/browser-extension/).
-- First-party browser drafting page: [`/write`](https://possiblymadebyahuman.com/write), which keeps several drafts in the writer's browser.
-- Browser extension packaging/release details: [`docs/browser-extension-release.md`](docs/browser-extension-release.md), [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md) and [`docs/chrome-web-store-listing.md`](docs/chrome-web-store-listing.md).
-- Emacs producer installation and troubleshooting: [`producers/emacs/README.md`](producers/emacs/README.md).
+Each edit becomes an event in a log, and the events are linked in a BLAKE3 hash chain whose final hash identifies the record. While you write, the producer sends the service checkpoints (an event count and a chain hash, never text), so the service can confirm when it saw the writing unfold. Finishing signs the end time into the record and publishes it at a short link.
 
-Public v0 requires a real Chrome Web Store install path for the browser extension; do not publish placeholder or "coming soon" install links. Browser-extension documents are preparatory only until the extension implementation, package artifact, human approval, and real Chrome Web Store URL exist.
+Optionally, the producer also computes a salted commitment to the letters and digits of the finished text, on your machine, and uploads only that commitment. A reader who has a copy of the text can then check in their own browser whether its wording matches.
 
-## Commands
+Anyone can recompute a record's hash chain in the browser. The site documents [reading a record](https://possiblymadebyahuman.com/docs/records/), [verification](https://possiblymadebyahuman.com/docs/verification/), [server checkpoints](https://possiblymadebyahuman.com/docs/server-observed-commitments/), [checking a document](https://possiblymadebyahuman.com/docs/checking-a-document/) and the [threat model](https://possiblymadebyahuman.com/docs/threat-model/). The format itself is specified in [`docs/spec.md`](docs/spec.md) and [`docs/text-binding.md`](docs/text-binding.md), with conformance vectors in [`packages/conformance`](packages/conformance).
+
+## Privacy
+
+The service stores event structure, metadata, statistics and analyzer facts, never the writing. Producers may read editor text briefly to measure edits or compute the text commitment, then discard it; they never keep, reconstruct or upload it. Drafts on `/write` are saved only in the writer's browser. The [privacy page](https://possiblymadebyahuman.com/docs/privacy/) has the details.
+
+## Repository layout
+
+| Path | What it is |
+| --- | --- |
+| [`apps/site`](apps/site) | Hugo site: the landing page and docs |
+| [`apps/web`](apps/web) | React app for record pages and the `/write` drafting page |
+| [`apps/ingest-api`](apps/ingest-api) | Node service that accepts, stores and serves records |
+| [`apps/browser-extension`](apps/browser-extension) | Chrome MV3 extension |
+| [`producers/emacs`](producers/emacs) | Emacs producer |
+| [`packages/format`](packages/format) | Event-log format, hash chain and verification |
+| [`packages/producer-core`](packages/producer-core) | Content-blind producer kernel shared by the extension and `/write` |
+| [`packages/browser-capture`](packages/browser-capture), [`packages/browser-storage`](packages/browser-storage) | Browser edit capture and the IndexedDB journal |
+| [`packages/analyzers`](packages/analyzers) | Descriptive statistics computed from records |
+| [`packages/storage`](packages/storage) | Storage layer for the service |
+| [`packages/conformance`](packages/conformance) | Golden vectors every producer and format implementation must pass |
+
+Architecture and milestone boundaries live in [`docs/sot.md`](docs/sot.md). Bugs and open work are tracked in [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues).
+
+## Development
+
+### Commands
 
 The Makefile is the main management surface:
 
@@ -53,7 +78,7 @@ npm test
 npm run check
 ```
 
-## Database tests
+### Tests
 
 Tests use the provided `pgdbm` pytest fixtures (`test_db` and `test_db_factory`) to create and clean up isolated databases. The Python test wrapper supplies their connections to the Node integration tests and release-image gate; neither creates or drops databases itself. Application SQL migrations still run through the existing TypeScript runner, so tests exercise the production migration path.
 
@@ -61,7 +86,13 @@ Install Node 24+, Python 3.11+, uv and Docker, then run `make install`, `make te
 
 `npm test` runs the Node suite under pgdbm fixture ownership. `make test-release-container` uses another fixture-owned database for the built container's startup migrations, HTTP smoke and browser tests. CI provides a PostgreSQL service with a TCP health check and uses the same fixtures. Python dependencies are pinned in `uv.lock`; no Python dependency is added to the production image.
 
-## Database operations
+### Browser extension packaging
+
+`make extension-package` builds the deterministic extension ZIP. The release steps and the store submission are described in [`docs/browser-extension-release.md`](docs/browser-extension-release.md), [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md) and [`docs/chrome-web-store-listing.md`](docs/chrome-web-store-listing.md). Link to the Chrome Web Store only once the listing is live; do not publish placeholder or "coming soon" install links.
+
+## Running the service
+
+### Database
 
 Runtime uses one shared `pg.Pool` per Node process rather than one shared client. Defaults are intentionally conservative for Neon/serverless Postgres:
 
@@ -71,13 +102,15 @@ Runtime uses one shared `pg.Pool` per Node process rather than one shared client
 - `PG_STATEMENT_TIMEOUT_MS`/`PG_QUERY_TIMEOUT_MS` optional statement/query timeout
 - `RECORD_BODY_LIMIT_BYTES` default `10000000` (10 MB); oversized `POST /api/records` requests return `413`. Operators can raise this for unusually long capture sessions after checking reverse-proxy and Postgres limits.
 
+### Limits and uploads
+
 API admission is bounded per instance and per client address. Every API write needs `Content-Type: application/json` (other types receive `415`). Rate-limited requests receive `429` with `Retry-After`; producers back off and journal uploads wait and repeat. Configure with:
 
 - `MAX_IN_FLIGHT_API_REQUESTS` default `PG_POOL_MAX` × 4; excess API requests receive `503`
 - `MAX_IN_FLIGHT_API_REQUESTS_PER_CLIENT` default `4`
 - `RATE_LIMIT_WRITES_PER_MINUTE` default `600`, `RATE_LIMIT_WRITE_BURST` default `120`
 - `RATE_LIMIT_NEW_SESSIONS_PER_MINUTE` default `30`, `RATE_LIMIT_NEW_SESSION_BURST` default `30` (beginning uploads, observed sessions and direct records)
-- `TRUSTED_CLIENT_IP_HEADER` unset by default. Behind Cloudflare → Render set it to `cf-connecting-ip`, otherwise all clients share the proxy's address. Only name a header the proxy overwrites.
+- `TRUSTED_CLIENT_IP_HEADER` unset by default. Behind Cloudflare in front of Render, set it to `cf-connecting-ip`, otherwise all clients share the proxy's address. Only name a header the proxy overwrites.
 
 One resumable upload is capped by `MAX_UPLOAD_EVENTS` (default `10000000`) and `MAX_UPLOAD_BYTES` (default `1600000000`); larger uploads receive `413 upload_too_large`.
 
@@ -90,9 +123,13 @@ make delete-abandoned-uploads DATABASE_URL='postgresql://...' OLDER_THAN_DAYS=60
 
 Producers keep a frozen record and its `upload_id` until publication succeeds and restart a deleted upload from event zero, so no record is lost. Published records, finalized uploads, observed sessions and checkpoints are never deleted by this command.
 
+### Record removal
+
 Reported abusive records are removed by the operator, never through the public API. `make remove-record SIGNATURE=<short signature or hash> DATABASE_URL=...` previews the removal; add `CONFIRM=yes` to remove. See [record removal](docs/operations-record-removal.md).
 
 See [`apps/ingest-api/README.md`](apps/ingest-api/README.md) for details.
+
+### Migrations
 
 Run migrations before starting a production container:
 

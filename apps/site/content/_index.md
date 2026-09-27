@@ -40,7 +40,7 @@ Oh well. It cannot be done but we are doing it anyway. You can at least assert t
 
 <p class="home-ctas">
   <a class="home-cta" href="/docs/browser-extension/">Get the Chrome extension</a>
-  <a class="home-cta" href="/write">Write on this site</a>
+  <a class="home-cta" href="/write">Write here</a>
   <a class="home-cta" href="/docs/emacs/">Write in Emacs</a>
 </p>
 

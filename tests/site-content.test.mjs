@@ -26,7 +26,7 @@ const sectionsCoveringProductPromise = [
   { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/docs/browser-extension/", "/write", "/docs/emacs/"] },
   { file: "docs/browser-extension.md", needs: ["Quick start", "Start writing record", "Finish & get link", "possiblymadebyahuman"] },
   { file: "docs/emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open a writing buffer", "length-derived stats may be unknown"] },
-  { file: "docs/what-pmbah-does.md", needs: ["the words stay with you", "without actually storing your text", "do not prove that you wrote it"] },
+  { file: "docs/what-pmbah-does.md", needs: ["the words stay with you", "without actually storing your text", "do not prove that you wrote it", "(/docs/browser-extension/)", "(/write)", "(/docs/emacs/)"] },
   { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system", "chrome.storage.local", "bearer", "Server-observed checkpoints", "GitHub issues"] },
   { file: "docs/terms.md", needs: ["MIT licensed", "provided as-is", "no public deletion API", "not a detector", "Identity and authorship assertions", "Moderation and removal", "project issue tracker"] },
   { file: "docs/records.md", needs: ["buffer mutation", "short_signature", "Hash chain", "Reserved route prefixes"] },
