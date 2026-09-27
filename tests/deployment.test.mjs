@@ -180,22 +180,30 @@ test("browser extension release docs define package artifact and store plan", as
 
   const prep = await read("docs/chrome-web-store-prep.md");
   for (const phrase of [
-    "Chrome Web Store Developer account",
     "public or unlisted install link",
     "Extension ID: `TBD",
     "Chrome Web Store listing URL: `TBD",
-    "Privacy policy URL",
-    "Draft Chrome Web Store listing copy",
-    "Draft privacy and data-use disclosure answers",
-    "Permission-justification template",
-    "Historical packaging evidence at CWS-prep tip",
-    "Human-input blocker packet for `.26`",
+    "Package facts",
+    "Single purpose",
+    "Permission justifications",
+    "What leaves the browser",
     "No fake, placeholder, or \"coming soon\" install URL",
-    "not an AI detector",
-    "contain neither your document plaintext",
   ]) {
     assert.match(prep, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+  const listing = await read("docs/chrome-web-store-listing.md");
+  for (const phrase of [
+    "Chrome Web Store",
+    "Privacy policy URL",
+    "https://possiblymadebyahuman.com/docs/privacy/",
+    "Submission checklist",
+    "The text itself\n> is never saved or sent.",
+    "It cannot\n> tell anyone who wrote something",
+  ]) {
+    assert.match(listing, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.doesNotMatch(listing, /chromewebstore\.google\.com\/detail\/[a-z0-9_-]+/i);
+  assert.doesNotMatch(listing, /\u2014/, "listing copy uses no em-dashes");
   assert.doesNotMatch(prep, /chromewebstore\.google\.com\/detail\/[a-z0-9_-]+/i);
 });
 

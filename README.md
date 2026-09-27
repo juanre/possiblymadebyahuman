@@ -15,7 +15,7 @@ The service runs at [possiblymadebyahuman.com](https://possiblymadebyahuman.com)
 ## Producer installation docs
 
 - First-party browser drafting page: [`/write`](https://possiblymadebyahuman.com/write), which keeps several drafts in the writer's browser.
-- Browser extension packaging/release details: [`docs/browser-extension-release.md`](docs/browser-extension-release.md) and [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md).
+- Browser extension packaging/release details: [`docs/browser-extension-release.md`](docs/browser-extension-release.md), [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md) and [`docs/chrome-web-store-listing.md`](docs/chrome-web-store-listing.md).
 - Emacs producer installation and troubleshooting: [`producers/emacs/README.md`](producers/emacs/README.md).
 
 Public v0 requires a real Chrome Web Store install path for the browser extension; do not publish placeholder or "coming soon" install links. Browser-extension documents are preparatory only until the extension implementation, package artifact, human approval, and real Chrome Web Store URL exist.
