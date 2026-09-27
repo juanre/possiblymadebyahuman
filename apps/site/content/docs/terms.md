@@ -42,7 +42,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 ## Moderation and removal
 
 - The service does not pre-screen records before upload. Because the records are content-blind, the service operator has no view of the text the record describes.
-- A record may be removed on a case-by-case basis if it is reported and the operator concludes it contains material that is clearly abusive (spam, illegal content) or that the upload was made by someone the operator believes to be impersonating another party. A removed record's URL then returns not-found, the same record cannot be uploaded again, and there is no published listing of removed record hashes. Report a record by writing to [abuse@possiblymadebyahuman.com](mailto:abuse@possiblymadebyahuman.com) with its link; please do not post reports of unlawful material in public issues.
+- A record may be removed on a case-by-case basis if it is reported and the operator concludes it contains material that is clearly abusive (spam, illegal content) or that the upload was made by someone the operator believes to be impersonating another party. A removed record's URL then returns not-found, the same record cannot be uploaded again, and there is no published listing of removed record hashes. Report a record by writing to [pmbah@aweb.ai](mailto:pmbah@aweb.ai) with its link; please do not post reports of unlawful material in public issues.
 - The service may rate-limit, block, or refuse uploads from sources that violate the "don't try to break the service" section above.
 
 ## Liability
@@ -55,4 +55,4 @@ If you need formal terms (for an employer, an institution, or a use case where w
 
 ## Contact
 
-General questions and bug reports go to the [project issue tracker](https://github.com/juanre/possiblymadebyahuman/issues). Reports of abusive or unlawful records, and legal requests, go to [abuse@possiblymadebyahuman.com](mailto:abuse@possiblymadebyahuman.com). The service operator is the maintainer named in the repository.
+General questions and bug reports go to the [project issue tracker](https://github.com/juanre/possiblymadebyahuman/issues). Reports of abusive or unlawful records, and legal requests, go to [pmbah@aweb.ai](mailto:pmbah@aweb.ai). The service operator is the maintainer named in the repository.

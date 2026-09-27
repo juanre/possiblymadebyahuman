@@ -71,4 +71,4 @@ If the service cannot be reached, checkpoints fail and recording continues local
 
 ## Contact
 
-Ask privacy questions, or point out anything unclear here, in the project's [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues). To report a record that contains abusive or unlawful material, or for any legal request, write to [abuse@possiblymadebyahuman.com](mailto:abuse@possiblymadebyahuman.com) rather than opening a public issue.
+Ask privacy questions, or point out anything unclear here, in the project's [GitHub issues](https://github.com/juanre/possiblymadebyahuman/issues). To report a record that contains abusive or unlawful material, or for any legal request, write to [pmbah@aweb.ai](mailto:pmbah@aweb.ai) rather than opening a public issue.
