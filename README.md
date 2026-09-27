@@ -78,6 +78,17 @@ API admission is bounded per instance and per client address. Every API write ne
 - `RATE_LIMIT_NEW_SESSIONS_PER_MINUTE` default `30`, `RATE_LIMIT_NEW_SESSION_BURST` default `30` (beginning uploads, observed sessions and direct records)
 - `TRUSTED_CLIENT_IP_HEADER` unset by default. Behind Cloudflare → Render set it to `cf-connecting-ip`, otherwise all clients share the proxy's address. Only name a header the proxy overwrites.
 
+One resumable upload is capped by `MAX_UPLOAD_EVENTS` (default `10000000`) and `MAX_UPLOAD_BYTES` (default `1600000000`); larger uploads receive `413 upload_too_large`.
+
+Abandoned unfinalized upload staging is deleted by an operator command, not automatically. Run it periodically (for example as a daily Render cron job running `node apps/ingest-api/scripts/delete-abandoned-uploads.mjs` in the image):
+
+```bash
+make delete-abandoned-uploads DATABASE_URL='postgresql://...'          # untouched for 30 days
+make delete-abandoned-uploads DATABASE_URL='postgresql://...' OLDER_THAN_DAYS=60
+```
+
+Producers keep a frozen record and its `upload_id` until publication succeeds and restart a deleted upload from event zero, so no record is lost. Published records, finalized uploads, observed sessions and checkpoints are never deleted by this command.
+
 See [`apps/ingest-api/README.md`](apps/ingest-api/README.md) for details.
 
 Run migrations before starting a production container:

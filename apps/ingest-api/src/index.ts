@@ -54,6 +54,11 @@ export const MAX_PAYLOAD_DEPTH = 32;
 // Above the number of minimum-size events that fit the default 10 MB legacy
 // body limit. Current producers publish at most 4096 events per chunk.
 export const MAX_LEGACY_EVENTS = 131_072;
+// Twice the documented heaviest session: four million edits over two years.
+export const DEFAULT_MAX_UPLOAD_EVENTS = 10_000_000;
+// The largest schema-valid event serializes to 137 bytes, so by default the
+// byte cap guards against oversized events without binding before the event cap.
+export const DEFAULT_MAX_UPLOAD_BYTES = DEFAULT_MAX_UPLOAD_EVENTS * 160;
 const MAX_PAYLOAD_NODES = 2_000_000;
 const MAX_PAYLOAD_OBJECT_FIELDS = 64;
 const MAX_PAYLOAD_KEY_LENGTH = 128;
@@ -65,6 +70,8 @@ export type IngestApiOptions = {
   idleThresholdMs?: number;
   initialShortSignatureLength?: number;
   analyzers?: Analyzer[];
+  maxUploadEvents?: number;
+  maxUploadBytes?: number;
 };
 
 export type ObservationBindingRequest =
@@ -112,7 +119,7 @@ export function createIngestApi(options: IngestApiOptions) {
   const idleThresholdMs = options.idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
   const initialShortSignatureLength = options.initialShortSignatureLength ?? DEFAULT_SHORT_SIGNATURE_LENGTH;
   const chunked = createChunkedApi({ store: options.store, baseUrl, now, idleThresholdMs, initialShortSignatureLength, analyzers: options.analyzers,
-    validateManifestFields: validatePublicManifestFields, validateContent: findContentBearingFields });
+    maxUploadEvents: options.maxUploadEvents ?? DEFAULT_MAX_UPLOAD_EVENTS, maxUploadBytes: options.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES, validateManifestFields: validatePublicManifestFields, validateContent: findContentBearingFields });
 
   async function postObservedCheckpoint(
     observedSessionId: string,

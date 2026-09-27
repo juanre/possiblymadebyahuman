@@ -6,7 +6,7 @@ import { extname, join, normalize } from "node:path";
 import pg from "pg";
 
 import { ClientAdmission, clientAddress, DEFAULT_CLIENT_LIMITS, type Admission, type ClientLimits } from "./admission.ts";
-import { createIngestApi } from "./index.ts";
+import { createIngestApi, DEFAULT_MAX_UPLOAD_BYTES, DEFAULT_MAX_UPLOAD_EVENTS } from "./index.ts";
 import { PostgresRecordStore, type PostgresDatabase, type RecordStore } from "../../../packages/storage/src/index.ts";
 import { loadSqlMigrations } from "../../../packages/storage/src/migrations.ts";
 
@@ -59,7 +59,8 @@ export function createPoolConfig(env: NodeJS.ProcessEnv = process.env): pg.PoolC
   return config;
 }
 
-export type RuntimeLimits = { maxInFlightApiRequests: number; clientLimits: ClientLimits; trustedClientIpHeader?: string };
+export type RuntimeLimits = { maxInFlightApiRequests: number; clientLimits: ClientLimits; trustedClientIpHeader?: string;
+  upload: { maxEvents: number; maxBytes: number } };
 
 export function runtimeLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): RuntimeLimits {
   const poolMax = parsePositiveInteger(env.PG_POOL_MAX ?? env.DATABASE_POOL_MAX, DEFAULT_POOL_MAX);
@@ -73,6 +74,10 @@ export function runtimeLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): Runt
       newSessionsPerMinute: parsePositiveInteger(env.RATE_LIMIT_NEW_SESSIONS_PER_MINUTE, DEFAULT_CLIENT_LIMITS.newSessionsPerMinute),
       newSessionBurst: parsePositiveInteger(env.RATE_LIMIT_NEW_SESSION_BURST, DEFAULT_CLIENT_LIMITS.newSessionBurst),
       maxTrackedClients: DEFAULT_CLIENT_LIMITS.maxTrackedClients,
+    },
+    upload: {
+      maxEvents: parsePositiveInteger(env.MAX_UPLOAD_EVENTS, DEFAULT_MAX_UPLOAD_EVENTS),
+      maxBytes: parsePositiveInteger(env.MAX_UPLOAD_BYTES, DEFAULT_MAX_UPLOAD_BYTES),
     },
     ...(trustedClientIpHeader ? { trustedClientIpHeader } : {}),
   };
@@ -119,7 +124,8 @@ export function createRuntimeServer(options: RuntimeServerOptions): Server {
       if (apiRequest) {
         const admission = clients.enter(client, req.method === "POST");
         if (!admission.ok) {
-          res.setHeader("connection", "close");
+          // Keep the connection so the client reads this answer instead of a
+          // reset while still sending its body; Node discards the unread body.
           rateLimited(res, admission.retryAfterSeconds);
           return;
         }
@@ -214,7 +220,6 @@ async function route(req: IncomingMessage, res: ServerResponse, options: Runtime
     // Every API write is JSON. Requiring the JSON media type keeps other sites
     // from submitting cross-origin "simple" form or text/plain POSTs.
     if (req.method === "POST" && !isJsonMediaType(req.headers["content-type"])) {
-      res.setHeader("connection", "close");
       json(res, 415, { error: "unsupported_media_type" });
       return;
     }
@@ -430,7 +435,8 @@ export async function main(): Promise<void> {
   const { Pool } = pg;
   const pool = new Pool({ connectionString: DATABASE_URL, ...createPoolConfig() });
   const store = new PostgresRecordStore(pool as PostgresDatabase);
-  const api = createIngestApi({ store, baseUrl: PUBLIC_BASE_URL });
+  const { upload, ...limits } = runtimeLimitsFromEnv();
+  const api = createIngestApi({ store, baseUrl: PUBLIC_BASE_URL, maxUploadEvents: upload.maxEvents, maxUploadBytes: upload.maxBytes });
   const requiredMigrationVersions = (await loadSqlMigrations()).map((migration) => migration.version);
   const server = createRuntimeServer({
     api,
@@ -438,7 +444,7 @@ export async function main(): Promise<void> {
     db: pool as PostgresDatabase,
     recordBodyLimitBytes: RECORD_BODY_LIMIT_BYTES,
     checkpointBodyLimitBytes: parsePositiveInteger(process.env.CHECKPOINT_BODY_LIMIT_BYTES, DEFAULT_CHECKPOINT_BODY_LIMIT_BYTES),
-    ...runtimeLimitsFromEnv(),
+    ...limits,
     httpRequestTimeoutMs: parsePositiveInteger(process.env.HTTP_REQUEST_TIMEOUT_MS, DEFAULT_HTTP_REQUEST_TIMEOUT_MS),
     requiredMigrationVersions,
   });

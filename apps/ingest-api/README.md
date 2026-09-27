@@ -120,8 +120,22 @@ Observation summaries include the first and latest 31 commitment anchors, with
 an exact `checkpoint_count` and span over all stored commitments. Every
 commitment, including those omitted from the summary, is checked at publication.
 Migration `005_chunked_records.sql` must run before this API version accepts
-chunk uploads. No automatic expiry, hidden eviction or public segmentation is
-introduced; cumulative storage and admission policies remain deployment choices.
+chunk uploads. No public segmentation is introduced.
+
+One upload is capped at `MAX_UPLOAD_EVENTS` events (default 10,000,000, twice
+the documented four-million-event, two-year session) and `MAX_UPLOAD_BYTES`
+bytes of serialized events (default 1.6 GB, 160 bytes per event; the largest
+schema-valid event is 137 bytes, so the byte cap does not bind first). Begin
+rejects a manifest above the event cap, and a chunk that would pass the byte cap
+is rejected without being stored; both answer 413 `upload_too_large`.
+
+Migration `006_upload_activity.sql` records when an upload was last begun or
+appended to. Unfinalized staging untouched for 30 days can be deleted with
+`make delete-abandoned-uploads DATABASE_URL=...` (optionally
+`OLDER_THAN_DAYS=N`). This is safe because producers keep the frozen record and
+its `upload_id` until publication succeeds, and beginning a deleted upload stages
+it again from event zero. Finalized uploads own published pages and are never
+deleted. Observed sessions and checkpoints have no expiry.
 
 Default analyzers share one incremental implementation with bounded legacy array
 callers. Configured custom analyzers that require a complete event array return

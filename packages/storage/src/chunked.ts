@@ -7,7 +7,7 @@ export const MAX_EVENT_CHUNK = 4096;
 export type UploadObservation = { state: "unobserved" } | { observed_session_id: string; observed_token_hash: string };
 export type UploadState = {
   upload_id: string; manifest: RecordManifest; observation?: UploadObservation;
-  next_seq: number; chain_tip: B3Hash | null; last_t: number | null;
+  next_seq: number; chain_tip: B3Hash | null; last_t: number | null; received_bytes: number;
   observed_length: number | null; analysis_state: unknown; finalized_record_hash?: B3Hash | null; published_owner?: boolean;
 };
 export type ChunkTransition = { state: UploadState; chain_tips: B3Hash[]; delays: number[] };
@@ -133,8 +133,8 @@ export class PostgresChunkedStore implements ChunkedStore {
     finally { if ("release" in client) client.release?.(); }
   }
   async #read(client: PostgresQueryable, id: string, lock = false): Promise<UploadState | null> {
-    const row = (await client.query<any>(`select upload_id, manifest, observation, next_seq, chain_tip, last_t, observed_length, analysis_state, finalized_record_hash, published_owner from record_uploads where upload_id=$1${lock ? " for update" : ""}`, [id])).rows[0];
-    return row ? { ...row, last_t: row.last_t === null ? null : Number(row.last_t), observation: row.observation ?? undefined } : null;
+    const row = (await client.query<any>(`select upload_id, manifest, observation, next_seq, chain_tip, last_t, received_bytes, observed_length, analysis_state, finalized_record_hash, published_owner from record_uploads where upload_id=$1${lock ? " for update" : ""}`, [id])).rows[0];
+    return row ? { ...row, last_t: row.last_t === null ? null : Number(row.last_t), received_bytes: Number(row.received_bytes), observation: row.observation ?? undefined } : null;
   }
   async begin(state: UploadState): Promise<UploadState> {
     return this.#transaction(async client => {
@@ -143,7 +143,7 @@ export class PostgresChunkedStore implements ChunkedStore {
       const existing = (await this.#read(client, state.upload_id, true))!;
       assertSameManifest(existing, state);
       if (!existing.finalized_record_hash) {
-        await client.query("update record_uploads set observation=$2::jsonb where upload_id=$1", [state.upload_id, JSON.stringify(state.observation ?? null)]);
+        await client.query("update record_uploads set observation=$2::jsonb,updated_at=now() where upload_id=$1", [state.upload_id, JSON.stringify(state.observation ?? null)]);
         existing.observation = state.observation;
       }
       return existing;
@@ -161,8 +161,8 @@ export class PostgresChunkedStore implements ChunkedStore {
       assertAppend(state, offset, events.length);
       const next = transition(structuredClone(state));
       await client.query("insert into record_event_chunks(upload_id,start_seq,end_seq,events,chain_tips) values($1,$2,$3,$4::jsonb,$5)", [id, offset, next.state.next_seq, JSON.stringify(events), next.chain_tips]);
-      await client.query("update record_uploads set next_seq=$2,chain_tip=$3,last_t=$4,observed_length=$5,analysis_state=$6::jsonb where upload_id=$1",
-        [id, next.state.next_seq, next.state.chain_tip, next.state.last_t, next.state.observed_length, JSON.stringify(next.state.analysis_state)]);
+      await client.query("update record_uploads set next_seq=$2,chain_tip=$3,last_t=$4,observed_length=$5,analysis_state=$6::jsonb,received_bytes=$7,updated_at=now() where upload_id=$1",
+        [id, next.state.next_seq, next.state.chain_tip, next.state.last_t, next.state.observed_length, JSON.stringify(next.state.analysis_state), next.state.received_bytes]);
       const counts = new Map<number, number>(); for (const delay of next.delays) counts.set(delay, (counts.get(delay) ?? 0) + 1);
       if (counts.size) await client.query(`insert into upload_delay_counts(upload_id,delay_ms,event_count)
         select $1,delay_ms,event_count from unnest($2::bigint[],$3::integer[]) as input(delay_ms,event_count)

@@ -284,7 +284,7 @@ test("Postgres forward migration preserves old records and observations, then st
   assert.equal(first.status, 201);
 
   const migrated = await applyMigrations(pool, await loadSqlMigrations());
-  assert.deepEqual(migrated.applied.map(({ version }) => version), ["003", "004", "005"]);
+  assert.deepEqual(migrated.applied.map(({ version }) => version), ["003", "004", "005", "006"]);
   assert.deepEqual(migrated.skipped.map(({ version }) => version), ["001", "002"]);
   assert.deepEqual(await api.getRecord(uploaded.body.short_signature), oldBefore);
   const rawAfter = (await pool.query("select record_hash, events, duration_ms from records where record_hash = $1", [old.manifest.record_hash])).rows[0];
