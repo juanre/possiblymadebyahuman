@@ -146,7 +146,7 @@ test.describe("browser extension against the local service", () => {
     recordPage.on("pageerror", (error) => pageErrors.push(error.message));
     await recordPage.goto(`${localBaseUrl}/${shortSignature}`);
     await expect(recordPage.getByRole("heading", { name: "Signed writing record" })).toBeVisible();
-    await expect(recordPage.locator("section.card", { hasText: "Signature & details" })).toContainText(record.manifest.record_hash);
+    await expect(recordPage.locator("dl.manifest-details")).toContainText(record.manifest.record_hash);
 
     // Finishing revokes capture; later edits cannot silently continue or be
     // included in the saved record. Reopening controls restores a usable URL.

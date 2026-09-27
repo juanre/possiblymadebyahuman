@@ -141,7 +141,7 @@ export function timelineLengthScale(points: TimelinePoint[], observedFinalLength
 }
 
 export function formatDelayMs(ms: number | null): string {
-  return ms === null ? "n/a" : formatDuration(ms);
+  return ms === null ? "not measured" : formatDuration(ms);
 }
 
 export function formatDuration(ms: number): string {
@@ -189,6 +189,90 @@ export function formatServerObservedSpan(ms: number): string {
   const minutes = totalMinutes % 60;
   if (minutes === 0) return `${hours} ${hours === 1 ? "hour" : "hours"}`;
   return `${hours} ${hours === 1 ? "hour" : "hours"} ${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+}
+
+type SummarySource = Pick<RecordApiResponse, "manifest" | "stats" | "observation">;
+
+const countFormat = new Intl.NumberFormat("en-US");
+
+function plural(count: number, one: string, many: string): string {
+  return `${countFormat.format(count)} ${count === 1 ? one : many}`;
+}
+
+function readableDuration(ms: number): string | null {
+  return ms < 1000 ? null : formatServerObservedSpan(ms);
+}
+
+const CAPTURE_SURFACE_PHRASES: Record<string, string> = {
+  emacs: "in Emacs",
+  browser: "in a browser text field",
+  "web-draft": "on the possiblymadebyahuman writing page",
+};
+
+// A duration is signed when the record seals its finish time; older formats
+// carry a producer-reported duration, which is presented as an estimate.
+function durationPhrase(record: SummarySource): string {
+  const signed = record.manifest.format_version === "0.3";
+  const duration = readableDuration(record.manifest.duration_ms);
+  if (duration === null) return signed ? "in under a second" : "in under a second (estimated)";
+  return signed ? `over ${duration}` : `over an estimated ${duration}`;
+}
+
+function pastePhrase(count: number): string {
+  return count === 0 ? "no pastes" : plural(count, "paste", "pastes");
+}
+
+function publishedDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString("en-GB", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
+}
+
+export function formatCharacters(count: number | null): string {
+  return count === null ? "not measured" : plural(count, "character", "characters");
+}
+
+/** A descriptive one-sentence account of the record, with no evaluation. */
+export function describeRecordSummary(record: SummarySource): string {
+  const context = CAPTURE_SURFACE_PHRASES[String(record.manifest.capture_context?.surface ?? "")];
+  const stats = record.stats;
+  const largest = stats.largest_atomic_insert_codepoints;
+  const counts = [plural(stats.event_count, "edit", "edits"), pastePhrase(stats.paste_event_count)];
+  const measured = largest === null
+    ? `${counts.join(", ")}, and insertion sizes were not fully measured.`
+    : `${counts.join(", ")}, largest single insertion ${formatCharacters(largest)}.`;
+  const written = ["Written", context, durationPhrase(record)].filter(Boolean).join(" ");
+  const date = publishedDate(record.manifest.ingested_server_t);
+  return `${written}: ${measured}${date ? ` Published ${date}.` : ""}`;
+}
+
+const SERVER_TIMING: Record<string, string> = {
+  observed: "yes, whole session",
+  partial: "partly",
+  unobserved: "no",
+  not_requested: "not requested",
+};
+
+export type RecordFact = { label: string; value: string };
+
+export function recordFacts(record: SummarySource): RecordFact[] {
+  const stats = record.stats;
+  const signed = record.manifest.format_version === "0.3";
+  const duration = readableDuration(record.manifest.duration_ms) ?? "under a second";
+  return [
+    { label: "Editing time", value: signed ? duration : `${duration} (estimated)` },
+    { label: "Edits", value: countFormat.format(stats.event_count) },
+    { label: "Pastes", value: stats.paste_event_count === 0 ? "none" : countFormat.format(stats.paste_event_count) },
+    { label: "Largest insertion", value: formatCharacters(stats.largest_atomic_insert_codepoints) },
+    { label: "Length", value: formatCharacters(stats.observed_final_length) },
+    { label: "Server-confirmed timing", value: SERVER_TIMING[record.observation.state] ?? "not requested" },
+  ];
+}
+
+/** Bound text is measured in the canonical form: letters and digits only. */
+export function formatSignedTextLength(count: number): string {
+  return count === 1 ? "1 letter or digit" : `${countFormat.format(count)} letters and digits`;
 }
 
 // A match over a very short bound text is weak evidence — many documents can

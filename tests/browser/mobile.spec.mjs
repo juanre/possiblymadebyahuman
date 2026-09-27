@@ -8,7 +8,7 @@ async function widths(page) {
 test.describe("phone viewport", () => {
   test.use({ viewport: { width: 375, height: 812 } });
 
-  for (const path of ["/smoke", "/bound"]) {
+  for (const path of ["/smoke", "/bound", "/tampered", "/unknownlength"]) {
     test(`record page ${path} fits a 375px screen without horizontal scroll`, async ({ page }) => {
       await page.goto(path);
       await page.getByRole("heading", { name: "Signed writing record" }).waitFor();
@@ -55,23 +55,31 @@ test.describe("phone viewport", () => {
     const gutter = await page.locator("main.page-shell").evaluate((element) => getComputedStyle(element).paddingLeft);
     expect(gutter).toBe("16px");
 
-    // The full record hash gets the card's width, not a squeezed second column.
-    const hashValue = page.locator("dl.details.mono dd").first();
-    const hashBox = await hashValue.boundingBox();
-    expect(hashBox.width).toBeGreaterThanOrEqual(250);
-
-    // Quick facts sit in two columns.
-    const stats = page.locator(".stats-grid .stat");
-    const first = await stats.nth(0).boundingBox();
-    const second = await stats.nth(1).boundingBox();
+    // Header facts sit in two columns.
+    const facts = page.locator(".record-fact");
+    const first = await facts.nth(0).boundingBox();
+    const second = await facts.nth(1).boundingBox();
     expect(second.y).toBe(first.y);
     expect(second.x).toBeGreaterThan(first.x);
+
+    // The edit timeline spans the column between the 16px gutters.
+    const chart = await page.locator("svg.timeline-chart").boundingBox();
+    expect(chart.x).toBeCloseTo(16, 0);
+    expect(chart.width).toBeCloseTo(375 - 32, 0);
 
     // SVG axis labels render at a readable size instead of shrinking with the viewBox.
     const tickLabel = await page.locator("svg.timeline-chart text").first().boundingBox();
     expect(tickLabel.height).toBeGreaterThanOrEqual(9);
-    const rhythmLabel = await page.locator("svg.fingerprint-chart text").first().boundingBox();
-    expect(rhythmLabel.height).toBeGreaterThanOrEqual(8);
+
+    await page.locator("details.technical-details > summary").click();
+    // The full record hash gets the column's width, not a squeezed second column.
+    const hashValue = page.locator("dl.manifest-details dd").first();
+    const hashBox = await hashValue.boundingBox();
+    expect(hashBox.width).toBeGreaterThanOrEqual(250);
+    // The chart re-measures its width once the disclosure opens.
+    await expect.poll(async () => (await page.locator("svg.fingerprint-chart text").first().boundingBox()).height).toBeGreaterThanOrEqual(8);
+    const measured = await widths(page);
+    expect(measured.scroll).toBeLessThanOrEqual(measured.inner);
   });
 });
 
@@ -84,7 +92,7 @@ test("keyboard focus draws a visible ring on record page links", async ({ page }
     const style = getComputedStyle(element);
     return { className: element.className, outlineStyle: style.outlineStyle, outlineWidth: parseFloat(style.outlineWidth) };
   });
-  expect(focused.className).toContain("eyebrow-home");
+  expect(focused.className).toContain("record-home");
   expect(focused.outlineStyle).not.toBe("none");
   expect(focused.outlineWidth).toBeGreaterThan(0);
 });

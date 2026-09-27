@@ -51,9 +51,11 @@ async function recordFixture() {
 test("RecordPage source defines required public record sections without verdict language", async () => {
   const source = await readFile("apps/web/src/components.tsx", "utf8");
   for (const snippet of [
-    "DisclaimerBanner",
+    "RecordHeader",
+    "VerificationAlert",
+    "TechnicalDetails",
     "CaptureContextSummary",
-    "QuickStatsPanel",
+    "TimingAndCounts",
     "EditTimeline",
     "SignalList",
     "SignalCard",
@@ -62,7 +64,9 @@ test("RecordPage source defines required public record sections without verdict 
     "ObservationStatusLine",
     "ObservationCommitmentsList",
     "Edit timeline",
-    "Analyzer signals as facts",
+    "Technical details",
+    "Analyzer signals",
+    "is for you to judge",
     "Server observed checkpoints.",
     "Partially observed.",
     "Not observed.",
@@ -238,9 +242,9 @@ test("text binding disclaimer says plainly it is not a check of exact text", asy
   assert.match(TEXT_BINDING_DISCLAIMER, /not a check of exact text/);
 });
 
-test("delay values render as n/a without a unit when unknown", async () => {
+test("delay values render as not measured, without a unit, when unknown", async () => {
   const { formatDelayMs } = await import("../apps/web/src/record-utils.ts");
-  assert.equal(formatDelayMs(null), "n/a");
+  assert.equal(formatDelayMs(null), "not measured");
   assert.equal(formatDelayMs(60), "60ms");
 });
 
@@ -318,7 +322,7 @@ test("delay summaries use readable units for long gaps and retain null semantics
   assert.equal(formatDelayMs(90_000), "1m 30s");
   assert.equal(formatDelayMs(1_500), "1.5s");
   assert.equal(formatDelayMs(0), "0ms");
-  assert.equal(formatDelayMs(null), "n/a");
+  assert.equal(formatDelayMs(null), "not measured");
 });
 
 
@@ -333,4 +337,80 @@ test("signed finish separates endpoint waits from the measured editing span", as
   });
   record.manifest.format_version = "0.2";
   assert.equal(recordTimingDetails(record).signedFinish, false, "legacy duration is not described as hash-sealed finish");
+});
+
+async function summaryFixture() {
+  const record = await recordFixture();
+  record.manifest.format_version = "0.3";
+  record.manifest.duration_ms = 24 * 60_000;
+  record.manifest.capture_context = { surface: "emacs" };
+  record.manifest.ingested_server_t = "2026-05-28T23:30:00.000Z";
+  record.stats.event_count = 312;
+  record.stats.paste_event_count = 0;
+  record.stats.largest_atomic_insert_codepoints = 12;
+  record.stats.observed_final_length = 1204;
+  record.observation = { state: "observed", observed_session_id: null, commitments: [], checkpoint_count: 0, first_observed_at: null, last_observed_at: null, server_observed_span_ms: null };
+  return record;
+}
+
+test("record summary sentence is strictly descriptive and uses the signed duration", async () => {
+  const { describeRecordSummary } = await import("../apps/web/src/record-utils.ts");
+  const record = await summaryFixture();
+  assert.equal(describeRecordSummary(record), "Written in Emacs over 24 minutes: 312 edits, no pastes, largest single insertion 12 characters. Published 28 May 2026.");
+  record.manifest.capture_context = { surface: "browser" };
+  record.stats.paste_event_count = 1;
+  assert.match(describeRecordSummary(record), /^Written in a browser text field over 24 minutes: 312 edits, 1 paste,/);
+  record.manifest.capture_context = { surface: "web-draft" };
+  record.stats.paste_event_count = 3;
+  assert.match(describeRecordSummary(record), /^Written on the possiblymadebyahuman writing page over 24 minutes: 312 edits, 3 pastes,/);
+  for (const phrase of [/\bonly\b/i, /\bjust\b/i, /suspicious/i, /natural/i, /simply/i]) {
+    assert.doesNotMatch(describeRecordSummary(record), phrase);
+  }
+});
+
+test("record summary sentence marks estimated durations and unknown measurements", async () => {
+  const { describeRecordSummary } = await import("../apps/web/src/record-utils.ts");
+  const record = await summaryFixture();
+  record.manifest.format_version = "0.2";
+  record.manifest.capture_context = null;
+  record.manifest.ingested_server_t = null;
+  record.stats.event_count = 1;
+  record.stats.largest_atomic_insert_codepoints = null;
+  assert.equal(describeRecordSummary(record), "Written over an estimated 24 minutes: 1 edit, no pastes, and insertion sizes were not fully measured.");
+  record.manifest.duration_ms = 240;
+  record.manifest.format_version = "0.3";
+  assert.match(describeRecordSummary(record), /^Written in under a second: 1 edit,/);
+});
+
+test("record facts show each measurement once with plain unknown and zero values", async () => {
+  const { recordFacts } = await import("../apps/web/src/record-utils.ts");
+  const record = await summaryFixture();
+  assert.deepEqual(recordFacts(record), [
+    { label: "Editing time", value: "24 minutes" },
+    { label: "Edits", value: "312" },
+    { label: "Pastes", value: "none" },
+    { label: "Largest insertion", value: "12 characters" },
+    { label: "Length", value: "1,204 characters" },
+    { label: "Server-confirmed timing", value: "yes, whole session" },
+  ]);
+  record.manifest.format_version = "0.2";
+  record.stats.paste_event_count = 2;
+  record.stats.largest_atomic_insert_codepoints = null;
+  record.stats.observed_final_length = null;
+  const facts = Object.fromEntries(recordFacts(record).map(({ label, value }) => [label, value]));
+  assert.equal(facts["Editing time"], "24 minutes (estimated)");
+  assert.equal(facts.Pastes, "2");
+  assert.equal(facts["Largest insertion"], "not measured");
+  assert.equal(facts.Length, "not measured");
+  const timing = (state) => Object.fromEntries(recordFacts({ ...record, observation: { ...record.observation, state } }).map(({ label, value }) => [label, value]))["Server-confirmed timing"];
+  assert.equal(timing("partial"), "partly");
+  assert.equal(timing("unobserved"), "no");
+  assert.equal(timing("not_requested"), "not requested");
+});
+
+test("signed text length is phrased as letters and digits", async () => {
+  const { formatSignedTextLength } = await import("../apps/web/src/record-utils.ts");
+  assert.equal(formatSignedTextLength(95), "95 letters and digits");
+  assert.equal(formatSignedTextLength(1204), "1,204 letters and digits");
+  assert.equal(formatSignedTextLength(1), "1 letter or digit");
 });

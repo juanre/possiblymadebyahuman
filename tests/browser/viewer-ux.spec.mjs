@@ -25,7 +25,7 @@ test('legacy ordinary typing has activity without a fabricated length curve', as
   const record = await activityRecord(request, Array.from({length: 5}, (_, seq) => ordinary(seq)));
   await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
   await page.goto(`/${slug}`);
-  const timeline = page.locator('.timeline-card');
+  const timeline = page.locator('.edit-timeline');
   await expect(timeline).toContainText('bars show when edits happened');
   await expect(timeline.locator('.length-curve')).toHaveCount(0);
   await expect(timeline.locator('.activity-bar')).toHaveCount(5);
@@ -36,7 +36,7 @@ test('a known prefix keeps its length curve and also shows activity in the unkno
   const record = await activityRecord(request, [ordinary(0, 0), ordinary(1, 1), ordinary(2), ordinary(3)]);
   await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
   await page.goto(`/${slug}`);
-  const timeline = page.locator('.timeline-card');
+  const timeline = page.locator('.edit-timeline');
   await expect(timeline).toContainText('up to edit 2 of 4');
   await expect(timeline.locator('.length-curve')).toHaveCount(1);
   await expect(timeline.locator('.activity-strip .activity-bar')).toHaveCount(4);
@@ -52,11 +52,15 @@ for (const width of [390, 1280]) {
     await page.goto(`/${slug}`);
     await expect(page.getByRole('status')).toContainText('Loading writing record');
     await expect(page.getByRole('heading', {name: 'Signed writing record', exact: true})).toHaveCount(0);
-    const before = await page.locator('header.signet h1').boundingBox();
+    const before = await page.locator('header.record-header h1').boundingBox();
+    const summaryBefore = await page.locator('header.record-header .record-summary').boundingBox();
     release();
     await expect(page.getByRole('heading', {name: 'Signed writing record', exact: true})).toBeVisible();
-    const after = await page.locator('header.signet h1').boundingBox();
+    const after = await page.locator('header.record-header h1').boundingBox();
     for (const coordinate of ['x', 'y', 'width', 'height']) expect(Math.abs(after[coordinate] - before[coordinate])).toBeLessThan(1);
+    const summaryAfter = await page.locator('header.record-header .record-summary').boundingBox();
+    for (const coordinate of ['x', 'y', 'width']) expect(Math.abs(summaryAfter[coordinate] - summaryBefore[coordinate])).toBeLessThan(1);
+    await expect(page.getByRole('status').first()).toContainText('Writing record loaded.');
   });
 }
 
@@ -77,13 +81,13 @@ test('zero edits are explicit and one measurable edit has a visible length point
   let record = await activityRecord(request, []);
   await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
   await page.goto(`/${slug}`);
-  await expect(page.locator('.timeline-card')).toContainText('No edit events');
-  await expect(page.locator('.timeline-card')).not.toContainText('length is unknown');
+  await expect(page.locator('.edit-timeline')).toContainText('No edit events');
+  await expect(page.locator('.edit-timeline')).not.toContainText('length is unknown');
   await expect(page.locator('.chain-status')).toContainText('could not be verified');
   record = await activityRecord(request, [ordinary(0, 0)]);
   await page.reload();
   await expect(page.locator('.length-single')).toBeVisible();
-  await expect(page.locator('.length-single title')).toContainText('1 codepoints');
+  await expect(page.locator('.length-single title')).toContainText('1 character after the first edit');
 });
 
 for (const elapsed of [60 * 86400000, Number.MAX_SAFE_INTEGER]) {
@@ -94,9 +98,9 @@ for (const elapsed of [60 * 86400000, Number.MAX_SAFE_INTEGER]) {
     await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
     await page.goto(`/${slug}`);
     await expect(page.getByRole('heading', {name: 'Signed writing record', exact: true})).toBeVisible();
-    await expect(page.getByText('Hash chain recomputed in your browser.', {exact: true})).toBeVisible();
-    await expect(page.locator('.timeline-card')).toContainText(`${Math.floor(elapsed / 86400000)}d`);
-    await expect(page.locator('.timeline-card')).not.toContainText(/NaN|Infinity/);
+    await expect(page.locator('.chain-status.ok')).toContainText('Hash chain recomputed in your browser.');
+    await expect(page.locator('.edit-timeline')).toContainText(`${Math.floor(elapsed / 86400000)}d`);
+    await expect(page.locator('.edit-timeline')).not.toContainText(/NaN|Infinity/);
     expect(errors).toEqual([]);
   });
 }
@@ -127,9 +131,10 @@ for (const width of [390, 1280]) {
     await expect(page.locator('.fp-overflow')).toHaveAttribute('data-count', '1');
     await expect(page.locator('.rhythm-overflow-summary')).toContainText('1 gap longer than 100 seconds');
     expect(await page.locator('.fp-bin').evaluateAll(bins => bins.reduce((sum, bin) => sum + Number(bin.dataset.count), 0))).toBe(0);
-    for (const label of ['Median gap', '95th-percentile gap', 'Longest pause']) {
-      await expect(page.locator('.fingerprint-stats div').filter({has: page.getByText(label, {exact: true})})).toContainText('60d 0h');
-    }
+    await page.locator('details.technical-details > summary').click();
+    const timingCounts = page.getByRole('region', {name: 'Timing and counts', exact: true});
+    await expect(timingCounts).toContainText('Median and 95th-percentile gap60d 0h and 60d 0h');
+    await expect(timingCounts).toContainText('Longest gap60d 0h');
     const labels = await page.locator('.fingerprint-chart text').evaluateAll(nodes => nodes.map(node => { const rect = node.getBoundingClientRect(); return {left: rect.left, right: rect.right}; }));
     for (let index = 1; index < labels.length; index++) expect(labels[index].left).toBeGreaterThan(labels[index - 1].right);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
@@ -158,6 +163,7 @@ test('simultaneous edits remain visible in the explicitly labelled short-gap buc
   await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
   await page.goto(`/${slug}`);
   await expect(page.locator('.fp-underflow')).toHaveAttribute('data-count', '1');
+  await page.locator('details.technical-details > summary').click();
   await expect(page.locator('.fp-underflow')).toBeVisible();
   await expect(page.locator('.rhythm-overflow-summary')).toContainText('including gaps of zero milliseconds');
 });
@@ -173,15 +179,17 @@ test('signed finish displays endpoint waits separately without extending the doc
   record.stats.idle_time_ms = 0;
   await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
   await page.goto(`/${slug}`);
-  await expect(page.getByText('Hash chain recomputed in your browser.', {exact: true})).toBeVisible();
+  await expect(page.locator('.chain-status.ok')).toContainText('Hash chain recomputed in your browser.');
   await expect(page.locator('.signed-finish-summary')).toContainText('The final 60d 0h contains no captured edits');
   await expect(page.locator('.signed-finish-summary')).toContainText('during the first 1.0s');
   await expect(page.locator('.signed-finish-gap')).toBeVisible();
   await expect(page.locator('.before-first-edit-gap')).toBeVisible();
-  const quickFacts = page.locator('section').filter({has: page.getByRole('heading', {name: 'Quick facts', exact: true})});
+  const editingTime = page.locator('.record-fact').filter({hasText: 'Editing time'}).locator('dd');
+  await expect(editingTime).toHaveText('60 days');
+  const quickFacts = page.locator('.timing-counts');
   await expect(quickFacts).toContainText('Signed duration');
-  await expect(quickFacts.locator('.stat').filter({hasText: 'Editing span'})).toContainText('1.0s');
-  await expect(quickFacts.locator('.stat').filter({hasText: 'Active / idle between edits'})).toContainText('1.0s / 0ms');
+  await expect(quickFacts).toContainText('Editing span, first to last edit1.0s');
+  await expect(quickFacts).toContainText('1.0s active, 0ms in pauses of 30 seconds or more');
   const geometry = await page.locator('.timeline-chart').evaluate(chart => {
     const line = chart.querySelector('.length-curve');
     const gap = chart.querySelector('.signed-finish-gap');
@@ -197,4 +205,6 @@ test('signed finish displays endpoint waits separately without extending the doc
   await expect(page.locator('.signed-finish-gap')).toHaveCount(0);
   await expect(quickFacts).toContainText('Reported duration');
   await expect(quickFacts).not.toContainText('Signed duration');
+  await expect(editingTime).toHaveText('60 days (estimated)');
+  await expect(page.locator('.record-summary')).toContainText('over an estimated 60 days');
 });

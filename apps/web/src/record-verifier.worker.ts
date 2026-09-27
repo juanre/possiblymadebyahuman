@@ -1,6 +1,10 @@
 import type { RecordManifest } from "../../../packages/format/src/index.ts";
 import { verifyPagedRecord, type EventPage } from "./stream-record.ts";
 
+// A page that could not be fetched says nothing about the record's integrity,
+// so it is reported separately from a failed check.
+class PageUnavailable extends Error {}
+
 self.onmessage = async (
   message: MessageEvent<{ manifest: RecordManifest }>,
 ) => {
@@ -10,15 +14,24 @@ self.onmessage = async (
     const result = await verifyPagedRecord(
       manifest,
       async (offset, limit) => {
-        const response = await fetch(
-          `/api/records/${encodeURIComponent(manifest.record_hash)}/events?offset=${offset}&limit=${limit}`,
-          { signal: AbortSignal.timeout(30_000) },
-        );
-        if (!response.ok)
-          throw new Error(
-            `Event page could not be loaded (${response.status})`,
+        let response: Response;
+        try {
+          response = await fetch(
+            `/api/records/${encodeURIComponent(manifest.record_hash)}/events?offset=${offset}&limit=${limit}`,
+            { signal: AbortSignal.timeout(30_000) },
           );
-        return (await response.json()) as EventPage;
+        } catch {
+          throw new PageUnavailable("An event page could not be loaded.");
+        }
+        if (!response.ok)
+          throw new PageUnavailable(
+            `Event page could not be loaded (${response.status}).`,
+          );
+        try {
+          return (await response.json()) as EventPage;
+        } catch {
+          throw new PageUnavailable("An event page could not be read.");
+        }
       },
       (progress) =>
         self.postMessage({ type: "progress", count: progress.count }),
@@ -26,7 +39,7 @@ self.onmessage = async (
     self.postMessage({ type: "complete", ...result });
   } catch (error) {
     self.postMessage({
-      type: "error",
+      type: error instanceof PageUnavailable ? "unavailable" : "error",
       message: error instanceof Error ? error.message : String(error),
     });
   }
