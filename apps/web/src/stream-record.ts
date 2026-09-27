@@ -94,12 +94,7 @@ export async function verifyPagedRecord(
       verifier.eventCount === manifest.event_count ? null : verifier.eventCount;
     if (page.next_offset !== expectedNext)
       throw new Error("Event page cursor is inconsistent");
-    if (
-      verifier.eventCount % (EVENT_PAGE_SIZE * 16) === 0 ||
-      expectedNext === null
-    ) {
-      progress?.({ count: verifier.eventCount, overview });
-    }
+    progress?.({ count: verifier.eventCount, overview });
   }
   return { verification: verifier.finish(), overview };
 }

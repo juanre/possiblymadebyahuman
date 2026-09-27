@@ -188,3 +188,33 @@ test("paged reader verifies all events with a fixed overview and rejects tampere
     /page size/,
   );
 });
+
+test("paged reader reports progress after every verified page", async () => {
+  const { verifyPagedRecord, EVENT_PAGE_SIZE } = await import(
+    "../apps/web/src/stream-record.ts"
+  );
+  const events = Array.from({ length: 9000 }, (_, i) => event(i));
+  const manifest = manifestFor(events);
+  const tips = [];
+  let tip = null;
+  for (const e of events) {
+    tip = advanceEventHash(tip, e, sessionId, "0.3");
+    tips.push(tip);
+  }
+  const readPage = async (offset, limit) => {
+    const page = events.slice(offset, offset + limit);
+    const next = offset + page.length;
+    return {
+      events: page,
+      total_events: events.length,
+      next_offset: next === events.length ? null : next,
+      chain_tip_before: tips[offset - 1] ?? null,
+      chain_tip_after: tips[next - 1],
+    };
+  };
+  const counts = [];
+  await verifyPagedRecord(manifest, readPage, (progress) =>
+    counts.push(progress.count),
+  );
+  assert.deepEqual(counts, [EVENT_PAGE_SIZE, EVENT_PAGE_SIZE * 2, 9000]);
+});
