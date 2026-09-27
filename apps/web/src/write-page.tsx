@@ -19,6 +19,7 @@ import {
 } from "../../../packages/producer-core/src/index.ts";
 import { canonicalizeTextForBinding, createTextBinding } from "../../../packages/format/src/index.ts";
 import { attachWriteCapture } from "./write-capture.ts";
+import "./write.css";
 
 const STORAGE_KEY = "pmbah.write.sessions.v1";
 const PRODUCER: ProducerIdentity = { id: "web-draft", version: "0.1.0", capabilities: ["timing"] };
