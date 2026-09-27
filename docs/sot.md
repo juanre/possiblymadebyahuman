@@ -819,37 +819,35 @@ Main route:
 Component structure:
 
 ```text
-RecordPage
-  DisclaimerBanner
-  CaptureContextSummary
-  QuickStatsPanel
-  ProcessTimeline
-  SignalList
-    SignalCard
-  VerificationPanel
-    ChainVerificationButton
-    ManifestDetails
+RecordPage / PagedRecordPage
+  VerificationAlert
+  RecordHeader
+  EditTimeline
+  TextBindingSection
+    DocumentCheckCard
+    CommensurabilityCard
+  TechnicalDetails
+    VerificationPanel
+      ManifestDetails
+    TimingFingerprint
+    TimingAndCounts
+    SignalList
+      SignalCard
+    CaptureContextSummary
 ```
 
 ### 11.1 Record page content
 
-The page should show:
+The page should show, in this order:
 
-1. Standing disclaimer.
-2. Capture context, if present.
-3. Quick stats:
-   - event count
-   - signed duration for 0.3, reported duration for legacy records, and editing span separately
-   - observed process length, or unknown when process measurements contain nulls
-   - typing events / typed codepoints
-   - insertions / deletions / replacements
-   - paste/unknown counts
-   - largest atomic insert
-   - active vs idle time between captured edits, excluding leading and trailing waits
-   - delay distribution summary
-4. Process timeline.
-5. Analyzer signals as facts.
-6. Verification panel.
+1. A top-level alert, only when a completed hash or format check fails, linking to the signature section.
+2. Header: the title, one strictly descriptive summary sentence (capture context, signed or estimated duration, edits, pastes, largest single insertion, publication date), key facts (editing time, edits, pastes, largest insertion, length, server-confirmed timing), and one limit caption. Unknown values read "not measured".
+3. Edit timeline.
+4. Document check, or a statement that no document was bound.
+5. How this was written (signed text size in letters and digits), only when a document is bound.
+6. Technical details, collapsed: signature & details, writing rhythm, timing and counts (signed or reported duration, editing span, active and paused time between edits, delay summary, typing and operation counts, unknown sources), analyzer signals, capture context.
+
+Each measurement appears once outside the technical details.
 
 ### 11.2 Process timeline in content-blind mode
 

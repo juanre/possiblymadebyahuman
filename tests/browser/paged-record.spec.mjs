@@ -155,8 +155,41 @@ test("tampered paged events never produce a verified binding or overview", async
     }),
   ).toHaveCount(0);
   await expect(
-    page.getByText("Document checking is unavailable", { exact: false }),
+    page.getByText("Checking is unavailable because this record does not verify", { exact: false }),
   ).toBeVisible();
+});
+
+test("a document check on a verified paged record survives later re-renders", async ({
+  page,
+  request,
+}) => {
+  await pagedFixture(page, request);
+  await page.goto("/long-session");
+  await page
+    .getByRole("button", { name: "Verify full record", exact: true })
+    .click();
+  await expect(page.locator(".chain-status")).toHaveClass(/ok/);
+  const card = page.getByRole("region", { name: "Check a document", exact: true });
+  await card.getByLabel("document to check").fill("bounded reader");
+  await card.getByRole("button", { name: "Check", exact: true }).click();
+  await expect(card.locator(".binding-result")).toHaveClass(/ok/);
+  await page.locator("details.technical-details > summary").click();
+  await expect(page.locator("details.technical-details")).toHaveAttribute("open", "");
+  await expect(card.locator(".binding-result")).toHaveClass(/ok/);
+});
+
+test("tampered paged events raise the same top-level alert as a full record", async ({
+  page,
+  request,
+}) => {
+  await pagedFixture(page, request, { tamper: true });
+  await page.goto("/long-session");
+  await page
+    .getByRole("button", { name: "Verify full record", exact: true })
+    .click();
+  const alert = page.getByRole("alert");
+  await expect(alert).toHaveCount(1);
+  await expect(alert).toContainText("This record does not verify.");
 });
 
 test("failed page download can retry without mistaking a verified prefix for a complete record", async ({
@@ -171,6 +204,9 @@ test("failed page download can retry without mistaking a verified prefix for a c
   await expect(page.locator(".chain-status")).toContainText(
     "could not be loaded",
   );
+  // An unfinished download is not a failed check.
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.locator(".chain-status")).not.toHaveClass(/error/);
   await page
     .getByRole("button", { name: "Verify full record", exact: true })
     .click();
