@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./csp-guard.mjs";
 
 import { BOUND_TEXT } from "./bound-fixture-text.mjs";
 

@@ -1,4 +1,4 @@
-.PHONY: help install check test test-db test-db-down typecheck dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container-build local-container local-container-down local-container-reset local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser test-extension-e2e build-site test-release-container release-ready ship-tag
+.PHONY: help install check test test-db test-db-down typecheck delete-abandoned-uploads remove-record dev-api dev-web dev-site extension-build extension-package docker-build release-build-image release-build-image-nocache local-container-build local-container local-container-down local-container-reset local-container-logs local-container-test migrate prod-container prod-container-pull prod-container-migrate prod-container-down clean test-web-browser test-extension-e2e build-site test-release-container release-ready ship-tag
 
 ENV_FILE ?= .env.local-container
 PROD_ENV_FILE ?= .env.localprod
@@ -37,6 +37,8 @@ help:
 	@echo "  make local-container-down  Stop local stack"
 	@echo "  make local-container-reset Stop local stack and remove the local Postgres volume"
 	@echo "  make migrate               Run checked, ordered migrations against DATABASE_URL"
+	@echo "  make delete-abandoned-uploads Delete unfinalized uploads untouched for OLDER_THAN_DAYS (30) in DATABASE_URL"
+	@echo "  make remove-record SIGNATURE=... [CONFIRM=yes] Preview, or with CONFIRM=yes remove, one record in DATABASE_URL"
 	@echo "  make prod-container        Run prod-like container against external Neon DATABASE_URL"
 	@echo "  make prod-container-pull   Pull configured PROD_IMAGE when it is remote"
 	@echo "  make prod-container-migrate Run migrations against external Neon DATABASE_URL"
@@ -137,6 +139,15 @@ local-container-reset:
 migrate:
 	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is required" && exit 1)
 	npm run migrate
+
+delete-abandoned-uploads:
+	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is required" && exit 1)
+	node apps/ingest-api/scripts/delete-abandoned-uploads.mjs --older-than-days $(or $(OLDER_THAN_DAYS),30)
+
+remove-record:
+	@test -n "$(DATABASE_URL)" || (echo "DATABASE_URL is required" && exit 1)
+	@test -n "$(SIGNATURE)" || (echo "SIGNATURE is required: the record's short signature or full b3: hash" && exit 1)
+	node apps/ingest-api/scripts/remove-record.mjs "$(SIGNATURE)" $(if $(filter yes,$(CONFIRM)),--confirm,)
 
 prod-container-pull:
 	@test -f "$(PROD_ENV_FILE)" || (echo "Missing $(PROD_ENV_FILE). Copy .env.localprod.example or .env.production.example first." && exit 1)

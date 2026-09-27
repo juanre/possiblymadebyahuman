@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './csp-guard.mjs';
 import { computeRecordHash } from '../../packages/format/src/index.ts';
 
 const slug = process.env.PMBAH_FIXTURE_SLUG ?? 'smoke';

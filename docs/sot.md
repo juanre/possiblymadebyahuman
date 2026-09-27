@@ -523,7 +523,7 @@ Reasons:
 - Avoids premature object-storage split.
 - Neon gives managed Postgres while preserving a standard Postgres development/test surface.
 
-New records store immutable event chunks in PostgreSQL, with separate indexed upload cursors and summaries. Individual requests contain at most 4096 events; neither finalization nor paged reading assembles the complete log. Existing inline JSONB records remain readable through the compatibility API. Migration 005 installs this storage layout.
+New records store immutable event chunks in PostgreSQL, with separate indexed upload cursors and summaries. Individual requests contain at most 4096 events; neither finalization nor paged reading assembles the complete log. Existing inline JSONB records remain readable through the compatibility API. Migration 005 installs this storage layout. Migration 006 records each upload's last activity and received bytes: one upload is capped in events and bytes (413 `upload_too_large`), and an operator command deletes unfinalized staging untouched for 30 days. Producers keep the frozen record and restart a missing upload from event zero. Observed sessions and checkpoints still have no expiry.
 
 ### 7.1 `records`
 
@@ -657,7 +657,7 @@ Approved v0 policy:
 - No public user deletion endpoint.
 - Uploaded records are permanent by default.
 - This is acceptable only because public records must not store plaintext or direct user identity fields.
-- Manual/admin abuse removal can exist operationally outside the public API.
+- Manual/admin abuse removal can exist operationally outside the public API. `make remove-record` removes one record and its dependent rows in one transaction and keeps its hash in a private tombstone (migration 007), so the hash cannot be published again and its URL returns not-found. Continuations keep their signed parent hash and stay published. See [record removal](operations-record-removal.md).
 
 Reasoning:
 

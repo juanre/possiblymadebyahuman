@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./csp-guard.mjs";
 import { build } from "esbuild";
 import { readFile } from "node:fs/promises";
 

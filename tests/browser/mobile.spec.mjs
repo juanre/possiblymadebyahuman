@@ -1,5 +1,5 @@
 import { mockRecordUpload } from "./journal-fixtures.mjs";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./csp-guard.mjs";
 
 async function widths(page) {
   return page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, inner: window.innerWidth }));

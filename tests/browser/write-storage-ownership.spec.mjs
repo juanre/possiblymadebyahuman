@@ -1,5 +1,5 @@
 import { readWriteSessions } from "./journal-fixtures.mjs";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./csp-guard.mjs";
 
 const storageKey = "pmbah.write.sessions.v1";
 const sessions = readWriteSessions;
