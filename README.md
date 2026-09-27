@@ -15,7 +15,7 @@ Release-readiness work is in progress. Implemented pieces include the content-bl
 ## Producer installation docs
 
 - First-party browser drafting page: `/write` in a running service.
-- Browser extension packaging/release details: [`docs/browser-extension-release.md`](docs/browser-extension-release.md) and [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md).
+- Browser extension packaging/release details: [`docs/browser-extension-release.md`](docs/browser-extension-release.md), [`docs/chrome-web-store-prep.md`](docs/chrome-web-store-prep.md) and [`docs/chrome-web-store-listing.md`](docs/chrome-web-store-listing.md).
 - Emacs producer installation and troubleshooting: [`producers/emacs/README.md`](producers/emacs/README.md).
 
 Public v0 requires a real Chrome Web Store install path for the browser extension; do not publish placeholder or "coming soon" install links. Browser-extension documents are preparatory only until the extension implementation, package artifact, human approval, and real Chrome Web Store URL exist.

@@ -1,10 +1,10 @@
 # Browser extension release packaging and store plan
 
-Status: deterministic packaging contract owned by `default-aaaa.17`. The shared
-browser producer core (`default-aaaa.29`) and the extension behaviour
-(`default-aaaa.7`) have landed; final Chrome Web Store submission and the real
-listing URL are owned by `default-aaaa.26`. The reconciled store-facing
-listing prep lives in `docs/chrome-web-store-prep.md`.
+This document covers how the extension is built, packaged and released. Store
+submission facts (permissions, data use, package checksum) are in
+[`docs/chrome-web-store-prep.md`](chrome-web-store-prep.md); paste-ready listing
+copy and the submission checklist are in
+[`docs/chrome-web-store-listing.md`](chrome-web-store-listing.md).
 
 Do not publish a Chrome Web Store install link until approval produces a real URL. Reviewed ZIP releases may be linked as developer-mode sideloads.
 Do not commit store credentials, OAuth tokens, refresh tokens, real publisher
@@ -12,51 +12,52 @@ account details, `.env*` files, source maps, or local build outputs.
 
 ## Artifact contract
 
-The provisional v0 Chrome/Chromium artifact contract is:
-
 | Field | Value |
 | --- | --- |
 | Build command | `npm --workspace @possiblymadebyahuman/browser-extension run build` or `make extension-build` |
 | Package command | `npm --workspace @possiblymadebyahuman/browser-extension run package` or `make extension-package` |
 | Build output directory | `apps/browser-extension/dist/` |
 | Package output | `apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip` |
-| Version source | `apps/browser-extension/package.json` `version` |
+| Version source | `apps/browser-extension/package.json` `version` (currently `0.3.4`) |
 | Manifest source | `apps/browser-extension/manifest.template.json`, with version injected at build time |
-| Bundler | `esbuild` |
+| Bundler | `esbuild`, minified, targeting Chrome 120 |
 | Upload base URL | `EXT_BASE_URL`, defaulting to `https://possiblymadebyahuman.com`, normalized before appending `/api/records` |
 
 The package command rebuilds the extension and writes a deterministic ZIP with
-fixed ZIP entry timestamps. The v0 package must not include source maps,
-TypeScript source files, local env files, secrets, or remote executable code.
+fixed entry timestamps. The package must not include source maps, TypeScript
+source files, local env files, secrets, or remote executable code.
 
-The final zip contains exactly the following entries (enforced by
+The zip contains exactly these entries (enforced by
 `tests/browser-extension-package.test.mjs`):
 
 ```text
-manifest.json
-service-worker.js
 content.js
-popup.html
-popup.js
+favicon.svg
+icons/128.png
 icons/16.png
 icons/48.png
-icons/128.png
+manifest.json
+popup.html
+popup.js
+service-worker.js
 ```
 
-The icon files are PMBAH pencil-figure-derived PNGs copied from
-`apps/browser-extension/icons/` by `scripts/build.mjs`.
+`scripts/build.mjs` copies the icons from `apps/browser-extension/icons/`
+(the PMBAH infinity mark, generated from `apps/site/static/icon-512.png`) and
+`favicon.svg` from the site's static files.
 
 ## Local build and package
 
 From the repository root:
 
 ```bash
-npm install
+npm ci
 make extension-package
 unzip -l apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip
+shasum -a 256 apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip
 ```
 
-To point a local/staging package at a different API origin:
+To point a local or staging package at a different API origin:
 
 ```bash
 EXT_BASE_URL=http://localhost:8787 make extension-package
@@ -64,149 +65,92 @@ EXT_BASE_URL=http://localhost:8787 make extension-package
 
 `EXT_BASE_URL` is a build-time value. The builder strips query strings and
 fragments and removes a trailing slash before the extension appends
-`/api/records`.
+`/api/records`. Store uploads must use the default.
 
 ## Release workflow
 
-`.github/workflows/release-image.yml` now includes an `extension-package` job for
-pushed `v*` tags. It:
+`.github/workflows/release-image.yml` runs for pushed `v*` tags. After the
+reusable checks pass (including the installed extension against a disposable
+production image and Postgres), its `extension-package` job runs
+`make extension-package`, and the `release-downloads` job attaches the zip to
+the GitHub Release for that tag. Tags with a suffix such as `v0.3.3-rc.1` create
+prereleases.
 
-1. checks out the repository;
-2. installs npm dependencies with `npm ci`;
-3. runs `make extension-package`;
-4. uploads `apps/browser-extension/dist/possiblymadebyahuman-extension-*.zip` as
-   a GitHub Actions artifact.
-
-The job does not submit to any browser store. Store publication remains a manual
-or separately approved process because it requires human-owned accounts,
-listing approval, privacy disclosures, and credentials.
+The workflow never submits to a browser store. The attached zip is the file to
+upload to the Chrome Web Store; compare its SHA-256 with a local
+`make extension-package` of the same tag first.
 
 ## Versioning
 
-For the scaffold, the extension version comes from
-`apps/browser-extension/package.json`. Before release, reconcile it with the
-human-approved repository tag:
+- A release tag `vX.Y.Z` corresponds to the extension package version it ships.
+- The build injects that version into `manifest.json`.
+- Every Chrome Web Store upload for the same extension ID must carry a higher
+  version than the previous upload.
+- The store listing's title and summary come from the manifest `name` and
+  `description`, so changing them requires a new version.
 
-- a release tag `vX.Y.Z` should correspond to the extension package version it ships;
-- the build injects that package version into `manifest.json`;
-- Chrome Web Store uploads must use a version greater than any previously
-  uploaded package for the same extension ID.
+## Store screenshots
 
-Extension-only review candidates use tags such as `extension-0.2.0-rc.1`. These
-do not match the production image workflow’s `v*` trigger. After checks on the
-exact commit, rebuild with the production `EXT_BASE_URL`, verify the endpoint and
-ZIP checksum, push the candidate tag and attach the ZIP to a GitHub prerelease.
-This delivers a sideload candidate without promoting a server image or claiming
-Gmail acceptance. Coordinated production releases continue to use reviewed `v*`
-tags and the release-image workflow.
+`apps/browser-extension/store-assets/` holds the listing icon
+(`chrome-web-store-icon-128.png`), the small promo tile
+(`promo-tile-440x280.png`) and five 1280x800 screenshots under `screenshots/`.
+Regenerate them with:
+
+```bash
+npm ci
+npx playwright install chromium
+node scripts/store-screenshots.mjs
+```
+
+The script builds the extension against a local ingest service backed by an
+in-memory store on port 4730 (`PMBAH_SCREENSHOT_PORT` changes it), records a
+reply on a fictional blog page, publishes it, and captures the side panel next
+to the page plus the resulting record page. Headless Chromium cannot draw
+Chrome's side panel, so each of the first three images places a screenshot of
+the page and one of the real panel document side by side. Nothing is sent to
+production. Review every image after regenerating.
 
 ## Chrome Web Store manual publishing path
 
-Chrome/Chromium through the Chrome Web Store is required for public v0.
-
-Manual v0 flow:
-
-1. Human confirms the Chrome Web Store Developer account and publisher access.
-2. Human approves public vs unlisted listing visibility.
-3. Run `make extension-package` from the reviewed release commit/tag.
-4. Human opens the Chrome Web Store Developer Dashboard.
-5. Create or update the PMBAH extension item.
-6. Upload the generated zip.
-7. Fill listing, support, privacy, data-use, and permission-justification fields
-   using `docs/chrome-web-store-prep.md`, reconciled with the final manifest and
-   final `default-aaaa.7` behavior.
-8. Add required screenshots/icons/promotional assets approved by the human.
-9. Submit for review after explicit human approval.
-10. Record the assigned extension ID and real Chrome Web Store listing URL in the
-    release handoff and site/docs only after the listing exists.
+Chrome/Chromium through the Chrome Web Store is the public distribution target.
+Follow the checklist in
+[`docs/chrome-web-store-listing.md`](chrome-web-store-listing.md#submission-checklist).
+In short: a human publisher uploads the release zip in the Developer Dashboard,
+fills the listing and privacy tabs from the prepared text, and submits for
+review. Record the assigned extension ID and listing URL in
+`docs/chrome-web-store-prep.md`, and link the store from the site only after the
+listing is live.
 
 Do not use a fake Chrome Web Store URL, a placeholder install page, or "coming
-soon" install copy for release.
+soon" install copy.
 
 ## Optional Chrome Web Store API automation
 
-Automation is future/optional and must not be enabled without human approval.
-Likely secrets, subject to the current Chrome Web Store API requirements:
+Automation must not be enabled without Juan's approval. Likely secrets, subject
+to the current Chrome Web Store API requirements:
 
 - `CHROME_EXTENSION_ID`
 - `CHROME_CLIENT_ID`
 - `CHROME_CLIENT_SECRET`
 - `CHROME_REFRESH_TOKEN` or current equivalent
 
-If automation is added later, prefer upload-only automation first. Publishing to
-users should remain a separate human-approved step unless the human explicitly
-approves auto-publish.
+Prefer upload-only automation first. Publishing to users should remain a
+separate human-approved step unless auto-publish is explicitly approved.
 
 ## Edge Add-ons path
 
-Edge is not the v0 gate. After Chrome support works, assess whether the same MV3
-zip can be submitted to Edge Add-ons.
-
-Human/account needs if pursued:
-
-- Microsoft Partner Center / Edge Add-ons developer access;
-- listing assets and privacy answers adapted from the Chrome listing;
-- Edge-specific extension ID and listing URL;
-- optional API credentials only if automation is approved.
-
-If the Chrome Web Store extension installs and behaves correctly in Edge via the
-Chrome Web Store compatibility path, document that as compatibility evidence; a
-separate Edge Add-ons listing can remain a follow-up.
+Edge is not a release gate. Edge can install extensions from the Chrome Web
+Store, so test the store build there first and document the result. A separate
+Edge Add-ons listing would need Microsoft Partner Center access, listing assets
+and privacy answers adapted from the Chrome listing, and its own extension ID.
 
 ## Firefox AMO path
 
-Firefox is not the v0 gate. After `default-aaaa.7`, test whether the MV3 package
-and `chrome.*` APIs are compatible with current Firefox extension support.
-
-Possible outcomes:
-
-- If the package works by sideloading with no material changes, document the
-  evidence and consider a follow-up AMO package using `web-ext`.
-- If APIs or MV3 behavior diverge materially, document the blocker and create a
-  follow-up rather than blocking Chrome v0.
-
-AMO automation, if ever approved, would require human-owned AMO access plus
-`web-ext` signing credentials such as `WEB_EXT_API_KEY` and
-`WEB_EXT_API_SECRET`. Do not commit those values.
+Firefox is not supported by this package: it relies on `chrome.sidePanel` and a
+module service worker. Supporting Firefox would need a sidebar-based variant and
+testing with `web-ext`. AMO signing credentials such as `WEB_EXT_API_KEY` and
+`WEB_EXT_API_SECRET` would be human-owned and never committed.
 
 ## Safari
 
-Safari/App Store distribution is out of scope for v0 unless explicitly approved
-later.
-
-## Final reconciliation (post-`.7`)
-
-The final shipped values are recorded in `docs/chrome-web-store-prep.md`
-under "Release-readiness summary" and "Permission justification". The cross-
-references are:
-
-- Shared producer-core package and adapter wiring: `packages/producer-core/`
-  and `apps/browser-extension/src/lib/{adapters,dispatcher,messages,policy,
-  descriptor,codepoint}.ts`.
-- Manifest permissions and host permissions: see the permission justification
-  table in `docs/chrome-web-store-prep.md`. Extension 0.2.1: `["storage",
-  "clipboardWrite", "alarms", "contextMenus", "sidePanel", "webNavigation"]` + `host_permissions: ["<all_urls>"]`.
-- Zip contents and entry names: see the bullet list above and
-  `tests/browser-extension-package.test.mjs`.
-- Local retention: no automatic expiry for extension drafts or saved links.
-  Startup/registration/hourly cleanup removes redundant uploaded events and
-  checkpoint credentials while preserving saved links. Explicit Resume retains
-  the original session clock across months; no automatic field reattachment.
-  Shared producer-core defaults and `/write` behavior remain unchanged.
-- Long-session service support requires migration `003_long_session_times.sql`,
-  widened time validation and removal of checkpoint expiry. Deploy the service
-  update before relying on the candidate for records longer than 24.86 days.
-  Existing timestamps already use `timestamptz`; only elapsed-time columns become
-  `bigint`. Prior migrations and public hashes remain unchanged.
-- Source-attribution and capability claims: producer identity declares
-  `["timing", "source_attribution"]` because the InputEvent → Source map in
-  `apps/browser-extension/src/lib/codepoint.ts` returns `unknown` on any
-  ambiguous inputType rather than guessing.
-- Support matrix: see `apps/browser-extension/README.md#support-and-remaining-manual-acceptance`.
-  Chrome required; Chromium-family best-effort; Firefox documented incompat;
-  Safari out of scope for v0.
-- Privacy/data-use answers: see "Data observed locally / Data stored or
-  processed locally before upload / Data transmitted on explicit sign/upload
-  / Data not transmitted by the public/default extension" in the prep doc.
-
-Release tags now invoke the reusable checks before packaging or publishing. Those checks run the installed extension against a disposable production image and Postgres. The zip is also attached to the GitHub Release as a durable download; this is a sideload artifact, not evidence of Chrome Web Store approval.
+Safari/App Store distribution is out of scope unless explicitly approved later.
