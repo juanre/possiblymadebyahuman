@@ -71,10 +71,11 @@ const fetched = await checkJson(`/api/records/${created.short_signature}`, (body
 assertNoPlaintext('GET API response', JSON.stringify(fetched), true);
 if (JSON.stringify(fetched).includes(observed.token)) throw new Error('GET API response leaked token');
 
-const writeShell = await checkHtml('/write', ['possiblymadebyahuman record', 'id="root"', '/record-assets/']);
+const writeShell = await checkHtml('/write', ['Writing record · possiblymadebyahuman', 'id="root"', '/record-assets/']);
 if (!writeShell.includes('/record-assets/')) throw new Error('/write shell missing Vite assets');
+await checkHtml('/write/5f0c1d9e-draft', ['id="root"', '/record-assets/']);
 
-const recordShell = await checkHtml(`/${created.short_signature}`, ['possiblymadebyahuman record', 'id="root"', '/record-assets/']);
+const recordShell = await checkHtml(`/${created.short_signature}`, ['Writing record · possiblymadebyahuman', 'id="root"', '/record-assets/']);
 const assetMatch = recordShell.match(/src="(\/record-assets\/[^\"]+\.js)"/);
 if (!assetMatch) throw new Error('record shell missing Vite JS asset');
 const assetResponse = await fetch(`${baseUrl}${assetMatch[1]}`);
@@ -84,8 +85,8 @@ if (!assetText.includes('Writing record')) throw new Error('Vite asset missing r
 if (!assetText.includes('Writing canvas')) throw new Error('Vite asset missing /write canvas affordance');
 if (!assetText.includes('Drafting status')) throw new Error('Vite asset missing /write status affordance');
 if (!assetText.includes('Edit timeline')) throw new Error('Vite asset missing edit timeline copy');
-if (!assetText.includes('signed writing record')) throw new Error('Vite asset missing signed-record copy');
-if (!assetText.includes('not a human/AI score')) throw new Error('Vite asset missing non-score copy');
+if (!assetText.includes('Signed writing record')) throw new Error('Vite asset missing signed-record copy');
+if (!assetText.includes('is for you to judge')) throw new Error('Vite asset missing the reader-judgment limit statement');
 assertNoPlaintext('Vite asset', assetText);
 
 console.log(JSON.stringify({ ok: true, short_signature: created.short_signature, record_hash: created.record_hash }));
