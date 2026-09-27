@@ -1,3 +1,4 @@
+import type { B3Hash } from "../../../packages/format/src/index.ts";
 import type { SessionRecord } from "../../../packages/producer-core/src/index.ts";
 
 /**
@@ -10,7 +11,7 @@ export type DraftRow = {
   draft_id: string;
   name: string | null;
   text: string;
-  text_tag: { session_id: string; event_count: number; chain_tip: string | null } | null;
+  text_tag: { session_id: string; event_count: number; chain_tip: B3Hash | null } | null;
   session_ids: string[];
   created_ms: number;
   updated_ms: number;

@@ -8,7 +8,7 @@ import "./style.css";
 
 function App() {
   const slug = window.location.pathname.replace(/^\//, "").replace(/\/$/, "") || "record";
-  const isWriteRoute = slug === "write";
+  const isWriteRoute = slug === "write" || slug.startsWith("write/");
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<{ loading: boolean; error?: string; notFound?: boolean; record?: RecordApiResponse; summary?: RecordSummary }>({ loading: !isWriteRoute });
 

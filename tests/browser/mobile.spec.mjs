@@ -32,18 +32,18 @@ test.describe("phone viewport", () => {
       await route.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ record_hash: payload.manifest.record_hash, short_signature: "phonetest1", url: "http://127.0.0.1:4173/phonetest1", created: true }) });
     });
     await page.goto("/write");
-    await expect(page.locator(".write-modeline")).toContainText("idle");
+    await expect(page.getByRole("textbox", { name: "Writing canvas" })).toBeFocused();
     let measured = await widths(page);
     expect(measured.scroll).toBeLessThanOrEqual(measured.inner);
 
     await page.keyboard.type("Written on a phone.");
-    await page.getByRole("button", { name: "sign", exact: true }).click();
-    await expect(page.getByRole("dialog", { name: "Sign this record" })).toBeVisible();
+    await page.getByRole("button", { name: "Sign", exact: true }).click();
+    await expect(page.getByRole("dialog", { name: "Sign and publish this draft?" })).toBeVisible();
     measured = await widths(page);
     expect(measured.scroll).toBeLessThanOrEqual(measured.inner);
 
-    await page.getByRole("button", { name: "sign & upload" }).click();
-    await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/phonetest1" })).toBeVisible();
+    await page.getByRole("button", { name: "Sign & publish" }).click();
+    await expect(page.getByRole("textbox", { name: "Record link" })).toHaveValue("http://127.0.0.1:4173/phonetest1");
     measured = await widths(page);
     expect(measured.scroll).toBeLessThanOrEqual(measured.inner);
   });

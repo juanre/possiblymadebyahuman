@@ -226,13 +226,14 @@ async function route(req: IncomingMessage, res: ServerResponse, options: Runtime
     return;
   }
 
-  // Every remaining path is the record app: /write, or a record address. An
-  // address with no stored record still gets the app shell (so it can explain
-  // that nothing is there) but with a 404 status, so browsers and crawlers do
-  // not treat a broken link as a page that exists. When the lookup itself
-  // fails, the shell is served with 200 and the app reports the failure.
+  // Every remaining path is the record app: /write, a /write/<draft>, or a
+  // record address. An address with no stored record still gets the app
+  // shell (so it can explain that nothing is there) but with a 404 status, so
+  // browsers and crawlers do not treat a broken link as a page that exists.
+  // When the lookup itself fails, the shell is served with 200 and the app
+  // reports the failure.
   const slug = requestUrl.pathname.replace(/^\/+/, "").replace(/\/+$/, "");
-  if (slug !== "" && slug !== "write" && !(await recordExistsOrUnknown(options.store, slug))) {
+  if (slug !== "" && slug !== "write" && !/^write\/[^/]+$/.test(slug) && !(await recordExistsOrUnknown(options.store, slug))) {
     await serveStatic(res, options.webDistDir ?? WEB_DIST_DIR, "index.html", 404);
     return;
   }
