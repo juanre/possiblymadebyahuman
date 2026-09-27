@@ -169,6 +169,19 @@ test('simultaneous edits remain visible in the explicitly labelled short-gap buc
 });
 
 
+test('sub-second waits at either end of a signed finish are not narrated', async ({page, request}) => {
+  const record = await activityRecord(request, [{...ordinary(0, 0), t: 9}, {...ordinary(1, 1), t: 2000}]);
+  record.manifest.format_version = '0.3';
+  record.manifest.duration_ms = 2400;
+  record.manifest.record_hash = computeRecordHash(record.events, record.manifest.session_id, '0.3', undefined, record.manifest);
+  record.stats.duration_ms = record.manifest.duration_ms;
+  await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
+  await page.goto(`/${slug}`);
+  await expect(page.locator('.chain-status.ok')).toContainText('Hash chain recomputed in your browser.');
+  await expect(page.locator('.timeline-chart')).toBeVisible();
+  await expect(page.locator('.signed-finish-summary')).toHaveCount(0);
+});
+
 test('signed finish displays endpoint waits separately without extending the document-length curve', async ({page, request}) => {
   const record = await activityRecord(request, [{...ordinary(0, 0), t: 1000}, {...ordinary(1, 1), t: 2000}]);
   record.manifest.format_version = '0.3';

@@ -278,7 +278,11 @@ export function PencilHatch({ id }: { id: string }) {
   );
 }
 
-export function EditTimeline({ record }: { record: RecordApiResponse }) {
+export // Waits shorter than this before the first edit or after the last one are
+// too small to see on the timeline, so they are not described in words.
+const NARRATED_WAIT_MS = 1000;
+
+function EditTimeline({ record }: { record: RecordApiResponse }) {
   const timing = recordTimingDetails(record);
   const hatchId = `pencil-hatch-${useId().replace(/:/g, "")}`;
   const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
@@ -351,9 +355,9 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
       ) : (
         <p className="section-intro">Document length is unknown because this record lacks enough measurements to reconstruct it. The bars show when edits happened and how many were captured, not document length. Shaded bands mark long pauses.</p>
       )}
-      {timing.signedFinish && <p className="section-intro signed-finish-summary">Signed finish at {formatDuration(record.manifest.duration_ms)} from the session start.
-        {timing.beforeFirstEditMs > 0 && <> No edits were captured during the first {formatDuration(timing.beforeFirstEditMs)}.</>}
-        {timing.afterLastEditMs > 0 && <> The final {formatDuration(timing.afterLastEditMs)} contains no captured edits. The length curve ends at the last measurable edit; it does not describe that later interval.</>}
+      {timing.signedFinish && (timing.beforeFirstEditMs >= NARRATED_WAIT_MS || timing.afterLastEditMs >= NARRATED_WAIT_MS) && <p className="section-intro signed-finish-summary">Signed finish at {formatDuration(record.manifest.duration_ms)} from the session start.
+        {timing.beforeFirstEditMs >= NARRATED_WAIT_MS && <> No edits were captured during the first {formatDuration(timing.beforeFirstEditMs)}.</>}
+        {timing.afterLastEditMs >= NARRATED_WAIT_MS && <> The final {formatDuration(timing.afterLastEditMs)} contains no captured edits. The length curve ends at the last measurable edit; it does not describe that later interval.</>}
       </p>}
       <svg ref={chartRef} className="timeline-chart" viewBox={`0 0 ${chartW} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
         <PencilHatch id={hatchId} />
