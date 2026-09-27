@@ -34,6 +34,24 @@ const RECORD_BODY_LIMIT_BYTES = parsePositiveInteger(
   DEFAULT_RECORD_BODY_LIMIT_BYTES,
 );
 
+const SHARED_CSP = ["default-src 'self'", "script-src 'self'", "img-src 'self'", "font-src 'self'", "connect-src 'self'", "worker-src 'self'",
+  "object-src 'none'", "base-uri 'none'", "form-action 'self'", "frame-ancestors 'none'"];
+/** The record viewer and /write load only same-origin scripts, styles and workers. */
+export const RECORD_APP_CSP = [...SHARED_CSP, "style-src 'self'"].join("; ");
+// Hugo pages are authored static HTML with an inline stylesheet and code blocks
+// highlighted through style attributes, which hashes cannot cover.
+export const SITE_CSP = [...SHARED_CSP, "style-src 'self' 'unsafe-inline'"].join("; ");
+
+export function securityHeaders(publicBaseUrl: string): Record<string, string> {
+  return {
+    "content-security-policy": RECORD_APP_CSP,
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    ...(new URL(publicBaseUrl).protocol === "https:" ? { "strict-transport-security": "max-age=31536000" } : {}),
+  };
+}
+
 export type Readiness = { ok: boolean; database: boolean; migrations: boolean };
 
 export class RequestBodyTooLargeError extends Error {
@@ -97,6 +115,7 @@ export type RuntimeServerOptions = {
   httpRequestTimeoutMs?: number;
   requiredMigrationVersions?: readonly string[];
   buildRevision?: string;
+  publicBaseUrl?: string;
 };
 
 export function createRuntimeServer(options: RuntimeServerOptions): Server {
@@ -106,9 +125,11 @@ export function createRuntimeServer(options: RuntimeServerOptions): Server {
   if (!Number.isSafeInteger(requestTimeout) || requestTimeout <= 0) throw new RangeError("httpRequestTimeoutMs must be a positive safe integer");
   let inFlight = 0;
   const clients = new ClientAdmission(options.clientLimits);
+  const headers = Object.entries(securityHeaders(options.publicBaseUrl ?? PUBLIC_BASE_URL));
   const server = createServer({ requestTimeout, headersTimeout: Math.min(60_000, requestTimeout),
     connectionsCheckingInterval: Math.min(1_000, requestTimeout) }, async (req, res) => {
     let admitted: string | null = null;
+    for (const [name, value] of headers) res.setHeader(name, value);
     try {
       // Admission and routing must use the same normalized target, including
       // absolute-form requests and dot segments, before any body is buffered.
@@ -283,6 +304,7 @@ async function route(req: IncomingMessage, res: ServerResponse, options: Runtime
 
   if (requestUrl.pathname === "/" || requestUrl.pathname.startsWith("/docs/")) {
     const relative = requestUrl.pathname === "/" ? "index.html" : join(requestUrl.pathname.slice(1), "index.html");
+    res.setHeader("content-security-policy", SITE_CSP);
     await serveStatic(res, options.siteDistDir ?? SITE_DIST_DIR, relative);
     return;
   }
@@ -442,6 +464,7 @@ export async function main(): Promise<void> {
     api,
     store,
     db: pool as PostgresDatabase,
+    publicBaseUrl: PUBLIC_BASE_URL,
     recordBodyLimitBytes: RECORD_BODY_LIMIT_BYTES,
     checkpointBodyLimitBytes: parsePositiveInteger(process.env.CHECKPOINT_BODY_LIMIT_BYTES, DEFAULT_CHECKPOINT_BODY_LIMIT_BYTES),
     ...limits,

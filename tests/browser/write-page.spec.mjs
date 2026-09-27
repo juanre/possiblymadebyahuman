@@ -1,5 +1,5 @@
 import { mockRecordUpload, readWriteSessions, installJournalFailure } from "./journal-fixtures.mjs";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./csp-guard.mjs";
 import { verifyRecord } from "../../packages/format/src/index.ts";
 
 const canaries = ["A🙂B", "LineOne", "LineTwo", "NEWLINE-CANARY", "🙂"];

@@ -72,6 +72,14 @@ Behind a proxy such as Cloudflare or Render it must be set, or every client
 shares the proxy's address. It must also be one the proxy overwrites, because
 anyone who can reach the origin directly can send it.
 
+Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options:
+DENY`, `Referrer-Policy: strict-origin-when-cross-origin` and a Content Security
+Policy with `frame-ancestors 'none'`. The record viewer and `/write` allow only
+same-origin scripts, styles, workers, images and connections. Hugo pages also
+allow inline styles (their stylesheet and highlighted code blocks); their scripts
+stay same-origin only. `Strict-Transport-Security: max-age=31536000` is sent when
+`PUBLIC_BASE_URL` is HTTPS. The Playwright suites fail on any CSP violation.
+
 All API writes require `Content-Type: application/json` (a charset parameter is
 allowed); other media types receive 415 before the body is read, so other sites
 cannot submit simple cross-origin form or text POSTs.

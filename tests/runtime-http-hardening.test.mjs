@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { DEFAULT_CLIENT_LIMITS } from "../apps/ingest-api/src/admission.ts";
-import { createRuntimeServer, DEFAULT_POOL_MAX, runtimeLimitsFromEnv } from "../apps/ingest-api/src/server.ts";
+import { createRuntimeServer, DEFAULT_POOL_MAX, RECORD_APP_CSP, runtimeLimitsFromEnv, SITE_CSP } from "../apps/ingest-api/src/server.ts";
 
 async function runtime(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), "pmbah-http-"));
@@ -31,6 +31,38 @@ test("HEAD answers every GET route with the GET status and headers but no body",
     assert.equal(await head.text(), "", path);
   }
   assert.equal((await fetch(`${base}/health`, { method: "HEAD" })).status, 200);
+});
+
+test("every response carries security headers, with a strict policy for the record app", async t => {
+  const base = await runtime(t, { publicBaseUrl: "http://localhost:8000" });
+  for (const path of ["/", "/docs/", "/write", "/unknown-record", "/health", "/api/records/x", "/record-assets/missing.js", "/docs/missing/"]) {
+    const response = await fetch(`${base}${path}`);
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff", path);
+    assert.equal(response.headers.get("referrer-policy"), "strict-origin-when-cross-origin", path);
+    assert.equal(response.headers.get("x-frame-options"), "DENY", path);
+    assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/, path);
+    assert.equal(response.headers.get("strict-transport-security"), null, `${path} is not HTTPS`);
+  }
+  for (const path of ["/write", "/unknown-record"]) {
+    const policy = (await fetch(`${base}${path}`)).headers.get("content-security-policy");
+    assert.equal(policy, RECORD_APP_CSP, path);
+    assert.doesNotMatch(policy, /unsafe/, path);
+    for (const directive of ["default-src 'self'", "script-src 'self'", "style-src 'self'", "worker-src 'self'", "object-src 'none'", "base-uri 'none'"]) {
+      assert.ok(policy.split("; ").includes(directive), `${path} ${directive}`);
+    }
+  }
+  for (const path of ["/", "/docs/"]) {
+    const policy = (await fetch(`${base}${path}`)).headers.get("content-security-policy");
+    assert.equal(policy, SITE_CSP, path);
+    assert.ok(policy.split("; ").includes("script-src 'self'"), `${path} scripts stay strict`);
+  }
+});
+
+test("HSTS is sent only when the public origin is HTTPS", async t => {
+  const base = await runtime(t, { publicBaseUrl: "https://possiblymadebyahuman.com" });
+  for (const path of ["/", "/health", "/api/records/x"]) {
+    assert.equal((await fetch(`${base}${path}`)).headers.get("strict-transport-security"), "max-age=31536000", path);
+  }
 });
 
 const JSON_TYPE = { "content-type": "application/json" };

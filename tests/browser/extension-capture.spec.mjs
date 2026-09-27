@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./csp-guard.mjs";
 
 import { computeObservedLength, validateEventLog } from "../../packages/format/src/index.ts";
 

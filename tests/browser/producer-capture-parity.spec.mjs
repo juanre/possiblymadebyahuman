@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./csp-guard.mjs";
 
 const unknown = { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" };
 const shape = ({ op, pos, del_len, ins_len, source }) => ({ op, pos, del_len, ins_len, source });
