@@ -180,18 +180,20 @@ async function route(req: IncomingMessage, res: ServerResponse, options: Runtime
     return;
   }
 
-  if (req.method === "GET" && (requestUrl.pathname === "/health" || requestUrl.pathname === "/live")) {
+  // Node omits response bodies for HEAD, so every GET route below also answers HEAD.
+  const read = req.method === "GET" || req.method === "HEAD";
+  if (read && (requestUrl.pathname === "/health" || requestUrl.pathname === "/live")) {
     json(res, 200, { ok: true, revision: options.buildRevision ?? process.env.BUILD_REVISION ?? "development" });
     return;
   }
 
-  if (req.method === "GET" && requestUrl.pathname === "/ready") {
+  if (read && requestUrl.pathname === "/ready") {
     const ready = await readiness(options.db, options.requiredMigrationVersions);
     json(res, ready.ok ? 200 : 503, ready);
     return;
   }
 
-  if (req.method !== "GET" && req.method !== "HEAD") {
+  if (!read) {
     json(res, 405, { error: "method_not_allowed" });
     return;
   }
