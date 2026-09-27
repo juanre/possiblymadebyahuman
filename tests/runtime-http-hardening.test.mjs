@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createRuntimeServer } from "../apps/ingest-api/src/server.ts";
+import { DEFAULT_CLIENT_LIMITS } from "../apps/ingest-api/src/admission.ts";
+import { createRuntimeServer, DEFAULT_POOL_MAX, runtimeLimitsFromEnv } from "../apps/ingest-api/src/server.ts";
 
 async function runtime(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), "pmbah-http-"));
@@ -30,6 +31,81 @@ test("HEAD answers every GET route with the GET status and headers but no body",
     assert.equal(await head.text(), "", path);
   }
   assert.equal((await fetch(`${base}/health`, { method: "HEAD" })).status, 200);
+});
+
+const JSON_TYPE = { "content-type": "application/json" };
+const TIGHT = { maxInFlightPerClient: 4, writesPerMinute: 1, writeBurst: 2, newSessionsPerMinute: 1, newSessionBurst: 1, maxTrackedClients: 100 };
+const post = (base, path, client, body = "{}") => fetch(`${base}${path}`, { method: "POST", headers: { ...JSON_TYPE, ...(client ? { "cf-connecting-ip": client } : {}) }, body });
+
+test("per-client write limits answer 429 with retry-after while other clients and reads continue", async t => {
+  let handled = 0;
+  const base = await runtime(t, { api: { handleRequest: async () => { handled++; return new Response("{}"); } },
+    clientLimits: { ...TIGHT, newSessionBurst: 100 }, trustedClientIpHeader: "cf-connecting-ip" });
+  const chunk = "/api/record-uploads/00000000-0000-4000-8000-000000000001/chunks";
+  assert.equal((await post(base, chunk, "198.51.100.1")).status, 200);
+  assert.equal((await post(base, chunk, "198.51.100.1")).status, 200);
+  const limited = await post(base, chunk, "198.51.100.1");
+  assert.equal(limited.status, 429);
+  assert.ok(Number(limited.headers.get("retry-after")) >= 1);
+  assert.deepEqual(await limited.json(), { error: "rate_limited" });
+  assert.equal((await fetch(`${base}/api/records/abc`, { headers: { "cf-connecting-ip": "198.51.100.1" } })).status, 200, "reads are not write-limited");
+  assert.equal((await post(base, chunk, "198.51.100.2")).status, 200);
+  assert.equal(handled, 4);
+});
+
+test("forwarded client addresses are ignored unless the header is explicitly trusted", async t => {
+  const base = await runtime(t, { clientLimits: { ...TIGHT, newSessionBurst: 100 } });
+  const chunk = "/api/record-uploads/00000000-0000-4000-8000-000000000001/chunks";
+  assert.equal((await post(base, chunk, "198.51.100.1")).status, 200);
+  assert.equal((await post(base, chunk, "198.51.100.2")).status, 200);
+  assert.equal((await post(base, chunk, "198.51.100.3")).status, 429, "a spoofed header does not buy a fresh bucket");
+});
+
+test("one client cannot hold more than its share of in-flight API requests", async t => {
+  let release, calls = 0;
+  const held = new Promise(resolve => { release = resolve; });
+  const base = await runtime(t, { api: { handleRequest: async () => { calls++; await held; return new Response("{}"); } },
+    clientLimits: { ...TIGHT, maxInFlightPerClient: 1, writeBurst: 100 }, trustedClientIpHeader: "cf-connecting-ip" });
+  const first = fetch(`${base}/api/records/a`, { headers: { "cf-connecting-ip": "198.51.100.1" } });
+  while (calls === 0) await new Promise(resolve => setTimeout(resolve, 5));
+  const second = await fetch(`${base}/api/records/b`, { headers: { "cf-connecting-ip": "198.51.100.1" } });
+  assert.equal(second.status, 429);
+  assert.equal((await second.json()).error, "rate_limited");
+  const other = fetch(`${base}/api/records/c`, { headers: { "cf-connecting-ip": "198.51.100.2" } });
+  while (calls < 2) await new Promise(resolve => setTimeout(resolve, 5));
+  release();
+  assert.equal((await first).status, 200);
+  assert.equal((await other).status, 200);
+  assert.equal((await fetch(`${base}/api/records/d`, { headers: { "cf-connecting-ip": "198.51.100.1" } })).status, 200, "capacity is released");
+});
+
+test("starting uploads, observed sessions and direct records spends the stricter new-session bucket", async t => {
+  const base = await runtime(t, { clientLimits: { ...TIGHT, writeBurst: 100 }, trustedClientIpHeader: "cf-connecting-ip" });
+  const client = "198.51.100.7", upload = "/api/record-uploads/00000000-0000-4000-8000-000000000001";
+  const checkpoint = "/api/observed-sessions/00000000-0000-4000-8000-000000000001/checkpoints";
+  assert.equal((await post(base, "/api/record-uploads", client)).status, 200);
+  const limited = await post(base, "/api/record-uploads", client);
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get("retry-after"), "60");
+  assert.deepEqual(await limited.json(), { error: "rate_limited" });
+  assert.equal((await post(base, "/api/records", client)).status, 429);
+  assert.equal((await post(base, checkpoint, client, JSON.stringify({ event_count: 1, chain_tip: "b3:x" }))).status, 429, "a checkpoint without a token starts a session");
+  assert.equal((await post(base, checkpoint, client, JSON.stringify({ event_count: 2, chain_tip: "b3:x", token: "t".repeat(43) }))).status, 200);
+  assert.equal((await post(base, `${upload}/chunks`, client)).status, 200);
+  assert.equal((await post(base, `${upload}/finalize`, client)).status, 200);
+  assert.equal((await post(base, "/api/record-uploads", "198.51.100.8")).status, 200);
+});
+
+test("runtime limits derive the global API cap from the database pool and read client limits from the environment", () => {
+  assert.equal(runtimeLimitsFromEnv({}).maxInFlightApiRequests, DEFAULT_POOL_MAX * 4);
+  assert.equal(runtimeLimitsFromEnv({ PG_POOL_MAX: "10" }).maxInFlightApiRequests, 40);
+  assert.equal(runtimeLimitsFromEnv({ PG_POOL_MAX: "10", MAX_IN_FLIGHT_API_REQUESTS: "7" }).maxInFlightApiRequests, 7);
+  assert.deepEqual(runtimeLimitsFromEnv({}).clientLimits, DEFAULT_CLIENT_LIMITS);
+  assert.equal(runtimeLimitsFromEnv({}).trustedClientIpHeader, undefined);
+  const configured = runtimeLimitsFromEnv({ TRUSTED_CLIENT_IP_HEADER: "CF-Connecting-IP", MAX_IN_FLIGHT_API_REQUESTS_PER_CLIENT: "3",
+    RATE_LIMIT_WRITES_PER_MINUTE: "900", RATE_LIMIT_WRITE_BURST: "90", RATE_LIMIT_NEW_SESSIONS_PER_MINUTE: "12", RATE_LIMIT_NEW_SESSION_BURST: "6" });
+  assert.equal(configured.trustedClientIpHeader, "cf-connecting-ip");
+  assert.deepEqual(configured.clientLimits, { ...DEFAULT_CLIENT_LIMITS, maxInFlightPerClient: 3, writesPerMinute: 900, writeBurst: 90, newSessionsPerMinute: 12, newSessionBurst: 6 });
 });
 
 test("API writes require a JSON media type before the body is buffered or handled", async t => {

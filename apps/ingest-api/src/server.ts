@@ -5,16 +5,21 @@ import { pathToFileURL } from "node:url";
 import { extname, join, normalize } from "node:path";
 import pg from "pg";
 
+import { ClientAdmission, clientAddress, DEFAULT_CLIENT_LIMITS, type Admission, type ClientLimits } from "./admission.ts";
 import { createIngestApi } from "./index.ts";
 import { PostgresRecordStore, type PostgresDatabase, type RecordStore } from "../../../packages/storage/src/index.ts";
 import { loadSqlMigrations } from "../../../packages/storage/src/migrations.ts";
 
 export const DEFAULT_RECORD_BODY_LIMIT_BYTES = 10_000_000;
 export const DEFAULT_CHECKPOINT_BODY_LIMIT_BYTES = 16_384;
-export const DEFAULT_MAX_IN_FLIGHT_API_REQUESTS = 8;
 export const DEFAULT_HTTP_REQUEST_TIMEOUT_MS = 30_000;
 export const DEFAULT_STATEMENT_TIMEOUT_MS = 15_000;
 export const DEFAULT_POOL_MAX = 5;
+// API requests also spend time receiving, parsing and verifying bodies outside
+// the database, so a few admitted requests per pooled connection keep the pool
+// busy without queueing longer than its connection timeout.
+export const API_REQUESTS_PER_POOL_CONNECTION = 4;
+export const DEFAULT_MAX_IN_FLIGHT_API_REQUESTS = DEFAULT_POOL_MAX * API_REQUESTS_PER_POOL_CONNECTION;
 export const DEFAULT_POOL_IDLE_TIMEOUT_MS = 30_000;
 export const DEFAULT_POOL_CONNECTION_TIMEOUT_MS = 5_000;
 export const DEFAULT_REQUIRED_MIGRATION_VERSIONS = ["001"] as const;
@@ -54,6 +59,25 @@ export function createPoolConfig(env: NodeJS.ProcessEnv = process.env): pg.PoolC
   return config;
 }
 
+export type RuntimeLimits = { maxInFlightApiRequests: number; clientLimits: ClientLimits; trustedClientIpHeader?: string };
+
+export function runtimeLimitsFromEnv(env: NodeJS.ProcessEnv = process.env): RuntimeLimits {
+  const poolMax = parsePositiveInteger(env.PG_POOL_MAX ?? env.DATABASE_POOL_MAX, DEFAULT_POOL_MAX);
+  const trustedClientIpHeader = env.TRUSTED_CLIENT_IP_HEADER?.trim().toLowerCase() || undefined;
+  return {
+    maxInFlightApiRequests: parsePositiveInteger(env.MAX_IN_FLIGHT_API_REQUESTS, poolMax * API_REQUESTS_PER_POOL_CONNECTION),
+    clientLimits: {
+      maxInFlightPerClient: parsePositiveInteger(env.MAX_IN_FLIGHT_API_REQUESTS_PER_CLIENT, DEFAULT_CLIENT_LIMITS.maxInFlightPerClient),
+      writesPerMinute: parsePositiveInteger(env.RATE_LIMIT_WRITES_PER_MINUTE, DEFAULT_CLIENT_LIMITS.writesPerMinute),
+      writeBurst: parsePositiveInteger(env.RATE_LIMIT_WRITE_BURST, DEFAULT_CLIENT_LIMITS.writeBurst),
+      newSessionsPerMinute: parsePositiveInteger(env.RATE_LIMIT_NEW_SESSIONS_PER_MINUTE, DEFAULT_CLIENT_LIMITS.newSessionsPerMinute),
+      newSessionBurst: parsePositiveInteger(env.RATE_LIMIT_NEW_SESSION_BURST, DEFAULT_CLIENT_LIMITS.newSessionBurst),
+      maxTrackedClients: DEFAULT_CLIENT_LIMITS.maxTrackedClients,
+    },
+    ...(trustedClientIpHeader ? { trustedClientIpHeader } : {}),
+  };
+}
+
 export type RuntimeServerOptions = {
   api: ReturnType<typeof createIngestApi>;
   store: Pick<RecordStore, "recordExists">;
@@ -63,6 +87,8 @@ export type RuntimeServerOptions = {
   recordBodyLimitBytes?: number;
   checkpointBodyLimitBytes?: number;
   maxInFlightApiRequests?: number;
+  clientLimits?: ClientLimits;
+  trustedClientIpHeader?: string;
   httpRequestTimeoutMs?: number;
   requiredMigrationVersions?: readonly string[];
   buildRevision?: string;
@@ -74,9 +100,10 @@ export function createRuntimeServer(options: RuntimeServerOptions): Server {
   if (!Number.isSafeInteger(maxInFlight) || maxInFlight <= 0) throw new RangeError("maxInFlightApiRequests must be a positive safe integer");
   if (!Number.isSafeInteger(requestTimeout) || requestTimeout <= 0) throw new RangeError("httpRequestTimeoutMs must be a positive safe integer");
   let inFlight = 0;
+  const clients = new ClientAdmission(options.clientLimits);
   const server = createServer({ requestTimeout, headersTimeout: Math.min(60_000, requestTimeout),
     connectionsCheckingInterval: Math.min(1_000, requestTimeout) }, async (req, res) => {
-    let admitted = false;
+    let admitted: string | null = null;
     try {
       // Admission and routing must use the same normalized target, including
       // absolute-form requests and dot segments, before any body is buffered.
@@ -88,8 +115,18 @@ export function createRuntimeServer(options: RuntimeServerOptions): Server {
         json(res, 503, { error: "server_busy" });
         return;
       }
-      if (apiRequest) { inFlight++; admitted = true; }
-      await route(req, res, options, requestUrl);
+      const client = clientAddress(req, options.trustedClientIpHeader);
+      if (apiRequest) {
+        const admission = clients.enter(client, req.method === "POST");
+        if (!admission.ok) {
+          res.setHeader("connection", "close");
+          rateLimited(res, admission.retryAfterSeconds);
+          return;
+        }
+        inFlight++;
+        admitted = client;
+      }
+      await route(req, res, options, requestUrl, () => clients.takeNewSession(client));
     } catch (error) {
       if (error instanceof RequestBodyTooLargeError) {
         json(res, 413, { error: "request_body_too_large", max_bytes: error.limitBytes });
@@ -98,7 +135,9 @@ export function createRuntimeServer(options: RuntimeServerOptions): Server {
       if (req.aborted || res.destroyed) return;
       console.error(error);
       json(res, 500, { error: "internal_server_error" });
-    } finally { if (admitted) inFlight--; }
+    } finally {
+      if (admitted !== null) { inFlight--; clients.leave(admitted); }
+    }
   });
   return server;
 }
@@ -169,11 +208,13 @@ export async function readiness(
   }
 }
 
-async function route(req: IncomingMessage, res: ServerResponse, options: RuntimeServerOptions, requestUrl: URL): Promise<void> {
+async function route(req: IncomingMessage, res: ServerResponse, options: RuntimeServerOptions, requestUrl: URL,
+  takeNewSession: () => Admission): Promise<void> {
   if (requestUrl.pathname.startsWith("/api/")) {
     // Every API write is JSON. Requiring the JSON media type keeps other sites
     // from submitting cross-origin "simple" form or text/plain POSTs.
     if (req.method === "POST" && !isJsonMediaType(req.headers["content-type"])) {
+      res.setHeader("connection", "close");
       json(res, 415, { error: "unsupported_media_type" });
       return;
     }
@@ -181,8 +222,15 @@ async function route(req: IncomingMessage, res: ServerResponse, options: Runtime
     const upload = requestUrl.pathname === "/api/record-uploads" || requestUrl.pathname.startsWith("/api/record-uploads/");
     const bodyLimit = upload ? Math.min(1024 * 1024, options.recordBodyLimitBytes ?? DEFAULT_RECORD_BODY_LIMIT_BYTES) : checkpoint ? Math.min(options.checkpointBodyLimitBytes ?? DEFAULT_CHECKPOINT_BODY_LIMIT_BYTES,
       options.recordBodyLimitBytes ?? DEFAULT_RECORD_BODY_LIMIT_BYTES) : options.recordBodyLimitBytes ?? DEFAULT_RECORD_BODY_LIMIT_BYTES;
-    const response = await options.api.handleRequest(await toFetchRequest(req, requestUrl, bodyLimit));
-    await writeFetchResponse(res, response);
+    const request = await toFetchRequest(req, requestUrl, bodyLimit);
+    if (req.method === "POST" && await startsNewSession(requestUrl.pathname, request)) {
+      const admission = takeNewSession();
+      if (!admission.ok) {
+        rateLimited(res, admission.retryAfterSeconds);
+        return;
+      }
+    }
+    await writeFetchResponse(res, await options.api.handleRequest(request));
     return;
   }
 
@@ -318,6 +366,20 @@ async function serveStatic(res: ServerResponse, root: string, relativePath: stri
   }
 }
 
+// Beginning an upload, a direct record, or a checkpoint without a session token
+// creates a new server-side identity that later requests can grow.
+async function startsNewSession(pathname: string, request: Request): Promise<boolean> {
+  if (pathname === "/api/record-uploads" || pathname === "/api/records") return true;
+  if (!/^\/api\/observed-sessions\/[^/]+\/checkpoints$/.test(pathname)) return false;
+  const body = await request.clone().json().catch(() => null) as { token?: unknown } | null;
+  return typeof body?.token !== "string";
+}
+
+function rateLimited(res: ServerResponse, retryAfterSeconds: number): void {
+  res.setHeader("retry-after", String(retryAfterSeconds));
+  json(res, 429, { error: "rate_limited" });
+}
+
 function json(res: ServerResponse, status: number, body: unknown): void {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
@@ -376,7 +438,7 @@ export async function main(): Promise<void> {
     db: pool as PostgresDatabase,
     recordBodyLimitBytes: RECORD_BODY_LIMIT_BYTES,
     checkpointBodyLimitBytes: parsePositiveInteger(process.env.CHECKPOINT_BODY_LIMIT_BYTES, DEFAULT_CHECKPOINT_BODY_LIMIT_BYTES),
-    maxInFlightApiRequests: parsePositiveInteger(process.env.MAX_IN_FLIGHT_API_REQUESTS, DEFAULT_MAX_IN_FLIGHT_API_REQUESTS),
+    ...runtimeLimitsFromEnv(),
     httpRequestTimeoutMs: parsePositiveInteger(process.env.HTTP_REQUEST_TIMEOUT_MS, DEFAULT_HTTP_REQUEST_TIMEOUT_MS),
     requiredMigrationVersions,
   });

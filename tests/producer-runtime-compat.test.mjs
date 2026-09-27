@@ -7,6 +7,7 @@ import test from "node:test";
 import { createIngestApi } from "../apps/ingest-api/src/index.ts";
 import { createRuntimeServer } from "../apps/ingest-api/src/server.ts";
 import { uploadJournal } from "../packages/browser-storage/src/upload.ts";
+import { DEFAULT_CLIENT_LIMITS } from "../apps/ingest-api/src/admission.ts";
 import { InMemoryRecordStore } from "../packages/storage/src/index.ts";
 import { buildJournalManifest, publishJournal } from "../producers/emacs/scripts/event-journal.mjs";
 
@@ -44,4 +45,25 @@ test("Emacs and browser journal publication succeed through the runtime server",
     readEvents: async (start, count) => browser.events.slice(start, start + count) });
   assert.equal(uploaded.created, true);
   assert.equal(uploaded.record_hash, browser.manifest.record_hash);
+});
+
+test("journal publication waits out write rate limits instead of failing the upload", async t => {
+  const { base } = await producerRuntime(t, { clientLimits: { ...DEFAULT_CLIENT_LIMITS, writesPerMinute: 120, writeBurst: 1 } });
+  const statuses = [], original = globalThis.fetch;
+  const counting = async (url, init) => { const response = await original(url, init); statuses.push(response.status); return response; };
+  const browser = await journal(t, 5000);
+  const uploaded = await uploadJournal({ endpoint: `${base}/api/record-uploads`, fetch: counting,
+    payload: { upload_id: randomUUID(), manifest: browser.manifest, observation: { state: "unobserved" } },
+    readEvents: async (start, count) => browser.events.slice(start, start + count) });
+  assert.equal(uploaded.record_hash, browser.manifest.record_hash);
+  assert.ok(statuses.includes(429), `browser upload was rate limited: ${statuses}`);
+
+  statuses.length = 0;
+  globalThis.fetch = counting;
+  t.after(() => { globalThis.fetch = original; });
+  const emacs = await journal(t, 5000);
+  const published = await publishJournal({ ...emacs, journal_path: emacs.path, end_byte: emacs.byte_length, upload_id: randomUUID(), api_base_url: base });
+  globalThis.fetch = original;
+  assert.equal(published.record_hash, emacs.manifest.record_hash);
+  assert.ok(statuses.includes(429), `Emacs upload was rate limited: ${statuses}`);
 });

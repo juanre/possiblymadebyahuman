@@ -52,15 +52,29 @@ with these environment variables (production Compose passes them through):
 
 | Setting | Default | Behavior |
 | --- | --- | --- |
-| `MAX_IN_FLIGHT_API_REQUESTS` | 8 | Additional API requests receive 503 and `Retry-After: 1`; `/health` remains available. |
+| `MAX_IN_FLIGHT_API_REQUESTS` | `PG_POOL_MAX` × 4 (20) | Additional API requests receive 503 and `Retry-After: 1`; `/health` remains available. |
+| `MAX_IN_FLIGHT_API_REQUESTS_PER_CLIENT` | 4 | One client address cannot hold more concurrent API requests; excess requests receive 429. |
+| `RATE_LIMIT_WRITES_PER_MINUTE` / `RATE_LIMIT_WRITE_BURST` | 600 / 120 | Token bucket for every `POST /api/*` per client address. |
+| `RATE_LIMIT_NEW_SESSIONS_PER_MINUTE` / `RATE_LIMIT_NEW_SESSION_BURST` | 30 / 30 | Stricter bucket for beginning an upload, a direct record, or a checkpoint without a session token. |
+| `TRUSTED_CLIENT_IP_HEADER` | unset | Header holding the client address, set by a trusted proxy (for example `cf-connecting-ip`). Unset, the socket address is used. |
 | `CHECKPOINT_BODY_LIMIT_BYTES` | 16384 | Checkpoint envelopes have a smaller limit than full records; the record limit remains an upper bound. |
 | `HTTP_REQUEST_TIMEOUT_MS` | 30000 | Bounds receipt of HTTP headers/body; incomplete requests time out. |
 | `PG_STATEMENT_TIMEOUT_MS` | 15000 | Bounds database statements and client query waits. |
 
-These controls bound individual requests and concurrent work. They do not impose
-per-user/IP rates, cumulative storage quotas, or retention/deletion policy. Set
-those deployment policies at a trusted ingress boundary; do not treat forwarded
-IP headers from arbitrary callers as an identity.
+Rate-limited requests receive 429, `Retry-After` in seconds and
+`{"error":"rate_limited"}`. Producers back off checkpoints, and journal uploads
+wait as asked and repeat the request, so a multi-million-event publication paces
+instead of failing. Limits are kept in process memory per instance; idle client
+state is dropped and at most 50,000 client addresses are tracked. IPv6 clients
+are limited per /64. Forwarded address headers are ignored unless
+`TRUSTED_CLIENT_IP_HEADER` names one; the header must hold exactly one address.
+Behind a proxy such as Cloudflare or Render it must be set, or every client
+shares the proxy's address. It must also be one the proxy overwrites, because
+anyone who can reach the origin directly can send it.
+
+All API writes require `Content-Type: application/json` (a charset parameter is
+allowed); other media types receive 415 before the body is read, so other sites
+cannot submit simple cross-origin form or text POSTs.
 
 Migration `004_unknown_size_stats.sql` must run before this API version writes
 nullable size totals/maxima. GET responses correct legacy derived size facts
