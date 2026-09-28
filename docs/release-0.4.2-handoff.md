@@ -44,7 +44,8 @@ Upload the 0.4.2 ZIP to the Chrome Web Store listing in place of 0.4.0, and
 update the dashboard as described in
 [`chrome-web-store-listing.md`](chrome-web-store-listing.md): untick Web
 history, paste the updated description, reviewer instructions and `storage`
-justification, and retake screenshots 3 and 4.
+justification, and replace screenshots 3 and 4 with the ones in
+`apps/browser-extension/store-assets/screenshots/`.
 
 ## Validation
 
