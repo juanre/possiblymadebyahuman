@@ -164,9 +164,11 @@ make extension-package                    # writes apps/browser-extension/dist/p
 
 The image embeds `BUILD_REVISION`; `/health` returns it as `revision`. Pin deployments to an immutable version or image digest, then compare this field to the reviewed commit.
 
+Production runs on Render from `ghcr.io/juanre/possiblymadebyahuman:latest`, which every release tag updates. Publishing the image does not deploy it: after the release workflow succeeds, deploy the latest image from the Render service, then check that `/health` reports the tagged commit and `/ready` succeeds.
+
 Render setup:
 
-1. Create a Render Web Service using the GHCR image, preferably an immutable version tag such as `ghcr.io/juanre/possiblymadebyahuman:0.1.0`.
+1. Create a Render Web Service using the GHCR image `ghcr.io/juanre/possiblymadebyahuman:latest`.
 2. Ensure Render can pull the image: make the package public or grant Render registry credentials for GHCR.
 3. Set environment variables from `.env.production.example` in Render. The real `DATABASE_URL` comes from Neon and must not be committed.
 4. Render supplies `PORT`; keep `PUBLIC_BASE_URL` set to the production HTTPS origin.
