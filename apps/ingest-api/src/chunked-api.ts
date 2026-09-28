@@ -5,6 +5,7 @@ import { appendAnalysisEvent, createAnalysisAccumulator, finalizeAnalysis, type 
 import { ChunkedUploadError, MAX_EVENT_CHUNK, type UploadObservation, type UploadState } from "../../../packages/storage/src/chunked.ts";
 import { analyzerErrorSignal, type Analyzer } from "../../../packages/analyzers/src/index.ts";
 import type { RecordStore, StoredRecord } from "../../../packages/storage/src/index.ts";
+import { withoutCaptureContext } from "./capture-context.ts";
 import { generateShortSignature, toGetRecordResponse, type ApiResult } from "./index.ts";
 
 type Options = { store: RecordStore; baseUrl: string; now: () => Date; idleThresholdMs: number; initialShortSignatureLength: number; analyzers?: Analyzer[];
@@ -37,9 +38,10 @@ export function createChunkedApi(options: Options) {
     if (!store.chunked) throw new ChunkedUploadError(503, "chunked_upload_unavailable");
     const contentErrors = options.validateContent(value); if (contentErrors.length) invalid("content_not_allowed", contentErrors);
     if (!object(value) || Object.keys(value).some(key => !["upload_id", "manifest", "observation"].includes(key)) || typeof value.upload_id !== "string" || !UUID.test(value.upload_id)) invalid("invalid_payload", ["upload_id must be a lowercase UUIDv4"]);
-    const errors = [...validateManifest(value.manifest), ...options.validateManifestFields(value.manifest)];
+    const submitted = withoutCaptureContext(value.manifest);
+    const errors = [...validateManifest(submitted), ...options.validateManifestFields(submitted)];
     if (errors.length) invalid("invalid_manifest", errors);
-    const manifest = value.manifest as RecordManifest;
+    const manifest = submitted as RecordManifest;
     if (!manifest.event_count) invalid("invalid_manifest", ["event_count must be positive"]);
     if (manifest.event_count > options.maxUploadEvents) throw new ChunkedUploadError(413, "upload_too_large", `uploads are limited to ${options.maxUploadEvents} events`);
     if (manifest.parent_record && !await store.recordExists(manifest.parent_record)) invalid("invalid_manifest", ["parent_record does not refer to a stored record"]);

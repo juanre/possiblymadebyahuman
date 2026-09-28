@@ -1,4 +1,4 @@
-import { computeEventHashChain, type Attestation, type B3Hash, type CaptureContext, type EventLog, type RecordManifest, type Signal, type WritingRecord } from "../../format/src/index.ts";
+import { computeEventHashChain, type Attestation, type B3Hash, type EventLog, type RecordManifest, type Signal, type WritingRecord } from "../../format/src/index.ts";
 import { InMemoryChunkedStore, PostgresChunkedStore, type ChunkedStore } from "./chunked.ts";
 
 export type RecordStats = {
@@ -442,7 +442,6 @@ export class PostgresRecordStore implements RecordStore {
          r.producer_id,
          r.producer_version,
          r.producer_capabilities,
-         r.capture_context,
          r.text_binding,
          r.event_count,
          r.duration_ms,
@@ -666,7 +665,6 @@ type RecordRow = Record<string, unknown> & {
   producer_id: string;
   producer_version: string;
   producer_capabilities: string[];
-  capture_context: CaptureContext | null;
   text_binding: RecordManifest["text_binding"] | null;
   event_count: number;
   duration_ms: number | string;
@@ -708,7 +706,6 @@ function rowToStoredRecord(row: RecordRow, observation: RecordObservation): Stor
       version: row.producer_version,
       capabilities: row.producer_capabilities as RecordManifest["producer"]["capabilities"],
     },
-    capture_context: row.capture_context,
     ...(row.text_binding ? { text_binding: row.text_binding } : {}),
     event_count: row.event_count,
     duration_ms: numberFromRow(row.duration_ms),
@@ -888,10 +885,10 @@ export async function insertRecordData(client: PostgresQueryable, input: SaveRec
   await client.query(
     `insert into records (
       record_hash, short_signature, format_version, session_id,
-      producer_id, producer_version, producer_capabilities, capture_context, text_binding,
+      producer_id, producer_version, producer_capabilities, text_binding,
       event_count, duration_ms,
       created_client_t, ingested_server_t, parent_record_hash, attestations, events, created_at, observation_state
-    ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15::jsonb,$16::jsonb,$17,$18)`,
+    ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16,$17)`,
     [
       manifest.record_hash,
       input.short_signature,
@@ -900,7 +897,6 @@ export async function insertRecordData(client: PostgresQueryable, input: SaveRec
       manifest.producer.id,
       manifest.producer.version,
       JSON.stringify(manifest.producer.capabilities),
-      JSON.stringify(manifest.capture_context ?? null),
       manifest.text_binding ? JSON.stringify(manifest.text_binding) : null,
       manifest.event_count,
       manifest.duration_ms,

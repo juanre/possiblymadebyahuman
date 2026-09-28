@@ -17,7 +17,7 @@ import { applyMigrations, loadSqlMigrations } from '../packages/storage/src/migr
 const needsDatabase = { skip: !process.env.PMBAH_TEST_DATABASE_URL && 'requires managed PostgreSQL test database' };
 const producer = { id: 'test', version: '0.1.0', capabilities: ['timing'] };
 function record(count, parent_record = null) {
-  const manifest = { format_version: '0.3', record_hash: '', session_id: randomUUID(), producer, capture_context: null, event_count: count,
+  const manifest = { format_version: '0.3', record_hash: '', session_id: randomUUID(), producer, event_count: count,
     duration_ms: count * 31, created_client_t: '2026-09-01T00:00:00.000Z', ingested_server_t: null, parent_record, attestations: [] };
   const events = Array.from({ length: count }, (_, seq) => ({ seq, t: seq * 31, op: 'insert', pos: seq, ins_len: 1, del_len: 0, source: 'typing' }));
   manifest.record_hash = computeRecordHash(events, manifest.session_id, manifest.format_version, undefined, manifest);
