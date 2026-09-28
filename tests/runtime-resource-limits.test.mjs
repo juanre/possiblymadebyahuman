@@ -102,3 +102,23 @@ test("resumable upload bodies stay bounded independently of legacy record allowa
   assert.equal((await fetch(`${base}/api/record-uploads`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 200);
   assert.equal(handled, 1);
 });
+
+test("a busy server answers a client still sending its body instead of dropping the connection", async t => {
+  let release, started;
+  const entered = new Promise(resolve => { started = resolve; });
+  const held = new Promise(resolve => { release = resolve; });
+  const { base } = await runtime(t, async () => { started(); await held; return new Response("{}"); }, { maxInFlightApiRequests: 1 });
+  const first = fetch(`${base}/api/records`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  await entered;
+  try {
+    const body = "x".repeat(4_000_000);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const busy = await fetch(`${base}/api/records`, { method: "POST", headers: { "content-type": "application/json" }, body });
+      assert.equal(busy.status, 503);
+      assert.equal(busy.headers.get("retry-after"), "1");
+      assert.notEqual(busy.headers.get("connection"), "close");
+      assert.deepEqual(await busy.json(), { error: "server_busy" });
+    }
+  } finally { release(); }
+  assert.equal((await first).status, 200);
+});

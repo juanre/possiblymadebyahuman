@@ -71,8 +71,8 @@ field kind, surface, Emacs buffer name or major mode is published. The ingest
 API discards `capture_context` sent by producers released before this change,
 on whole-record and chunked uploads, and never stores or returns it. Migration
 `008_remove_capture_context.sql` cleared it from every stored record and
-staged upload; it was never part of the record hash, so every record still
-verifies. The extension no longer reads the page title and its finish review
+staged upload, and `009_drop_capture_context.sql` dropped the column; it was
+never part of the record hash, so every record still verifies. The extension no longer reads the page title and its finish review
 has no public-context choices; private draft names and saved-link history stay
 local. `/write` attaches no label or URL. Emacs sends no buffer name or major
 mode and asks no capture-context questions. The record page summary no longer
@@ -433,7 +433,7 @@ Records carry no capture context. Per the capture context removal amendment (28 
 
 - The public manifest has no `capture_context`; `packages/format` rejects it as an unknown public manifest field.
 - The ingest API discards `capture_context` sent by producers released before the amendment, on `POST /api/records` and on chunked `/api/record-uploads`, before validation and storage. It is never stored or returned. It was never part of the record hash, so those uploads still verify.
-- Migration `008_remove_capture_context.sql` set `records.capture_context` to null for every stored record and removed the key from staged `record_uploads` manifests.
+- Migration `008_remove_capture_context.sql` set `records.capture_context` to null for every stored record and removed the key from staged `record_uploads` manifests. Migration `009_drop_capture_context.sql` dropped the column.
 - Producers may keep a local `{ surface }` tag on a session (`SessionRecord.capture_context`, for example `"browser"` or `"web-draft"`) to route their own sessions. It never leaves the producer.
 - Private draft names and saved-link history (site and link) stay in the browser.
 - The record page shows no capture context and its summary does not name the tool or site.
@@ -524,8 +524,6 @@ session_id               uuid not null
 producer_id              text not null
 producer_version         text not null
 producer_capabilities    jsonb not null
-
-capture_context          jsonb null # always null since migration 008; code no longer reads or writes it; to be dropped in a later release
 
 event_count              integer not null
 duration_ms              bigint not null

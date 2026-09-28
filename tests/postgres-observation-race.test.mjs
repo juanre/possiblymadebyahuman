@@ -283,9 +283,26 @@ test("Postgres forward migration preserves old records and observations, then st
   const first = await api.postObservedCheckpoint(record.manifest.session_id, { event_count: 1, chain_tip: chain[0] });
   assert.equal(first.status, 201);
 
-  const migrated = await applyMigrations(pool, await loadSqlMigrations());
-  assert.deepEqual(migrated.applied.map(({ version }) => version), ["003", "004", "005", "006", "007", "008"]);
+  const migrations = await loadSqlMigrations();
+  const migrated = await applyMigrations(pool, migrations.filter(({ version }) => version <= "007"));
+  assert.deepEqual(migrated.applied.map(({ version }) => version), ["003", "004", "005", "006", "007"]);
   assert.deepEqual(migrated.skipped.map(({ version }) => version), ["001", "002"]);
+
+  // Earlier releases stored where records were written, in the record and in
+  // staged uploads. Migrations 008 and 009 remove it and its column.
+  const legacyContext = JSON.stringify({ surface: "browser", label: "Drafts - someone@example.com", browser: { title: "Drafts - someone@example.com" } });
+  await pool.query("update records set capture_context = $2::jsonb where record_hash = $1", [old.manifest.record_hash, legacyContext]);
+  const staged = await freshRecord(), stagedId = randomUUID();
+  const begun = await api.handleRequest(new Request("https://possiblymadebyahuman.test/api/record-uploads", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ upload_id: stagedId, manifest: staged.manifest }) }));
+  assert.equal(begun.status, 200);
+  await pool.query("update record_uploads set manifest = manifest || jsonb_build_object('capture_context', $2::jsonb) where upload_id = $1", [stagedId, legacyContext]);
+  const cleaned = await applyMigrations(pool, migrations);
+  assert.deepEqual(cleaned.applied.map(({ version }) => version), ["008", "009"]);
+  const column = await pool.query("select 1 from information_schema.columns where table_name = 'records' and column_name = 'capture_context'");
+  assert.equal(column.rowCount, 0, "records keep no column for where they were written");
+  const stagedManifest = (await pool.query("select manifest from record_uploads where upload_id = $1", [stagedId])).rows[0].manifest;
+  assert.equal("capture_context" in stagedManifest, false);
   assert.deepEqual(await api.getRecord(uploaded.body.short_signature), oldBefore);
   const rawAfter = (await pool.query("select record_hash, events, duration_ms from records where record_hash = $1", [old.manifest.record_hash])).rows[0];
   assert.equal(rawAfter.record_hash, rawBefore.record_hash);

@@ -53,31 +53,20 @@ test('a chunked upload sent with where it was written is stored and served witho
 
 const needsDatabase = { skip: !process.env.PMBAH_TEST_DATABASE_URL && 'requires managed PostgreSQL test database' };
 
-test('the migration wipes where records were written from stored records and staged uploads', needsDatabase, async t => {
+test('the database keeps no place for where records were written', needsDatabase, async t => {
   const pool = new pg.Pool({ connectionString: process.env.PMBAH_TEST_DATABASE_URL });
   t.after(() => pool.end());
-  const migrations = await loadSqlMigrations();
-  await applyMigrations(pool, migrations);
-  const store = new PostgresRecordStore(pool);
-  const api = createIngestApi({ store });
+  await applyMigrations(pool, await loadSqlMigrations());
+  const column = await pool.query("select 1 from information_schema.columns where table_name = 'records' and column_name = 'capture_context'");
+  assert.equal(column.rowCount, 0);
+  const api = createIngestApi({ store: new PostgresRecordStore(pool) });
   const saved = await api.postRecord(legacyRecord());
   assert.equal(saved.status, 201, JSON.stringify(saved.body));
-  const hash = saved.body.record_hash;
-  // Rows written by earlier releases still hold the details.
-  await pool.query('update records set capture_context = $2::jsonb where record_hash = $1', [hash, JSON.stringify(LEGACY_CONTEXT)]);
-  const upload = randomUUID(), staged = legacyRecord();
+  assertNothingAboutWhere((await api.getRecord(saved.body.record_hash)).body);
+  const upload = randomUUID();
   const begun = await api.handleRequest(new Request('http://local/api/record-uploads', { method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ upload_id: upload, manifest: staged.manifest }) }));
+    body: JSON.stringify({ upload_id: upload, manifest: legacyRecord().manifest }) }));
   assert.equal(begun.status, 200);
-  await pool.query(`update record_uploads set manifest = manifest || jsonb_build_object('capture_context', $2::jsonb) where upload_id = $1`, [upload, JSON.stringify(LEGACY_CONTEXT)]);
-
-  const wipe = migrations.find(migration => /capture_context/.test(migration.sql) && /^008_/.test(migration.name));
-  assert.ok(wipe, 'migration 008 removes capture context');
-  await pool.query(wipe.sql);
-
-  const record = (await pool.query('select capture_context from records where record_hash = $1', [hash])).rows[0];
-  assert.equal(record.capture_context, null);
-  const stagedRow = (await pool.query('select manifest from record_uploads where upload_id = $1', [upload])).rows[0];
-  assert.equal('capture_context' in stagedRow.manifest, false);
-  assertNothingAboutWhere((await api.getRecord(hash)).body);
+  const staged = (await pool.query('select manifest from record_uploads where upload_id = $1', [upload])).rows[0].manifest;
+  assert.equal('capture_context' in staged, false);
 });

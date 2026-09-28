@@ -136,8 +136,9 @@ export function createRuntimeServer(options: RuntimeServerOptions): Server {
       const requestUrl = new URL((req.url ?? "/").replace(/^\/+/, "/"), `http://${req.headers.host ?? "localhost"}`);
       const apiRequest = requestUrl.pathname.startsWith("/api/");
       if (apiRequest && inFlight >= maxInFlight) {
+        // As with rate limiting, keep the connection so a client still sending
+        // its body reads this answer instead of a reset.
         res.setHeader("retry-after", "1");
-        res.setHeader("connection", "close");
         json(res, 503, { error: "server_busy" });
         return;
       }
