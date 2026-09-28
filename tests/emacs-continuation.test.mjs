@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
-import { computeObservedLength, verifyRecord } from "../packages/format/src/index.ts";
+import { computeObservedLength, verifyRecord, verifyTextBindingCandidate } from "../packages/format/src/index.ts";
 import { createIngestApi } from "../apps/ingest-api/src/index.ts";
 import { createRuntimeServer } from "../apps/ingest-api/src/server.ts";
 import { InMemoryRecordStore } from "../packages/storage/src/index.ts";
@@ -415,3 +415,84 @@ for (const outcome of ["accepted", "failed"]) {
     }
   });
 }
+
+test("pmbah-copy-file publishes a buffer with unrecorded changes and still makes the copy", options, async (t) => {
+  const temp = await temporaryDirectory(t, "pmbah-emacs-copy-gap-");
+  const sourcePath = join(temp, "draft.txt");
+  const targetPath = join(temp, "copy.txt");
+  await writeFile(sourcePath, "");
+  const helper = await publishHelper(temp, "accepted");
+  const { output } = await runEmacs(temp, copyProgram(sourcePath, targetPath, `
+(setq pmbah-observe-process nil)
+(with-current-buffer (find-file-noselect ${JSON.stringify(sourcePath)})
+  (pmbah-mode 1)
+  (insert "recorded")
+  ;; A change the recorder never saw, as after reopening a file edited elsewhere.
+  (let ((inhibit-modification-hooks t)) (insert " elsewhere"))
+  (setq-local pmbah-helper-script ${JSON.stringify(helper)})
+  (let (published)
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+              ((symbol-function 'pmbah--y-or-n-p-default-yes) (lambda (_) t))
+              ((symbol-function 'read-file-name) (lambda (&rest _) ${JSON.stringify(targetPath)})))
+      (let ((noninteractive nil))
+        (call-interactively #'pmbah-copy-file)))
+    (let ((deadline (+ (float-time) 10)))
+      (while (and pmbah--sign-job (< (float-time) deadline)) (accept-process-output nil 0.02)))
+    (pmbah-test-output
+     (list :copied (if (file-exists-p ${JSON.stringify(targetPath)}) t :json-false)
+           :copy_text (and (file-exists-p ${JSON.stringify(targetPath)})
+                           (with-temp-buffer (insert-file-contents ${JSON.stringify(targetPath)}) (buffer-string)))
+           :source_parent pmbah--parent-record
+           :message (vconcat pmbah-test-messages)))
+    (set-buffer-modified-p nil)))`));
+  assert.equal(output.copied, true, output.message.join("\n"));
+  assert.equal(output.copy_text, "recorded elsewhere");
+  assert.match(output.source_parent, /^b3:[0-9a-f]{64}$/);
+});
+
+test("pmbah-copy-file says nothing was copied when publishing cannot start", options, async (t) => {
+  const temp = await temporaryDirectory(t, "pmbah-emacs-copy-start-failure-");
+  const sourcePath = join(temp, "draft.txt");
+  const targetPath = join(temp, "copy.txt");
+  await writeFile(sourcePath, "");
+  const { output } = await runEmacs(temp, copyProgram(sourcePath, targetPath, `
+(setq pmbah-observe-process nil)
+(with-current-buffer (find-file-noselect ${JSON.stringify(sourcePath)})
+  (pmbah-mode 1)
+  (insert "recorded")
+  (let (outcome)
+    (cl-letf (((symbol-function 'y-or-n-p) (lambda (_) t))
+              ((symbol-function 'read-file-name) (lambda (&rest _) ${JSON.stringify(targetPath)}))
+              ((symbol-function 'pmbah--prepare-signing-input) (lambda (&rest _) (user-error "Storage is unavailable"))))
+      (let ((noninteractive nil))
+        (setq outcome (condition-case error (progn (call-interactively #'pmbah-copy-file) :json-false)
+                        (user-error (error-message-string error))))))
+    (pmbah-test-output (list :outcome outcome :copied (if (file-exists-p ${JSON.stringify(targetPath)}) t :json-false))))
+  (set-buffer-modified-p nil))`));
+  assert.equal(output.copied, false);
+  assert.match(output.outcome, /^Storage is unavailable; nothing was published or copied$/);
+});
+
+test("a record with an unrecorded change publishes through the real service and says so", options, async (t) => {
+  const { api, env } = await ingestServer(t);
+  const temp = await temporaryDirectory(t, "pmbah-emacs-unrecorded-change-");
+  const documentPath = join(temp, "essay.txt");
+  await writeFile(documentPath, "");
+  const { output } = await runEmacs(temp, `
+(with-current-buffer (find-file-noselect ${JSON.stringify(documentPath)})
+  (pmbah-mode 1)
+  (insert "Typed here")
+  (let ((inhibit-modification-hooks t)) (insert " and pasted elsewhere"))
+  (let ((response (pmbah-sign-buffer t)))
+    (pmbah-test-output (list :response response :text (buffer-string))))
+  (set-buffer-modified-p nil))`, env);
+  const published = await publishedRecord(api, output.response);
+  const last = published.record.events.at(-1);
+  assert.deepEqual({ op: last.op, pos: last.pos, del_len: last.del_len, ins_len: last.ins_len, source: last.source },
+    { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
+  assert.ok(published.record.manifest.text_binding, "the current text is still bound");
+  assert.equal(output.text, "Typed here and pasted elsewhere");
+  assert.equal(verifyTextBindingCandidate(published.record.manifest.text_binding, output.text, published.record.manifest.session_id).valid, true);
+  assert.equal(published.stats.observed_final_length, null, "the length after an unrecorded change is unknown");
+  assert.equal(published.stats.unknown_source_count >= 1, true);
+});
