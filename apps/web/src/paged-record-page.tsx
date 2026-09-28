@@ -95,7 +95,7 @@ export function PagedRecordPage({ summary }: { summary: RecordSummary }) {
         current.terminate();
       }
     };
-    current.postMessage({ manifest: summary.manifest });
+    current.postMessage({ manifest: summary.manifest, starting_length: summary.stats.starting_length ?? 0 });
   };
   const stop = () => {
     worker.current?.terminate();

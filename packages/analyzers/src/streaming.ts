@@ -27,6 +27,8 @@ export type AnalysisAccumulator = {
   first_t: number | null;
   last_t: number | null;
   idle_threshold_ms: number;
+  /** Where the document length started; absent in uploads begun before it was kept. */
+  starting_length?: number | null;
   observed_length: number | null;
   inserted: number | null;
   deleted: number | null;
@@ -67,6 +69,8 @@ export type AnalysisOptions = {
   idleThresholdMs?: number;
   smallEditCodepoints?: number;
   largeAtomicInsertCodepoints?: number;
+  /** A continuation's starting length, from `startingLength` in packages/format. */
+  startingLength?: number | null;
 };
 export function createAnalysisAccumulator(
   idleThresholdMs = DEFAULT_IDLE_THRESHOLD_MS,
@@ -85,7 +89,8 @@ export function createAnalysisAccumulator(
     first_t: null,
     last_t: null,
     idle_threshold_ms: idleThresholdMs,
-    observed_length: 0,
+    starting_length: options.startingLength === undefined ? 0 : options.startingLength,
+    observed_length: options.startingLength === undefined ? 0 : options.startingLength,
     inserted: 0,
     deleted: 0,
     largest: 0,
@@ -187,6 +192,7 @@ export function finalizeAnalysis(
     record_hash: manifest.record_hash,
     event_count: s.count,
     duration_ms: manifest.duration_ms,
+    starting_length: s.starting_length === undefined ? 0 : s.starting_length,
     observed_final_length: s.observed_length,
     insert_op_count: s.inserts,
     delete_op_count: s.deletes,

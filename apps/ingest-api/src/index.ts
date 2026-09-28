@@ -19,6 +19,7 @@ import {
   aggregateMutationSizes,
   computeEventHashChain,
   isB3Hash,
+  startingLength,
   validateEvent,
   verifyRecord,
   type B3Hash,
@@ -218,7 +219,8 @@ export function createIngestApi(options: IngestApiOptions) {
       options.store,
       initialShortSignatureLength,
     );
-    const stats = computeRecordStats(stampedRecord, idleThresholdMs);
+    const parentLength = parentRecord ? await options.store.finalLength(parentRecord) : null;
+    const stats = computeRecordStats(stampedRecord, idleThresholdMs, startingLength(stampedRecord.manifest, parentLength));
     const timeFields = new Set(["duration_ms", "inter_event_delay_min_ms", "inter_event_delay_p50_ms", "inter_event_delay_p90_ms", "inter_event_delay_p95_ms", "inter_event_delay_p99_ms", "inter_event_delay_max_ms", "active_time_ms", "idle_time_ms"]);
     const overflow = Object.entries(stats).filter(([key, value]) =>
       typeof value === "number" && (!Number.isSafeInteger(value) || value < 0 || value > (timeFields.has(key) ? MAX_TIME_FIELD_VALUE : MAX_INTEGER_FIELD_VALUE)));
@@ -352,8 +354,8 @@ export function createIngestApi(options: IngestApiOptions) {
   return { postObservedCheckpoint, postRecord, getRecord, health, handleRequest };
 }
 
-export function computeRecordStats(record: WritingRecord, idleThresholdMs = DEFAULT_IDLE_THRESHOLD_MS): RecordStats {
-  return analyzeEventLog(record.events, record.manifest, { idleThresholdMs }).stats;
+export function computeRecordStats(record: WritingRecord, idleThresholdMs = DEFAULT_IDLE_THRESHOLD_MS, starting: number | null = 0): RecordStats {
+  return analyzeEventLog(record.events, record.manifest, { idleThresholdMs, startingLength: starting }).stats;
 }
 
 export async function generateShortSignature(

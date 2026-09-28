@@ -316,3 +316,26 @@ test("known operation sizes remain constrained when other measurements are unkno
     assert.deepEqual(validateEvent({ ...base, op, del_len: null, ins_len: null }), []);
   }
 });
+
+test("observed length can start from a continuation's parent length", async () => {
+  const { computeObservedLength } = await import("../packages/format/src/index.ts");
+  const events = [
+    { seq: 0, t: 0, op: "insert", pos: 120, del_len: 0, ins_len: 3, source: "typing" },
+    { seq: 1, t: 10, op: "delete", pos: 50, del_len: 5, ins_len: 0, source: "typing" },
+  ];
+  assert.equal(computeObservedLength(events), null, "without a starting length, an edit inside existing text is unknown");
+  assert.equal(computeObservedLength(events, 200), 198);
+  assert.equal(computeObservedLength(events, 100), null, "an edit beyond the starting length is unknown");
+  assert.equal(computeObservedLength(events, null), null, "an unknown starting length stays unknown");
+  const gap = [{ ...events[0], pos: null }, events[1]];
+  assert.equal(computeObservedLength(gap, 200), null, "a gap at the first edit keeps the length unknown");
+});
+
+test("only a signed-finish continuation starts from its parent's final length", async () => {
+  const { startingLength } = await import("../packages/format/src/index.ts");
+  const parent = "b3:" + "a".repeat(64);
+  assert.equal(startingLength({ format_version: "0.3", parent_record: parent }, 812), 812);
+  assert.equal(startingLength({ format_version: "0.3", parent_record: parent }, null), null, "an unknown or removed parent leaves the start unknown");
+  assert.equal(startingLength({ format_version: "0.3", parent_record: null }, 812), 0, "a first record starts empty");
+  assert.equal(startingLength({ format_version: "0.2", parent_record: parent }, 812), 0, "older formats keep starting empty");
+});

@@ -218,3 +218,38 @@ test("paged reader reports progress after every verified page", async () => {
   );
   assert.deepEqual(counts, [EVENT_PAGE_SIZE, EVENT_PAGE_SIZE * 2, 9000]);
 });
+
+test("stats start a continuation's length from its parent's and report where they started", () => {
+  const edits = [
+    { seq: 0, t: 0, op: "insert", pos: 120, del_len: 0, ins_len: 3, source: "typing" },
+    { seq: 1, t: 150, op: "delete", pos: 50, del_len: 5, ins_len: 0, source: "typing" },
+  ];
+  const finish = (options) => {
+    const state = createAnalysisAccumulator(undefined, options);
+    for (const e of edits) appendAnalysisEvent(state, e);
+    // Chunked uploads persist the accumulator between requests.
+    return finalizeAnalysis(JSON.parse(JSON.stringify(state)), manifestFor(edits), { p50: 150, p90: 150, p95: 150, p99: 150 }).stats;
+  };
+  assert.deepEqual([finish().starting_length, finish().observed_final_length], [0, null]);
+  assert.deepEqual([finish({ startingLength: 200 }).starting_length, finish({ startingLength: 200 }).observed_final_length], [200, 198]);
+  assert.deepEqual([finish({ startingLength: null }).starting_length, finish({ startingLength: null }).observed_final_length], [null, null]);
+});
+
+test("the paged reader starts a continuation's length from its parent's", async () => {
+  const { verifyPagedRecord } = await import("../apps/web/src/stream-record.ts");
+  // Typing at the end of 500 characters of existing text.
+  const events = Array.from({ length: 20 }, (_, i) => ({ ...event(i), pos: 500 + i }));
+  const manifest = manifestFor(events);
+  let tip = null;
+  const tips = events.map(e => (tip = advanceEventHash(tip, e, sessionId, "0.3")));
+  const readPage = async (offset, limit) => {
+    const page = events.slice(offset, offset + limit), next = offset + page.length;
+    return { events: page, total_events: events.length, next_offset: next === events.length ? null : next, chain_tip_before: tips[offset - 1] ?? null, chain_tip_after: tips[next - 1] };
+  };
+  const lengths = overview => overview.bins.flatMap(bin => [bin.minimum_length, bin.maximum_length]).filter(value => value !== null);
+  assert.deepEqual(lengths((await verifyPagedRecord(manifest, readPage)).overview), [], "from an empty start the length is unknown");
+  const continued = (await verifyPagedRecord(manifest, readPage, undefined, 500)).overview;
+  assert.equal(Math.min(...lengths(continued)), 501);
+  assert.equal(Math.max(...lengths(continued)), 520);
+  assert.equal(continued.known_length_events, 20);
+});

@@ -427,3 +427,13 @@ test("the rhythm curve is empty without in-range gaps and ignores gaps outside t
   assert.ok(single.some(point => point.value > 0));
   assert.ok(single.every(point => Number.isFinite(point.value)));
 });
+
+test("timeline lengths start from a continuation's starting length", () => {
+  const events = [
+    { seq: 0, t: 0, op: "insert", pos: 300, del_len: 0, ins_len: 2, source: "typing" },
+    { seq: 1, t: 100, op: "delete", pos: 10, del_len: 4, ins_len: 0, source: "typing" },
+  ];
+  assert.ok(buildTimelinePoints(events).every(point => point.documentLength === null));
+  assert.deepEqual(buildTimelinePoints(events, 300).map(point => point.documentLength), [302, 298]);
+  assert.ok(buildTimelinePoints(events, null).every(point => point.documentLength === null));
+});

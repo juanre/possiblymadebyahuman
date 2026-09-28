@@ -33,7 +33,7 @@ weight: 3
 - `M-x pmbah-show-session-status` distinguishes saved events from those awaiting storage. At 256 pending events, `PMBAH:saving` temporarily makes the buffer read-only until storage catches up. A sudden process or machine failure can lose events not yet durably saved; complete journal appends are checked during recovery.
 - If saving fails, pending events stay in memory and the buffer becomes read-only with `PMBAH:save!`. Keep that buffer open and use `M-x pmbah-retry-save` after resolving the storage problem. A successful save resumes unsigned capture; signed records remain frozen and explicitly paused capture stays paused. Ordinary buffer close and Emacs exit are cancelled while saving still fails. Save the document itself as usual; session recovery never restores your writing.
 - Signing freezes and saves the record before uploading. A failed upload retries that same record after restart, including its original finish time and text binding. Successful uploads archive the accepted link before clearing the draft and begin a linked segment for further edits. `M-x pmbah-discard-session` explicitly discards the current local draft.
-- Renaming the visited file (`write-file`, `set-visited-file-name`) moves the saved state with it, including after changing major modes. If the destination has another session, both histories are preserved and a message identifies the retained recovery path; resolve that conflict before relying on automatic recovery at the destination.
+- Renaming the visited file inside Emacs (`M-x rename-visited-file`, `write-file`, `set-visited-file-name`) moves the saved state with it, including after changing major modes. Rename recorded files from Emacs so the recording follows them; a file renamed outside Emacs is not recognised as the recorded one. If the destination has another session, both histories are preserved and a message identifies the retained recovery path; resolve that conflict before relying on automatic recovery at the destination.
 - Non-file buffers also save content-blind session recovery files. Use `M-x pmbah-recover-session` in a buffer with no retained PMBAH session to choose one. Verification runs in the background and restores the event log or frozen upload, never your writing. Recovering into an untracked file associates the session with that file.
 - Event times and durations support months-long sessions. They use exact JSON integer milliseconds rather than a 32-bit clock; server duration and delay columns use 64-bit storage. A backwards system-clock correction cannot make the event timeline run backwards. Recovery stops on unreadable or incompatible state, preserving it and keeping the buffer read-only. An already-running session that reaches the clock limit is retained at a unique `.stale-*` path before a new one starts.
 
@@ -88,7 +88,7 @@ Change only `pmbah-checkout-root` for your checkout location.
 
 (use-package pmbah-mode
   :demand t
-  :commands (pmbah-mode pmbah-sign-buffer pmbah-show-session-status)
+  :commands (pmbah-mode pmbah-sign-buffer pmbah-show-session-status pmbah-copy-file)
   :custom
   (pmbah-api-base-url "https://possiblymadebyahuman.com")
   (pmbah-helper-script
@@ -155,8 +155,25 @@ Use the path printed by `command -v node` in a shell where Node is available.
 4. Check status when desired: `M-x pmbah-show-session-status` reports the session id, event count, duration, observation state, and API URL.
 5. Freeze, optionally bind the active region or whole buffer, upload, and copy the record URL: `M-x pmbah-sign-buffer`. Before uploading, one last checkpoint covers any events the service has not stamped yet. A session whose checkpoints never reached the service is uploaded with an explicit `unobserved` state rather than being stamped for the first time at sign time.
 6. If you want to throw away the local session without uploading: `M-x pmbah-discard-session`.
+7. To take the published writing in a second direction while this file keeps recording: `M-x pmbah-copy-file`. See [Continue after signing](#continue-after-signing).
 
 Interactive signing scans the journal and uploads in the background while the buffer remains frozen. Closing the buffer cancels that work and preserves a saved frozen record for retry. Publication sends resumable event chunks, so a long session does not have to fit in one request. After a successful upload, the accepted link is archived before the old local journal is removed, and a new segment starts linked to that record. If upload fails, the frozen manifest and journal remain available for the same upload to resume.
+
+## Continue after signing
+
+After a successful upload you can keep writing in the same buffer. The new segment is a separate record linked to the one you published, and it starts from the published text: its first edit has a known position, so the document length stays known from one record to the next.
+
+The segment can make that claim only when Emacs knows the text is unchanged. That is the case when the same Emacs session froze the record while recording, and the buffer was not edited and capture was not paused before the segment started. If the frozen record was recovered from disk after a restart, or anything changed in between, the segment starts with an unknown boundary instead, as described in [Sessions, buffers, and files](#sessions-buffers-and-files).
+
+### Copy a recorded file
+
+`M-x pmbah-copy-file` writes the buffer's text to a new file and opens it. Both files then record separately, each as its own continuation of the same published record.
+
+1. If the buffer has edits that are not published yet, the command asks whether to publish them first. A copy can only continue a published record, and a published record is permanent. If you decline, nothing is copied.
+2. It asks for the new file name. It refuses a file that already exists, and a name that already has saved PMBAH state.
+3. After the upload succeeds, it writes the copy and starts recording it. The copy has its own session and its own server checkpoints, starts at the same time as the original's new segment, and its first edit has a known position.
+
+The message after copying names both buffers and the record they continue. The original buffer is unchanged and keeps recording on its own.
 
 ## Verify the installation
 

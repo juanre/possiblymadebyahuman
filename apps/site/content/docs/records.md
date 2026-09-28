@@ -68,7 +68,12 @@ Here `bytes` means the raw 32-byte digest and `canonical` means UTF-8 JSON with 
 
 A published record is immutable. Continuing it (**Continue in chosen field** in the Chrome extension, **Keep writing** on `/write`, or further edits in Emacs) creates a new session and a new record linked through `parent_record`. It records new mutations only. Its elapsed clock begins at the previous segment's signed finish, so time away appears before the next captured edit. Older saved records without a signed finish use the retained local upload time as an approximate boundary.
 
-The relationship does not establish that the document was unchanged or observed during the pause. Unknown positions remain unknown, and the viewer does not extend a known document-length curve across missing measurements. The previous public link stays available.
+A continuation's first edit tells readers how it starts:
+
+- **A gap at the first edit.** The producer cannot vouch that the text was unchanged since the previous record, for example because the field was reopened later. The continuation's document length is unknown, and the viewer shows edit activity instead of a length curve.
+- **A known position at the first edit.** The producer claims it picks up exactly where the previous record ended, because capture never stopped in between. Emacs does this when it continues straight after publishing, and for a copy made with `M-x pmbah-copy-file`. The service then starts the continuation's length from the previous record's final length, and the viewer draws the length curve from there.
+
+Either way the relationship does not establish that nothing happened between the two records beyond what the producer claims, and a record page says when it continues an earlier one, with a link. The previous public link stays available, and it does not link forward to later records.
 
 ## Short signatures
 

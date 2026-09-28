@@ -5,7 +5,7 @@ import test from "node:test";
 
 import pg from "pg";
 
-import { createIngestApi } from "../apps/ingest-api/src/index.ts";
+import { computeRecordStats, createIngestApi } from "../apps/ingest-api/src/index.ts";
 import { computeEventHashChain, computeRecordHash, verifyRecord } from "../packages/format/src/index.ts";
 import { PostgresRecordStore } from "../packages/storage/src/index.ts";
 import { applyMigrations, loadSqlMigrations } from "../packages/storage/src/migrations.ts";
@@ -265,10 +265,23 @@ test("Postgres forward migration preserves old records and observations, then st
   const pauseMs = 60 * 24 * 60 * 60 * 1000;
   let wallClock = firstAt;
   const api = createIngestApi({ store, now: () => wallClock });
+  // A record stored by a release that ran on the 002 schema, written as that
+  // release wrote it; today's code only ever runs after the migrations.
   const old = await fixtureRecord();
-  const uploaded = await api.postRecord(old);
-  assert.equal(uploaded.status, 201);
-  const oldBefore = await api.getRecord(uploaded.body.short_signature);
+  const oldStats = computeRecordStats(old);
+  await pool.query(`insert into records (record_hash, short_signature, format_version, session_id, producer_id, producer_version,
+      producer_capabilities, event_count, duration_ms, created_client_t, ingested_server_t, attestations, events, text_binding)
+    values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14::jsonb)`,
+  [old.manifest.record_hash, "oldrecord1", old.manifest.format_version, old.manifest.session_id, old.manifest.producer.id, old.manifest.producer.version,
+    JSON.stringify(old.manifest.producer.capabilities), old.manifest.event_count, old.manifest.duration_ms, old.manifest.created_client_t,
+    firstAt.toISOString(), JSON.stringify(old.manifest.attestations), JSON.stringify(old.events), old.manifest.text_binding ? JSON.stringify(old.manifest.text_binding) : null]);
+  const statColumns = ["observed_final_length", "insert_op_count", "delete_op_count", "replace_op_count", "typed_event_count", "paste_event_count",
+    "cut_event_count", "drop_event_count", "ime_event_count", "autocomplete_event_count", "programmatic_event_count", "unknown_source_count",
+    "inserted_codepoints_total", "deleted_codepoints_total", "largest_atomic_insert_codepoints", "inter_event_delay_min_ms", "inter_event_delay_p50_ms",
+    "inter_event_delay_p90_ms", "inter_event_delay_p95_ms", "inter_event_delay_p99_ms", "inter_event_delay_max_ms", "active_time_ms", "idle_time_ms", "long_pause_count"];
+  await pool.query(`insert into record_stats (record_hash, ${statColumns.join(", ")}, delay_histogram)
+    values ($1, ${statColumns.map((_, i) => `$${i + 2}`).join(", ")}, $${statColumns.length + 2}::jsonb)`,
+  [old.manifest.record_hash, ...statColumns.map(column => oldStats[column]), JSON.stringify(oldStats.delay_histogram)]);
   const rawBefore = (await pool.query("select record_hash, events, duration_ms from records where record_hash = $1", [old.manifest.record_hash])).rows[0];
 
   const record = await freshRecord();
@@ -293,17 +306,20 @@ test("Postgres forward migration preserves old records and observations, then st
   const legacyContext = JSON.stringify({ surface: "browser", label: "Drafts - someone@example.com", browser: { title: "Drafts - someone@example.com" } });
   await pool.query("update records set capture_context = $2::jsonb where record_hash = $1", [old.manifest.record_hash, legacyContext]);
   const staged = await freshRecord(), stagedId = randomUUID();
-  const begun = await api.handleRequest(new Request("https://possiblymadebyahuman.test/api/record-uploads", { method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ upload_id: stagedId, manifest: staged.manifest }) }));
-  assert.equal(begun.status, 200);
-  await pool.query("update record_uploads set manifest = manifest || jsonb_build_object('capture_context', $2::jsonb) where upload_id = $1", [stagedId, legacyContext]);
+  await pool.query("insert into record_uploads (upload_id, manifest, analysis_state) values ($1, $2::jsonb || jsonb_build_object('capture_context', $3::jsonb), '{}'::jsonb)",
+    [stagedId, JSON.stringify(staged.manifest), legacyContext]);
   const cleaned = await applyMigrations(pool, migrations);
-  assert.deepEqual(cleaned.applied.map(({ version }) => version), ["008", "009"]);
+  assert.deepEqual(cleaned.applied.map(({ version }) => version), ["008", "009", "010"]);
   const column = await pool.query("select 1 from information_schema.columns where table_name = 'records' and column_name = 'capture_context'");
   assert.equal(column.rowCount, 0, "records keep no column for where they were written");
   const stagedManifest = (await pool.query("select manifest from record_uploads where upload_id = $1", [stagedId])).rows[0].manifest;
   assert.equal("capture_context" in stagedManifest, false);
-  assert.deepEqual(await api.getRecord(uploaded.body.short_signature), oldBefore);
+  const oldAfter = (await api.getRecord("oldrecord1")).body;
+  assert.equal(oldAfter.manifest.record_hash, old.manifest.record_hash);
+  assert.deepEqual(oldAfter.events, old.events);
+  assert.equal(oldAfter.stats.observed_final_length, oldStats.observed_final_length);
+  assert.equal(oldAfter.stats.starting_length, 0, "records stored before migration 010 started empty");
+  assert.equal(verifyRecord(JSON.parse(JSON.stringify({ manifest: oldAfter.manifest, events: oldAfter.events }))).valid, true);
   const rawAfter = (await pool.query("select record_hash, events, duration_ms from records where record_hash = $1", [old.manifest.record_hash])).rows[0];
   assert.equal(rawAfter.record_hash, rawBefore.record_hash);
   assert.deepEqual(rawAfter.events, rawBefore.events);

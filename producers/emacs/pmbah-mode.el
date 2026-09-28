@@ -2,7 +2,7 @@
 
 ;; Copyright (c) 2026
 ;; SPDX-License-Identifier: MIT
-;; Version: 0.1.3
+;; Version: 0.1.4
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, writing
 
@@ -118,7 +118,7 @@ your init file so this also works after restarting Emacs."
   :type 'boolean
   :group 'pmbah)
 
-(defconst pmbah-producer-version "0.1.3")
+(defconst pmbah-producer-version "0.1.4")
 (defconst pmbah-format-version "0.3")
 
 (defconst pmbah-max-session-ms 9007199254740991
@@ -183,6 +183,10 @@ your init file so this also works after restarting Emacs."
   "Non-nil until a real mutation marks an unknown capture baseline.")
 (defvar-local pmbah--observed-tick nil
   "Last observed character modification tick; never a text snapshot.")
+(defvar-local pmbah--frozen-tick nil
+  "Character modification tick when this Emacs froze the record from live capture.
+Nil when capture had a gap at freezing or the frozen record came from disk,
+so only an unchanged buffer frozen here can continue from the record's text.")
 (defvar-local pmbah--state-path nil
   "State file this buffer's session was last written to.
 When the visited file is renamed, the state file moves with it.")
@@ -313,6 +317,7 @@ passed transiently to the local helper solely to compute that binding."
                     pmbah--save-failure
                     pmbah--pending-gap
                     pmbah--observed-tick
+                    pmbah--frozen-tick
                     pmbah--state-path
                     pmbah--chain-tip
                     pmbah--chain-tip-event-count
@@ -540,8 +545,12 @@ passed transiently to the local helper solely to compute that binding."
                          (if pmbah--frozen-record "; signing retry is available" ""))))
           ((error quit) (pmbah--recovery-failed (error-message-string error))))))))
 
-(defun pmbah--start-session (&optional parent-record start-ms)
-  "Start a fresh per-buffer PMBAH session."
+(defun pmbah--start-session (&optional parent-record start-ms continuous)
+  "Start a fresh per-buffer PMBAH session.
+PARENT-RECORD and START-MS link it to a published record.  A known first
+position claims the parent's final text, so a continuation starts with a
+capture gap unless CONTINUOUS says the buffer text is exactly that text.
+Without a parent, only a non-empty buffer starts with a gap."
   (when pmbah--recovery-job (user-error "Wait for PMBAH recovery before starting a session"))
   (pmbah--drain-writer)
   (pmbah--cancel-sign-job)
@@ -569,8 +578,11 @@ passed transiently to the local helper solely to compute that binding."
           pmbah--uploaded-at-ms nil
           pmbah--signed-duration-ms nil
           pmbah--save-failure nil
-          pmbah--pending-gap (save-restriction (widen) (> (buffer-size) 0))
+          pmbah--pending-gap (if parent-record
+                                 (not continuous)
+                               (save-restriction (widen) (> (buffer-size) 0)))
           pmbah--observed-tick (buffer-chars-modified-tick)
+          pmbah--frozen-tick nil
           pmbah--chain-tip nil
           pmbah--chain-tip-event-count 0)
     (pmbah--observation-reset)
@@ -635,6 +647,7 @@ must repeat recovery rather than append with a partially installed cursor."
           pmbah--save-failure (plist-get state :save_failure)
           pmbah--pending-gap t
           pmbah--observed-tick (buffer-chars-modified-tick)
+          pmbah--frozen-tick nil
           pmbah--journal-pending nil
           pmbah--journal-repair nil
           pmbah--state-path (or recovery-path (pmbah--preferred-state-file)))
@@ -775,11 +788,14 @@ must repeat recovery rather than append with a partially installed cursor."
 (defun pmbah--preferred-state-file ()
   "Return the file-keyed or non-file session-keyed recovery path."
   (cond
-   (buffer-file-name
-    (expand-file-name (concat (secure-hash 'sha256 (file-truename buffer-file-name)) ".json")
-                      pmbah-state-directory))
+   (buffer-file-name (pmbah--file-state-file buffer-file-name))
    (pmbah--session-id
     (expand-file-name (concat "session-" pmbah--session-id ".json") pmbah-state-directory))))
+
+(defun pmbah--file-state-file (file)
+  "Return the recovery path keyed to FILE's true name."
+  (expand-file-name (concat (secure-hash 'sha256 (file-truename file)) ".json")
+                    pmbah-state-directory))
 
 (defun pmbah--state-snapshot ()
   "Return the JSON-serializable session state for this buffer."
@@ -1242,8 +1258,8 @@ No document text is persisted."
   (floor (* 1000 (float-time time))))
 
 (defun pmbah--ms-to-time (ms)
-  "Return the Lisp time value for MS milliseconds since the epoch."
-  (seconds-to-time (/ ms 1000.0)))
+  "Return the exact Lisp time value for MS milliseconds since the epoch."
+  (cons ms 1000))
 
 (defun pmbah--observation-reset ()
   "Forget everything the server has committed to for this session."
@@ -1432,6 +1448,8 @@ Noninteractive callers retain the synchronous result-returning interface."
             (if (equal pmbah--session-format "0.1") (or (plist-get (car pmbah--events) :t) 0) (pmbah--elapsed-ms))
             pmbah--signing t)
       (pmbah--lock-buffer)
+      (pmbah--check-capture-gap)
+      (setq pmbah--frozen-tick (unless pmbah--pending-gap (buffer-chars-modified-tick)))
       (pmbah--write-state t)
       (pmbah--record-helper-payload final-text t))))
 
@@ -1488,7 +1506,9 @@ Noninteractive callers retain the synchronous result-returning interface."
          (next-start (if (equal (alist-get 'format_version manifest) "0.3")
                          (+ (pmbah--time-to-ms pmbah--session-start-time)
                             (alist-get 'duration_ms manifest))
-                       (or pmbah--uploaded-at-ms (pmbah--time-to-ms (current-time))))))
+                       (or pmbah--uploaded-at-ms (pmbah--time-to-ms (current-time)))))
+         (continuous (pmbah--text-unchanged-since-freeze-p))
+         (after-publication (plist-get pmbah--sign-job :after-publication)))
     (when url (kill-new url))
     (condition-case error
         (progn
@@ -1502,13 +1522,22 @@ Noninteractive callers retain the synchronous result-returning interface."
        (user-error "Record uploaded: %s; could not save its link: %s. Retry signing to save it"
                    url (error-message-string error))))
     (pmbah--delete-state)
-    (pmbah--start-session parent next-start)
+    (pmbah--start-session parent next-start continuous)
     (condition-case error
         (pmbah--write-state t)
       (error (user-error "Record uploaded: %s; could not save continuation state: %s"
                          url (error-message-string error))))
     (message "PMBAH record uploaded; copied %s%s; new session %s started" url observation-note pmbah--session-id)
+    (when after-publication (funcall after-publication))
     response))
+
+(defun pmbah--text-unchanged-since-freeze-p ()
+  "Whether the buffer text is exactly the frozen record's final text.
+Only a record frozen by this Emacs from live capture without a gap qualifies,
+and only while no character changed and capture was never paused since."
+  (and pmbah--frozen-tick
+       (not pmbah--pending-gap)
+       (= pmbah--frozen-tick (buffer-chars-modified-tick))))
 
 
 (defun pmbah--cancel-sign-job ()
@@ -1525,17 +1554,22 @@ Noninteractive callers retain the synchronous result-returning interface."
 
 (defun pmbah--async-sign-failed (failure)
   "Retain the recoverable prefix and report an asynchronous FAILURE."
-  (pmbah--cancel-sign-job)
-  (unless (or pmbah--frozen-record pmbah--save-failure) (pmbah--unlock-buffer))
-  (message "PMBAH signing stopped: %s" failure))
+  (let ((after-publication (plist-get pmbah--sign-job :after-publication)))
+    (pmbah--cancel-sign-job)
+    (unless (or pmbah--frozen-record pmbah--save-failure) (pmbah--unlock-buffer))
+    (message "PMBAH signing stopped: %s%s" failure
+             (if after-publication "; the copy was not made" ""))))
 
-(defun pmbah--sign-buffer-async (no-prompts)
-  "Start interactive signing without blocking Emacs during scans or uploads."
+(defun pmbah--sign-buffer-async (no-prompts &optional after-publication)
+  "Start interactive signing without blocking Emacs during scans or uploads.
+AFTER-PUBLICATION, when non-nil, is called with no arguments in this buffer
+once the record is accepted and its continuation session has started."
   (when pmbah--recovery-job (user-error "Wait for PMBAH recovery before signing"))
   (when pmbah--sign-job (user-error "This record is already being prepared or uploaded"))
   (condition-case error
       (let ((payload (pmbah--prepare-signing-input no-prompts)))
-        (setq pmbah--sign-job (list :token (pmbah--uuid-v4) :session pmbah--session-id))
+        (setq pmbah--sign-job (list :token (pmbah--uuid-v4) :session pmbah--session-id
+                                    :after-publication after-publication))
         (if payload
             (pmbah--start-sign-helper 'manifest payload)
           (pmbah--lock-buffer)
@@ -1607,6 +1641,105 @@ Noninteractive callers retain the synchronous result-returning interface."
                 (pmbah--save-upload-envelope)
                 (pmbah--start-sign-helper 'publish (pmbah--upload-descriptor))))
           ((error quit) (pmbah--async-sign-failed (error-message-string error))))))))
+
+;;; Copying a recorded file
+;;
+;; A copy continues the same published record as the buffer it was copied
+;; from.  Both start at the record's signed finish with fresh sessions, so
+;; each one's later history is published as its own continuation.
+
+;;;###autoload
+(defun pmbah-copy-file ()
+  "Copy this recorded file and record the copy as a separate continuation.
+Unsigned edits are published first, after confirmation, because a copy can
+only continue a published record.  The copy starts from that record's final
+text with its own session, and this buffer keeps recording its own
+continuation of the same record.  Return the copy's buffer, or nil while an
+interactive upload is still running."
+  (interactive)
+  (let ((interactive (and (called-interactively-p 'interactive) (not noninteractive))))
+    (unless buffer-file-name (user-error "PMBAH can only copy a buffer visiting a file"))
+    (when pmbah--recovery-job (user-error "Wait for PMBAH recovery before copying"))
+    (unless (and pmbah-mode pmbah--session-id)
+      (user-error "Enable pmbah-mode before copying a recorded file"))
+    (when pmbah--sign-job (user-error "This record is already being prepared or uploaded"))
+    (let ((publish (or pmbah--frozen-record (> pmbah--next-seq 0))))
+      (unless (or publish pmbah--parent-record)
+        (user-error "This buffer does not continue a published record yet; record and publish before copying"))
+      (when (and publish
+                 (not (y-or-n-p "Publish the recorded history before copying? A published record is permanent. ")))
+        (user-error "A copy can only continue a published record; nothing was copied"))
+      (let ((target (expand-file-name (read-file-name "Copy recorded file to: "))))
+        (pmbah--check-copy-target target)
+        (if (and publish interactive)
+            (progn
+              (pmbah--sign-buffer-async nil (lambda () (pmbah--copy-after-upload target)))
+              nil)
+          (when publish (pmbah--sign-buffer-sync nil))
+          (let ((copy (pmbah--copy-continuation target)))
+            (when interactive (pop-to-buffer-same-window copy))
+            copy))))))
+
+(defun pmbah--check-copy-target (target)
+  "Signal a user error unless TARGET can become a new file with no recovery state."
+  (when (or (file-exists-p target) (file-symlink-p target))
+    (user-error "%s already exists; choose a new file name" target))
+  (when (get-file-buffer target)
+    (user-error "A buffer is already visiting %s" target))
+  (unless (file-writable-p target)
+    (user-error "Cannot create %s" target))
+  (when (file-exists-p (pmbah--file-state-file target))
+    (user-error "PMBAH recovery state already exists for %s; choose another name" target)))
+
+(defun pmbah--copy-after-upload (target)
+  "Copy to TARGET once an interactive upload is accepted, reporting any failure."
+  (condition-case error
+      (pop-to-buffer-same-window (pmbah--copy-continuation target))
+    (error (message "PMBAH published the record but did not copy it to %s: %s"
+                    target (error-message-string error)))))
+
+(defun pmbah--copy-continuation (target)
+  "Write this buffer's text to TARGET and record it as a separate continuation.
+The copy starts where this buffer's empty continuation starts: the same parent
+record and start time, with a capture gap only when its text may differ from
+the record's final text.  Return the buffer visiting TARGET."
+  (pmbah--check-copy-target target)
+  (unless (and pmbah--parent-record (= pmbah--next-seq 0) (not pmbah--frozen-record))
+    (error "PMBAH can only copy an unedited continuation of a published record"))
+  (pmbah--check-capture-gap)
+  (let ((source (current-buffer))
+        (parent pmbah--parent-record)
+        (start-ms (pmbah--time-to-ms pmbah--session-start-time))
+        (source-gap pmbah--pending-gap)
+        copy identical)
+    (save-restriction
+      (widen)
+      (let ((coding-system-for-write buffer-file-coding-system))
+        (write-region nil nil target nil 'silent nil 'excl)))
+    (setq copy (find-file-noselect target))
+    (setq identical (save-restriction
+                      (widen)
+                      (let ((case-fold-search nil))
+                        (zerop (compare-buffer-substrings source nil nil copy nil nil)))))
+    (with-current-buffer copy
+      (pmbah--start-session parent start-ms (and identical (not source-gap)))
+      (pmbah-mode 1))
+    (message "PMBAH: %s and %s now record separately as continuations of %s%s"
+             (buffer-name source) (buffer-name copy) (pmbah--published-url parent)
+             (cond (source-gap "; both start with a capture gap")
+                   ((not identical) "; the copy starts with a capture gap")
+                   (t "")))
+    copy))
+
+(defun pmbah--published-url (record-hash)
+  "Return the accepted link archived for RECORD-HASH, or the hash itself."
+  (or (seq-some (lambda (path)
+                  (let ((response (ignore-errors (pmbah--parse-public-json (pmbah--read-file path)))))
+                    (and (equal (alist-get 'record_hash response) record-hash)
+                         (alist-get 'url response))))
+                (and (file-directory-p pmbah-state-directory)
+                     (directory-files pmbah-state-directory t "\\`published-.*\\.json\\'")))
+      record-hash))
 
 (defun pmbah--parse-public-json (json)
   "Read content-blind persisted JSON using public record alist keys."

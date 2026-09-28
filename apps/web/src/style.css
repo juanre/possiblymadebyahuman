@@ -162,6 +162,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
+.record-continues { margin: -12px 0 24px; font-family: var(--serif); font-size: 1.05rem; color: #514a40; }
 .record-check { margin: -8px 0 22px; color: #514a40; font-size: 0.95rem; line-height: 1.5; }
 .record-check strong { color: var(--ink); font-weight: 600; }
 .record-check-ok strong, .record-check-mark { color: #2f6b3a; }
