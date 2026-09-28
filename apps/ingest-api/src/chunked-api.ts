@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { advanceEventHash, computeEventHashChain, MAX_INTEGER_FIELD_VALUE, MAX_TIME_FIELD_VALUE, sealRecordHash, validateEvent, validateManifest,
+import { advanceEventHash, computeEventHashChain, MAX_INTEGER_FIELD_VALUE, MAX_TIME_FIELD_VALUE, sealRecordHash, startingLength, validateEvent, validateManifest,
   type B3Hash, type EventLog, type RecordManifest } from "../../../packages/format/src/index.ts";
 import { appendAnalysisEvent, createAnalysisAccumulator, finalizeAnalysis, type AnalysisAccumulator } from "../../../packages/analyzers/src/streaming.ts";
 import { ChunkedUploadError, MAX_EVENT_CHUNK, type UploadObservation, type UploadState } from "../../../packages/storage/src/chunked.ts";
@@ -45,8 +45,9 @@ export function createChunkedApi(options: Options) {
     if (!manifest.event_count) invalid("invalid_manifest", ["event_count must be positive"]);
     if (manifest.event_count > options.maxUploadEvents) throw new ChunkedUploadError(413, "upload_too_large", `uploads are limited to ${options.maxUploadEvents} events`);
     if (manifest.parent_record && !await store.recordExists(manifest.parent_record)) invalid("invalid_manifest", ["parent_record does not refer to a stored record"]);
+    const starting = startingLength(manifest, manifest.parent_record ? await store.finalLength(manifest.parent_record) : null);
     const state = await store.chunked.begin({ upload_id: value.upload_id, manifest: { ...manifest, ingested_server_t: options.now().toISOString() },
-      observation: observation(value.observation), next_seq: 0, chain_tip: null, last_t: null, received_bytes: 0, observed_length: 0, analysis_state: createAnalysisAccumulator(options.idleThresholdMs) });
+      observation: observation(value.observation), next_seq: 0, chain_tip: null, last_t: null, received_bytes: 0, observed_length: starting, analysis_state: createAnalysisAccumulator(options.idleThresholdMs, { startingLength: starting }) });
     return { status: 200, body: await statusView(state) };
   }
   async function uploadStatus(id: string) {

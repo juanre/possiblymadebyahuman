@@ -5,6 +5,8 @@ export type RecordStats = {
   record_hash: B3Hash;
   event_count: number;
   duration_ms: number;
+  /** Where the document length started: 0, or a continuation's parent final length (null when unknown). */
+  starting_length: number | null;
   observed_final_length: number | null;
   insert_op_count: number;
   delete_op_count: number;
@@ -128,6 +130,8 @@ export interface RecordStore {
   shortSignatureExists(shortSignature: string): Promise<boolean>;
   /** Whether a record is stored under this short signature or full hash, without loading it. */
   recordExists(id: string): Promise<boolean>;
+  /** A stored record's final document length, or null when it is unknown or the record is not stored. */
+  finalLength(recordHash: B3Hash): Promise<number | null>;
   appendObservedCheckpoint(input: AppendObservedCheckpointInput): Promise<AppendObservedCheckpointResult>;
   getObservedSessionForBinding(input: ObservationBindingInput): Promise<ObservedSession>;
 }
@@ -238,6 +242,10 @@ export class InMemoryRecordStore implements RecordStore {
 
   async shortSignatureExists(shortSignature: string): Promise<boolean> {
     return this.#byShortSignature.has(shortSignature) || this.chunked.findCompleted(shortSignature) !== null;
+  }
+
+  async finalLength(recordHash: B3Hash): Promise<number | null> {
+    return (await this.findByRecordHash(recordHash))?.stats.observed_final_length ?? null;
   }
 
   async recordExists(id: string): Promise<boolean> {
@@ -468,6 +476,7 @@ export class PostgresRecordStore implements RecordStore {
          s.inserted_codepoints_total,
          s.deleted_codepoints_total,
          s.largest_atomic_insert_codepoints,
+         s.starting_length,
          s.observed_final_length,
          s.inter_event_delay_min_ms,
          s.inter_event_delay_p50_ms,
@@ -537,6 +546,14 @@ export class PostgresRecordStore implements RecordStore {
       [shortSignature],
     );
     return result.rows[0]?.exists ?? false;
+  }
+
+  async finalLength(recordHash: B3Hash): Promise<number | null> {
+    const result = await this.#db.query<{ observed_final_length: number | null }>(
+      "select observed_final_length from record_stats where record_hash = $1",
+      [recordHash],
+    );
+    return result.rows[0]?.observed_final_length ?? null;
   }
 
   async recordExists(id: string): Promise<boolean> {
@@ -675,6 +692,7 @@ type RecordRow = Record<string, unknown> & {
   events: EventLog;
   created_at: string;
   record_observation_state?: string | null;
+  starting_length: number | null;
   observed_final_length: number | null;
   delay_histogram: Array<{ bucket: string; count: number }>;
   signals: AnalysisResult[];
@@ -724,6 +742,7 @@ function rowToStoredRecord(row: RecordRow, observation: RecordObservation): Stor
       record_hash: row.record_hash,
       event_count: row.event_count,
       duration_ms: numberFromRow(row.duration_ms),
+      starting_length: nullableNumberFromRow(row.starting_length),
       observed_final_length: nullableNumberFromRow(row.observed_final_length),
       insert_op_count: numberFromRow(row.insert_op_count),
       delete_op_count: numberFromRow(row.delete_op_count),
@@ -918,8 +937,8 @@ export async function insertRecordData(client: PostgresQueryable, input: SaveRec
       inserted_codepoints_total, deleted_codepoints_total, largest_atomic_insert_codepoints,
       inter_event_delay_min_ms, inter_event_delay_p50_ms, inter_event_delay_p90_ms,
       inter_event_delay_p95_ms, inter_event_delay_p99_ms, inter_event_delay_max_ms,
-      active_time_ms, idle_time_ms, long_pause_count, delay_histogram
-    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb)`,
+      active_time_ms, idle_time_ms, long_pause_count, delay_histogram, starting_length
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb,$27)`,
     [
       input.stats.record_hash,
       input.stats.observed_final_length,
@@ -947,6 +966,7 @@ export async function insertRecordData(client: PostgresQueryable, input: SaveRec
       input.stats.idle_time_ms,
       input.stats.long_pause_count,
       JSON.stringify(input.stats.delay_histogram),
+      input.stats.starting_length,
     ],
   );
 

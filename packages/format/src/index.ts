@@ -473,9 +473,28 @@ export function verifyEventHashChain(record: WritingRecord): VerificationResult 
   return { valid: errors.length === 0, errors, computedRecordHash, computedChain };
 }
 
-export function computeObservedLength(events: EventLog): number | null {
+/**
+ * Where a record's document length starts. A signed-finish (0.3) continuation
+ * whose first edit has a known position claims it picks up exactly where its
+ * parent ended, so it starts from the parent's final length; a gap at that
+ * first edit leaves the length unknown however it starts. Other records start
+ * from an empty document.
+ */
+export function startingLength(
+  manifest: Pick<RecordManifest, "format_version" | "parent_record">,
+  parentFinalLength: number | null,
+): number | null {
+  return manifest.format_version === FORMAT_VERSION_0_3 && manifest.parent_record ? parentFinalLength : 0;
+}
+
+/**
+ * The document length the events establish, or null once an edit cannot be
+ * placed. A record starts from an empty document; a continuation that picks up
+ * exactly where its parent ended starts from the parent's final length.
+ */
+export function computeObservedLength(events: EventLog, startingLength: number | null = 0): number | null {
   assertValidEventLog(events);
-  let length: number | null = 0;
+  let length: number | null = startingLength;
   for (const event of events) {
     if (event.pos === null || event.del_len === null || event.ins_len === null || length === null) {
       length = null;
