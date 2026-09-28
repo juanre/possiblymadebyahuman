@@ -188,7 +188,7 @@ async function registerField(element: HTMLElement, activation_id: string, share_
   const response = await chrome.runtime.sendMessage({
     kind: "register_field", tab_id: -1, frame_id: -1,
     origin_url: window.location.origin, page_path: window.location.pathname,
-    page_title: document.title, descriptor, field_is_empty: isFieldEmpty(element),
+    descriptor, field_is_empty: isFieldEmpty(element),
     started_at_wall_ms,
     activation_id, ...(share_session_id ? { share_session_id } : {}), ...(resume_session_id ? { resume_session_id } : {}), ...(continue_session_id ? { continue_session_id } : {}),
   }).catch((error): BackgroundResponse => ({ kind: "error", reason: `The editor could not be started. ${String(error)}` }));

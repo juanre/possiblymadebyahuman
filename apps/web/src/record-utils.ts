@@ -426,24 +426,6 @@ function readableDuration(ms: number): string | null {
   return ms < 1000 ? null : formatServerObservedSpan(ms);
 }
 
-const CAPTURE_SURFACE_PHRASES: Record<string, string> = {
-  emacs: "in Emacs",
-  browser: "in a browser text field",
-  "web-draft": "on the possiblymadebyahuman writing page",
-};
-
-// A text field on another website is named by the site it was on.
-function captureSite(context: RecordApiResponse["manifest"]["capture_context"]): string | null {
-  if (context?.surface !== "browser") return null;
-  const url = (context.browser as { url?: unknown } | undefined)?.url;
-  if (typeof url !== "string") return null;
-  try {
-    return `in a text field on ${new URL(url).hostname}`;
-  } catch {
-    return null;
-  }
-}
-
 // A duration is signed when the record seals its finish time; older formats
 // carry a producer-reported duration, which is presented as an estimate.
 function durationPhrase(record: SummarySource): string {
@@ -465,13 +447,12 @@ export function formatCharacters(count: number | null): string {
 }
 
 /**
- * A descriptive one-sentence account of the record, with no evaluation: where
- * it was written, over what span, and when it was published. The measurements
- * themselves are in the facts beside it.
+ * A descriptive one-sentence account of the record, with no evaluation: the
+ * span of the writing and when it was published. The measurements themselves
+ * are in the facts beside it.
  */
 export function describeRecordSummary(record: SummarySource): string {
-  const context = captureSite(record.manifest.capture_context) ?? CAPTURE_SURFACE_PHRASES[String(record.manifest.capture_context?.surface ?? "")];
-  const written = ["Written", context, durationPhrase(record)].filter(Boolean).join(" ");
+  const written = `Written ${durationPhrase(record)}`;
   const date = publishedDate(record.manifest.ingested_server_t);
   return `${written}${date ? ` and published ${date}` : ""}.`;
 }

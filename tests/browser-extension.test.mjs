@@ -411,7 +411,7 @@ test("dispatcher preserves producer capture times across delayed registration an
   clock.advance(4_000);
   const reg = await dispatcher.handle({
     kind: "register_field", activation_id: "timed-start", started_at_wall_ms: 1_000,
-    tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const session_id = reg.result.session_id;
@@ -435,7 +435,7 @@ test("dispatcher: register → append → sign → upload → marks uploaded", a
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   assert.equal(reg.kind, "register_field_result");
@@ -464,7 +464,7 @@ test("dispatcher: a session the server never committed uploads as unobserved wit
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -490,7 +490,7 @@ test("dispatcher: a diverged session uploads as unobserved and the result says s
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -543,7 +543,7 @@ async function registerAndType(dispatcher, count) {
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -599,7 +599,7 @@ test("dispatcher: signed manifest passes packages/format.verifyRecord", async ()
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -621,7 +621,7 @@ test("dispatcher: sign with a content-blind text binding seals it and stays veri
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -656,7 +656,7 @@ test("dispatcher: line break event keeps extension record verifiable", async () 
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -684,7 +684,7 @@ test("dispatcher: non-empty field with no resumable session reports ineligible",
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false,
   });
   assert.equal(reg.kind, "register_field_result");
@@ -695,7 +695,7 @@ test("dispatcher: non-empty field with no resumable session reports ineligible",
 
 test("dispatcher: explicit start in existing text persists unknown baseline before the first edit", async () => {
   const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher();
-  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false };
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false };
   const result = await dispatcher.handle(registration);
   assert.equal(result.result.kind, "registered");
   const sid = result.result.session_id;
@@ -729,7 +729,7 @@ test("dispatcher: parallel fields across sites stay independent", async () => {
     const reg = await dispatcher.handle({
       kind: "register_field",
       tab_id: 1, frame_id: 0,
-      origin_url: f.origin, page_path: f.path, page_title: `field ${i}`,
+      origin_url: f.origin, page_path: f.path,
       descriptor: { ...SAMPLE_DESCRIPTOR, id: f.id, dom_signature: `sig-${i}` },
       field_is_empty: true,
     });
@@ -755,13 +755,13 @@ test("dispatcher: discard removes the targeted session only", async () => {
   const r1 = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "x",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: { ...SAMPLE_DESCRIPTOR, id: "one", dom_signature: "one" }, field_is_empty: true,
   });
   const r2 = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "y",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: { ...SAMPLE_DESCRIPTOR, id: "two", dom_signature: "two" }, field_is_empty: true,
   });
   await dispatcher.handle({ kind: "discard_session", session_id: r1.result.session_id });
@@ -775,7 +775,7 @@ test("dispatcher: a retry that fails again stays in failed_upload with the new r
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "x",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -864,7 +864,7 @@ test("dispatcher: editing after upload starts a continuation session linked to t
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -899,7 +899,7 @@ test("dispatcher: a non-empty field whose session was uploaded registers a conti
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -910,7 +910,7 @@ test("dispatcher: a non-empty field whose session was uploaded registers a conti
   const again = await dispatcher.handle({
     kind: "register_field",
     tab_id: 7, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false,
   });
   assert.equal(again.result.kind, "registered");
@@ -954,7 +954,7 @@ test("dispatcher: retrying a failed upload re-signs the same session and keeps i
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "x",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -973,27 +973,21 @@ test("dispatcher: retrying a failed upload re-signs the same session and keeps i
   assert.equal(verifyRecord({ manifest: upload.calls.at(-1).manifest, events: upload.calls.at(-1).events }).valid, true);
 });
 
-test("dispatcher: capture-context redactions chosen at sign time are applied to the uploaded manifest", async () => {
+test("dispatcher: uploaded records never describe the page, site or field they were written in", async () => {
   const { dispatcher, upload } = makeDispatcher();
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post?draft=1", page_title: "My secret draft title",
+    origin_url: "https://private-forum.test", page_path: "/post?draft=secret",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 5, source: "typing" } });
   await dispatcher.registry.awaitObservationIdle(sid);
-  await dispatcher.handle({
-    kind: "sign_session",
-    session_id: sid,
-    capture_context_redactions: { drop_title: true, replace_label: "forum reply" },
-  });
-  const context = upload.calls[0].manifest.capture_context;
-  assert.equal(context.label, "forum reply");
-  assert.equal(context.browser.title, undefined);
-  assert.equal(context.browser.url, "https://a.test/post");
-  assert.equal(JSON.stringify(upload.calls[0]).includes("secret draft"), false);
+  await dispatcher.handle({ kind: "sign_session", session_id: sid });
+  assert.equal("capture_context" in upload.calls[0].manifest, false);
+  const uploaded = JSON.stringify(upload.calls[0]);
+  for (const leak of ["private-forum", "secret", "/post", SAMPLE_DESCRIPTOR.dom_signature]) assert.equal(uploaded.includes(leak), false, leak);
 });
 
 
@@ -1002,7 +996,7 @@ test("dispatcher: rapid edits to a frozen session share one continuation", async
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -1027,7 +1021,7 @@ test("dispatcher: registering a field with an active continuation resumes it ins
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true,
   });
   const sid = reg.result.session_id;
@@ -1040,7 +1034,7 @@ test("dispatcher: registering a field with an active continuation resumes it ins
   const again = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: SAMPLE_DESCRIPTOR, field_is_empty: false,
   });
   assert.equal(again.result.session_id, continued.session_id);
@@ -1049,7 +1043,7 @@ test("dispatcher: registering a field with an active continuation resumes it ins
 
 test("dispatcher: uploaded continuation survives grace sweep and worker restart", async () => {
   const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher();
-  const registration = { kind: "register_field", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const registration = { kind: "register_field", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
   const first = await dispatcher.handle(registration);
   const sid = first.result.session_id;
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
@@ -1085,7 +1079,7 @@ test("dispatcher: uploaded continuation survives grace sweep and worker restart"
 
 test("dispatcher: a two-month restart resumes the same history, marks only the next real edit uncertain, and retains saved links for years", async () => {
   const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher();
-  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
   const sid = (await dispatcher.handle(registration)).result.session_id;
   const mutation = { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" };
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation });
@@ -1141,7 +1135,7 @@ test("dispatcher: a two-month restart resumes the same history, marks only the n
 
 test("dispatcher: an empty draft resumed in an empty field keeps exact first-edit measurements", async () => {
   const { dispatcher } = makeDispatcher();
-  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
   const sid = (await dispatcher.handle(registration)).result.session_id;
   await dispatcher.handle({ ...registration, resume_session_id: sid });
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } });
@@ -1152,7 +1146,7 @@ test("dispatcher: an empty draft resumed in an empty field keeps exact first-edi
 test("dispatcher: accepted upload survives failed link persistence and retries without reuploading", async () => {
   const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher({ checkpoint: null });
   const sid = (await dispatcher.handle({ kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true })).result.session_id;
+    origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true })).result.session_id;
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
   const write = storage.write;
   storage.write = async snapshot => {
@@ -1190,7 +1184,7 @@ test("dispatcher: accepted upload survives failed link persistence and retries w
 test("dispatcher: repeated pre-upload storage failures return a recoverable failure without a request", async () => {
   const { dispatcher, storage, upload } = makeDispatcher({ checkpoint: null });
   const sid = (await dispatcher.handle({ kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true })).result.session_id;
+    origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true })).result.session_id;
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } });
   storage.write = async () => { throw new Error("storage full"); };
   const result = await dispatcher.handle({ kind: "sign_session", session_id: sid });
@@ -1203,7 +1197,7 @@ test("dispatcher: repeated pre-upload storage failures return a recoverable fail
 
 test("dispatcher: failed uploaded-log cleanup cannot erase the durable saved link", async () => {
   const { dispatcher, storage, clock, uuid, upload, checkpoint } = makeDispatcher();
-  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
   const sid = (await dispatcher.handle(registration)).result.session_id;
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } });
   const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
@@ -1225,7 +1219,7 @@ test("dispatcher: failed uploaded-log cleanup cannot erase the durable saved lin
 
 test("dispatcher: resume without a new edit can publish earlier activity but cannot bind current text", async () => {
   const { dispatcher, clock, upload } = makeDispatcher();
-  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
   const sid = (await dispatcher.handle(registration)).result.session_id;
   clock.advance(1000);
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } });
@@ -1262,13 +1256,13 @@ test("dispatcher: interrupted upload restarts frozen and retries the identical d
     return new Promise(() => {});
   } };
   const dispatcher = new BackgroundDispatcher({ storage, clock, uuid, checkpoint, upload: interruptedUpload, producer: PRODUCER });
-  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
   const sid = (await dispatcher.handle(registration)).result.session_id;
   const mutation = { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" };
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation });
   await dispatcher.registry.awaitObservationIdle(sid);
   const binding = createTextBinding("abc", sid);
-  void dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: binding, capture_context_redactions: { drop_url: true } });
+  void dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: binding });
   await started;
   clock.advance(60 * 24 * 60 * 60 * 1000);
   const upload = recordingUpload();
@@ -1288,7 +1282,7 @@ test("dispatcher: interrupted upload restarts frozen and retries the identical d
 
 test("dispatcher: failed upload-intent persistence prevents the HTTP request", async () => {
   const { dispatcher, storage, upload } = makeDispatcher();
-  const sid = (await dispatcher.handle({ kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", page_title: "Reply", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true })).result.session_id;
+  const sid = (await dispatcher.handle({ kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true })).result.session_id;
   await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" } });
   await dispatcher.registry.awaitObservationIdle(sid);
   await dispatcher.registry.persist();
@@ -1311,7 +1305,7 @@ test("dispatcher: failed upload-intent persistence prevents the HTTP request", a
 
 test("dispatcher: confirmed finish survives restart during a stalled checkpoint flush", async () => {
   const { dispatcher, storage, clock } = makeDispatcher();
-  const registration = { kind: 'register_field', activation_id: 'explicit', tab_id: 1, frame_id: 0, origin_url: 'https://a.test', page_path: '/post', page_title: 'Reply', descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+  const registration = { kind: 'register_field', activation_id: 'explicit', tab_id: 1, frame_id: 0, origin_url: 'https://a.test', page_path: '/post', descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
   const sid = (await dispatcher.handle(registration)).result.session_id;
   clock.advance(1000);
   await dispatcher.handle({kind:'append_mutation',session_id:sid,mutation:{op:'insert',pos:0,del_len:0,ins_len:3,source:'typing'}});
@@ -1337,7 +1331,7 @@ test("dispatcher: confirmed finish survives restart during a stalled checkpoint 
 
 test('dispatcher: explicit continuation preserves the prior link and cannot silently share an unfinished child', async () => {
   const {dispatcher,clock} = makeDispatcher();
-  const registration={kind:'register_field',activation_id:'explicit',tab_id:1,frame_id:0,origin_url:'https://a.test',page_path:'/post',page_title:'Reply',descriptor:SAMPLE_DESCRIPTOR,field_is_empty:true};
+  const registration={kind:'register_field',activation_id:'explicit',tab_id:1,frame_id:0,origin_url:'https://a.test',page_path:'/post',descriptor:SAMPLE_DESCRIPTOR,field_is_empty:true};
   const parent=(await dispatcher.handle(registration)).result.session_id;
   await dispatcher.handle({kind:'append_mutation',session_id:parent,mutation:{op:'insert',pos:0,del_len:0,ins_len:3,source:'typing'}});
   await dispatcher.handle({kind:'sign_session',session_id:parent});
@@ -1358,7 +1352,7 @@ test('dispatcher: explicit continuation preserves the prior link and cannot sile
 
 test('dispatcher: a failed event-storage write is reported before acknowledging capture', async () => {
   const {dispatcher,storage}=makeDispatcher();
-  const sid=(await dispatcher.handle({kind:'register_field',activation_id:'explicit',tab_id:1,frame_id:0,origin_url:'https://a.test',page_path:'/post',page_title:'Reply',descriptor:SAMPLE_DESCRIPTOR,field_is_empty:true})).result.session_id;
+  const sid=(await dispatcher.handle({kind:'register_field',activation_id:'explicit',tab_id:1,frame_id:0,origin_url:'https://a.test',page_path:'/post',descriptor:SAMPLE_DESCRIPTOR,field_is_empty:true})).result.session_id;
   storage.write=async()=>{throw new Error('Storage is full');};
   const result=await dispatcher.handle({kind:'append_mutation',session_id:sid,mutation:{op:'insert',pos:0,del_len:0,ins_len:3,source:'typing'}});
   assert.equal(result.kind,'error');

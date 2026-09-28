@@ -26,7 +26,7 @@ test("explicit browser activation scopes permission to one document and freeze d
   let precedingPoll;
   const probeWaiting = new Promise(resolve => { probeStarted = resolve; });
   const descriptor = { tag_name: "TEXTAREA", field_kind: "textarea", name: null, id: "body", aria_label: "Message", nearest_form_id: null, dom_signature: "123abc", index_among_similar: 0 };
-  const register = { kind: "register_field", tab_id: 999, frame_id: 999, origin_url: "https://forged.test", page_path: "/wrong", page_title: "Draft", descriptor, field_is_empty: true };
+  const register = { kind: "register_field", tab_id: 999, frame_id: 999, origin_url: "https://forged.test", page_path: "/wrong", descriptor, field_is_empty: true };
   const invoke = (message, sender = own) => new Promise((resolve) => handlers.message(message, sender, resolve));
   globalThis.fetch = async () => new Response(JSON.stringify({}), { status: 503 });
   globalThis.chrome = {

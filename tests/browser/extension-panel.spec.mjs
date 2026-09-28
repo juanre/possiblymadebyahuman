@@ -6,7 +6,7 @@ const bundled = await build({ entryPoints: ["apps/browser-extension/src/popup/po
 const shell = (await readFile("apps/browser-extension/src/popup/popup.html", "utf8")).replace('<script type="module" src="popup.js"></script>', "");
 const URL = "https://possiblymadebyahuman.com/exampleSaved";
 function session(id = "body", label = "example.com · Text field · 1", saved = false) {
-  return { session_id: id, state: saved ? "uploaded" : "active", display_name: label, descriptor: { aria_label: "Text field" }, origin: { origin: "https://example.com", path: "/editor", tab_id: 12, frame_id: 7 }, capture_context: { browser: { url: "https://example.com/editor", title: "Editor" }, label: "Public description" }, event_count: saved ? 0 : 1, capture_status: saved ? "stopped" : "active", last_edit_wall_ms: Date.UTC(2026, 8, 23), ...(saved ? { uploaded_response: { url: `${URL}${id}`, short_signature: id, record_hash: `b3:${id}` } } : {}) };
+  return { session_id: id, state: saved ? "uploaded" : "active", display_name: label, descriptor: { aria_label: "Text field" }, origin: { origin: "https://example.com", path: "/editor", tab_id: 12, frame_id: 7 }, capture_context: { surface: "browser" }, event_count: saved ? 0 : 1, capture_status: saved ? "stopped" : "active", last_edit_wall_ms: Date.UTC(2026, 8, 23), ...(saved ? { uploaded_response: { url: `${URL}${id}`, short_signature: id, record_hash: `b3:${id}` } } : {}) };
 }
 async function loadPanel(page, options = {}) {
   const state = { sessions: options.sessions ?? [session()], current: options.current ?? { state: "tracked", session_id: "body" }, bindingFailure: options.bindingFailure, delay: options.delay ?? 0, calls: [], scope: options.scope ?? "whole_field", token: "scope-1", scopeChanged: false };
@@ -157,7 +157,7 @@ test("focus follows exact session identity, untracked fields are explicit, and r
   expect(state.calls.some(m => m.kind === "list_sessions")).toBe(false);
 });
 
-test("private rename survives refresh/reopen and never changes the public label", async ({ page }) => {
+test("private rename survives refresh/reopen and the finish review publishes nothing about the page", async ({ page }) => {
   const { state, open } = await loadPanel(page);
   await page.getByRole("button", { name: "Rename", exact: true }).click();
   await page.getByLabel("Private name").fill("My private project");
@@ -170,8 +170,9 @@ test("private rename survives refresh/reopen and never changes the public label"
   await open();
   await expect(page.locator(".session-title")).toHaveText("My private project");
   await page.getByRole("button", { name: "Finish & get link" }).click();
-  await expect(page.getByLabel("Public label")).toHaveValue("Public description");
-  expect(state.sessions[0].capture_context.label).toBe("Public description");
+  const review = page.locator(".sign-confirm");
+  await expect(review).toBeVisible();
+  await expect(review).not.toContainText(/Public context|Public label|Page URL|Page title|example\.com\/editor/);
 });
 
 test("Escape cancels private renaming without a write, and polling preserves keyboard focus", async ({ page }) => {

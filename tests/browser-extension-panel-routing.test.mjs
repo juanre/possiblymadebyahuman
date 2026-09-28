@@ -29,7 +29,7 @@ test('panel summaries follow exact editors, protect local names, and reject chan
         active=false;return {kind:'binding_result',text_binding:null};
       }
       if(message.kind==='start_editor'){
-        const result=await invoke({kind:'register_field',tab_id:-1,frame_id:-1,origin_url:'https://example.test',page_path:'/editor',page_title:'Editor',descriptor,field_is_empty:true,activation_id:message.activation_id},content);
+        const result=await invoke({kind:'register_field',tab_id:-1,frame_id:-1,origin_url:'https://example.test',page_path:'/editor',descriptor,field_is_empty:true,activation_id:message.activation_id},content);
         currentSession=result.result.session_id;
         return {kind:'start_editor_result',session_id:currentSession};
       }
@@ -59,7 +59,6 @@ test('panel summaries follow exact editors, protect local names, and reject chan
     assert.equal((await invoke({kind:'rename_session',session_id:id,name:'Private project'})).kind,'rename_result');
     let updated=await invoke({kind:'list_panel_sessions',window_id:1});
     assert.equal(updated.drafts[0].display_name,'Private project');
-    assert.equal(updated.drafts[0].capture_context.label,'Editor','private name never changes published label');
     failStorage=true;
     assert.equal((await invoke({kind:'rename_session',session_id:id,name:'Lost rename'})).kind,'error');
     failStorage=false;

@@ -1,4 +1,3 @@
-import type { CaptureContextRedactions } from "../../../../packages/producer-core/src/index.ts";
 import type { BackgroundResponse, ContentToBackground, CurrentEditor, FinishScopePreview, SessionSummary } from "../lib/messages.ts";
 import { copyRecordLink, finishRecord, OperationGuard } from "./finish.ts";
 
@@ -253,16 +252,10 @@ function closeReview(): void { REVIEW.replaceChildren(); reviewing = false; rend
 async function openReview(session: SessionSummary): Promise<void> {
   if (guard.busy || reviewing || renamingId) return;
   reviewing = true;
-  const context = session.capture_context;
-  const url = context.browser?.url ?? ""; const title = context.browser?.title ?? ""; const label = context.label ?? "";
   const panel = document.createElement("section"); panel.className = "sign-confirm";
   panel.innerHTML = `<h2 tabindex="-1">Finish this writing record</h2><p><strong>${escapeHtml(session.display_name)}</strong></p>
     <p class="sign-note">Confirming stops capture and publishes this draft. Further edits will not be included.</p>
-    <p>Text hash: <span class="binding-scope">Checking text scope…</span></p><p class="sign-note">Your text is not uploaded.</p>
-    <details class="public-context" open><summary>Public context</summary><p class="note">Review the details published with this record. Your private name stays in this browser.</p>
-    <label><input type="checkbox" class="sign-keep-url" ${url ? "checked" : "disabled"} /> Page URL: <span class="sign-context-value">${escapeHtml(url || "none")}</span></label>
-    <label><input type="checkbox" class="sign-keep-title" ${title ? "checked" : "disabled"} /> Page title: <span class="sign-context-value">${escapeHtml(title || "none")}</span></label>
-    <label class="sign-label-row">Public label<input type="text" class="sign-label" value="${escapeHtml(label)}" maxlength="120" /></label></details>
+    <p>Text hash: <span class="binding-scope">Checking text scope…</span></p><p class="sign-note">Your text is not uploaded, and nothing about this page or site is published.</p>
     <p class="binding-error notice error" role="alert" hidden></p><div class="session-actions"><button class="sign-confirm-go" disabled>Confirm &amp; publish</button><button class="process-only secondary" hidden>Publish editing activity only</button><button class="sign-confirm-cancel secondary">Cancel</button></div>`;
   REVIEW.replaceChildren(panel); render(); panel.querySelector<HTMLHeadingElement>("h2")!.focus();
   const go = panel.querySelector<HTMLButtonElement>(".sign-confirm-go")!;
@@ -271,7 +264,6 @@ async function openReview(session: SessionSummary): Promise<void> {
   const scopeLabel = panel.querySelector<HTMLElement>(".binding-scope")!;
   let scope: FinishScopePreview = { scope: "unavailable" };
   let frozen = false;
-  let frozenRedactions: CaptureContextRedactions | undefined;
   function setScope(preview: FinishScopePreview): void {
     scope = preview;
     scopeLabel.textContent = preview.scope === "selection" ? "Selected text" : preview.scope === "whole_field" ? "Whole field" : "Text check unavailable for this editor.";
@@ -282,22 +274,11 @@ async function openReview(session: SessionSummary): Promise<void> {
     processOnly.hidden = preview.scope !== "unavailable";
     go.disabled = false;
   }
-  function redactions(): CaptureContextRedactions {
-    if (frozenRedactions) return frozenRedactions;
-    const result: CaptureContextRedactions = {};
-    if (url && !panel.querySelector<HTMLInputElement>(".sign-keep-url")!.checked) result.drop_url = true;
-    if (title && !panel.querySelector<HTMLInputElement>(".sign-keep-title")!.checked) result.drop_title = true;
-    const next = panel.querySelector<HTMLInputElement>(".sign-label")!.value.trim(); if (next !== label) result.replace_label = next;
-    return result;
-  }
   async function finish(withBinding: boolean): Promise<void> {
     await operation(async () => {
-      const requestedRedactions = redactions();
-      panel.querySelectorAll("input").forEach(input => { input.disabled = true; });
       notify("Saving this writing record…");
-      const outcome = await finishRecord(send, session.session_id, withBinding, requestedRedactions, scope.scope_token);
+      const outcome = await finishRecord(send, session.session_id, withBinding, scope.scope_token);
       if (outcome.kind === "scope_changed") {
-        panel.querySelectorAll<HTMLInputElement>("input").forEach(input => { input.disabled = false; });
         setScope(outcome.preview);
         if (outcome.preview.scope === "unavailable") { go.hidden = true; processOnly.hidden = false; }
         error.textContent = outcome.preview.scope === "unavailable"
@@ -305,7 +286,7 @@ async function openReview(session: SessionSummary): Promise<void> {
           : "The text selection changed. Review the updated scope above, then confirm again. Nothing was published.";
         error.hidden = false; notify(""); return;
       }
-      frozen = true; frozenRedactions = requestedRedactions;
+      frozen = true;
       if (outcome.kind === "binding_unavailable") {
         error.textContent = `No record was published. ${outcome.reason} Capture has stopped. Cancel to return to the draft, or publish its editing activity without a text check.`;
         error.hidden = false; go.hidden = true; processOnly.hidden = false; notify(""); return;

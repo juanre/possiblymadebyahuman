@@ -45,7 +45,6 @@ test('panel summaries and exports contain no events or checkpoint credentials', 
   assert.deepEqual(Object.keys(exported).sort(),['name','record_hash','saved_at','session_id','site','text_check','url']);
   assert.equal(exported.url,original.uploaded_response.url);
   assert.ok(!JSON.stringify(exported).includes('private-secret'));
-  assert.equal(original.capture_context,undefined,'private naming never mutates public context');
 });
 
  test('generated names stay editable within the private-name limit', () => {

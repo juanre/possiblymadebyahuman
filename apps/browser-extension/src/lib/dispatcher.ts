@@ -1,5 +1,5 @@
 import type { TextBinding } from "../../../../packages/format/src/index.ts";
-import { IngestUploadError, SessionFrozenError, SessionRegistry, buildCaptureContext } from "../../../../packages/producer-core/src/index.ts";
+import { IngestUploadError, SessionFrozenError, SessionRegistry } from "../../../../packages/producer-core/src/index.ts";
 import type {
   ClockAdapter,
   CheckpointAdapter,
@@ -136,11 +136,7 @@ export class BackgroundDispatcher {
         result: { kind: "ineligible", reason: eligibility.reason },
       };
     }
-    const capture = buildCaptureContext({
-      origin,
-      descriptor: message.descriptor,
-      page_title: message.page_title,
-    });
+    const capture = { surface: "browser" };
     // Legacy registration may continue a matching uploaded session. Explicit
     // Start is independent; only Continue may link it to a saved record.
     const resumable = message.activation_id || message.field_is_empty ? null : findResumableSession(origin, message.descriptor, this.registry.list());
@@ -177,9 +173,6 @@ export class BackgroundDispatcher {
   async #handleSign(message: Extract<ContentToBackground, { kind: "sign_session" }>): Promise<BackgroundResponse> {
     if (message.text_binding && this.registry.get(message.session_id)?.pending_observation_gap) {
       return { kind: "error", reason: "This draft has no captured edits since it was resumed. Make an edit before including the current text, or publish only its earlier editing activity." };
-    }
-    if (message.capture_context_redactions) {
-      this.registry.redactCaptureContext(message.session_id, message.capture_context_redactions);
     }
     const result = await this.#runSignUpload(message.session_id, message.text_binding);
     return { kind: "sign_session_result", result };

@@ -66,7 +66,7 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
 
   expect(uploadedPayload, "record upload payload captured").toBeTruthy();
   expect(verifyRecord({ manifest: uploadedPayload.manifest, events: uploadedPayload.events }).valid).toBe(true);
-  expect(uploadedPayload.manifest.capture_context.surface).toBe("web-draft");
+  expect("capture_context" in uploadedPayload.manifest).toBe(false);
   expect(uploadedPayload.observation.observed_session_id).toBeTruthy();
   expect(uploadedPayload.observation.token).toBe("t".repeat(32));
 
