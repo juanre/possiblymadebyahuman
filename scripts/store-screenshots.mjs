@@ -1,5 +1,6 @@
-// Regenerates the Chrome Web Store screenshots and promo tile from the real
-// extension. It builds the extension against a local ingest service backed by
+// Generates Chrome Web Store screenshots and the promo tile from the real
+// extension. The listing's screenshots in store-assets/screenshots are captured
+// by hand in Gmail; this writes its own set to store-assets/generated-screenshots. It builds the extension against a local ingest service backed by
 // an in-memory store, drives it in Chromium on a fictional blog page, and
 // composes each page next to the extension panel the way Chrome's side panel
 // sits next to a tab. Nothing is sent to production.
@@ -20,7 +21,7 @@ import { InMemoryRecordStore } from "../packages/storage/src/index.ts";
 
 const rootDir = fileURLToPath(new URL("..", import.meta.url));
 const assetsDir = join(rootDir, "apps/browser-extension/store-assets");
-const screenshotsDir = join(assetsDir, "screenshots");
+const screenshotsDir = join(assetsDir, "generated-screenshots");
 const port = Number(process.env.PMBAH_SCREENSHOT_PORT ?? 4730);
 const serviceUrl = `http://127.0.0.1:${port}`;
 const PUBLIC_BASE_URL = "https://possiblymadebyahuman.com";

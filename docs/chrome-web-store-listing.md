@@ -90,11 +90,11 @@ releasing a new version.
 | Slot | File |
 | --- | --- |
 | Store icon (128x128) | `apps/browser-extension/store-assets/chrome-web-store-icon-128.png` |
-| Screenshot 1 | `apps/browser-extension/store-assets/screenshots/1-recording.png`: a reply being recorded, panel beside the page |
-| Screenshot 2 | `apps/browser-extension/store-assets/screenshots/2-review.png`: the finish review with the public context |
-| Screenshot 3 | `apps/browser-extension/store-assets/screenshots/3-published.png`: the saved record with its link |
-| Screenshot 4 | `apps/browser-extension/store-assets/screenshots/4-record.png`: the public record page |
-| Screenshot 5 | `apps/browser-extension/store-assets/screenshots/5-timeline.png`: quick facts and the edit timeline |
+| Screenshot 1 | `apps/browser-extension/store-assets/screenshots/1-start.png`: Start writing record in the right-click menu of a Gmail draft |
+| Screenshot 2 | `apps/browser-extension/store-assets/screenshots/2-recording.png`: the draft being recorded, with the side panel |
+| Screenshot 3 | `apps/browser-extension/store-assets/screenshots/3-review.png`: the finish review with the public context |
+| Screenshot 4 | `apps/browser-extension/store-assets/screenshots/4-record.png`: the published record page beside the saved-record panel |
+| Screenshot 5 | `apps/browser-extension/store-assets/screenshots/5-timeline.png`: the edit timeline and writing rhythm |
 | Small promo tile (440x280) | `apps/browser-extension/store-assets/promo-tile-440x280.png` |
 | Marquee promo tile (1400x560) | Optional; none prepared |
 
