@@ -2,7 +2,7 @@
 
 ;; Copyright (c) 2026
 ;; SPDX-License-Identifier: MIT
-;; Version: 0.1.0
+;; Version: 0.1.2
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, writing
 
@@ -118,7 +118,7 @@ your init file so this also works after restarting Emacs."
   :type 'boolean
   :group 'pmbah)
 
-(defconst pmbah-producer-version "0.1.1")
+(defconst pmbah-producer-version "0.1.2")
 (defconst pmbah-format-version "0.3")
 
 (defconst pmbah-max-session-ms 9007199254740991
