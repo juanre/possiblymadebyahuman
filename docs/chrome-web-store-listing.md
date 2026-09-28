@@ -92,19 +92,14 @@ releasing a new version.
 | Screenshot 1 | `apps/browser-extension/store-assets/screenshots/1-start.png`: Start writing record in the right-click menu of a Gmail draft |
 | Screenshot 2 | `apps/browser-extension/store-assets/screenshots/2-recording.png`: the draft being recorded, with the side panel |
 | Screenshot 3 | `apps/browser-extension/store-assets/screenshots/3-review.png`: the finish review |
-| Screenshot 4 | `apps/browser-extension/store-assets/screenshots/4-record.png`: the published record page beside the saved-record panel |
+| Screenshot 4 | `apps/browser-extension/store-assets/screenshots/4-record.png`: the published record page |
 | Screenshot 5 | `apps/browser-extension/store-assets/screenshots/5-timeline.png`: the edit timeline and writing rhythm |
 | Small promo tile (440x280) | `apps/browser-extension/store-assets/promo-tile-440x280.png` |
 | Marquee promo tile (1400x560) | Optional; none prepared |
 
-All screenshots are 1280x800, captured by hand in Chrome with the published
-extension in a Gmail draft, with the writer's email address removed.
-
-Screenshots 3 and 4 show 0.4.0 behavior that has since been removed.
-Screenshot 3 shows the finish review with its Public context section (page URL,
-page title and public label), and screenshot 4 shows a record page whose
-summary names the site ("Written in a text field on mail.google.com"). Retake
-both once the next version is published, and replace them in the dashboard.
+All screenshots are 1280x800, captured by hand in Chrome with the extension in
+a Gmail draft, with the writer's email address removed from the tab title.
+Screenshots 3 and 4 were taken with 0.4.2.
 
 ### Additional fields
 
