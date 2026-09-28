@@ -10,7 +10,7 @@ A record describes a writing process and leaves its meaning to the reader. It ca
 
 ## Ways to write a record
 
-- **Chrome extension.** Records the text boxes you choose on any website: comments, forum replies, email. See [how to install and use it](https://possiblymadebyahuman.com/docs/browser-extension/). Until the Chrome Web Store listing is live, it installs from the ZIP attached to each [GitHub release](https://github.com/juanre/possiblymadebyahuman/releases).
+- **Chrome extension.** Records the text boxes you choose on any website: comments, forum replies, email. See [how to install and use it](https://possiblymadebyahuman.com/docs/chrome-extension/). Until the Chrome Web Store listing is live, it installs from the ZIP attached to each [GitHub release](https://github.com/juanre/possiblymadebyahuman/releases).
 - **The writing page.** [`/write`](https://possiblymadebyahuman.com/write) needs no installation and keeps several drafts in your browser. See [writing in the browser](https://possiblymadebyahuman.com/docs/write/).
 - **Emacs.** `pmbah-mode` records a buffer. See [the Emacs guide](https://possiblymadebyahuman.com/docs/emacs/) and [`producers/emacs/README.md`](producers/emacs/README.md).
 

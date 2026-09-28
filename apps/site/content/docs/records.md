@@ -66,7 +66,7 @@ Here `bytes` means the raw 32-byte digest and `canonical` means UTF-8 JSON with 
 
 ## Continuing after publication
 
-A published record is immutable. Continuing it (**Continue in chosen field** in the browser extension, **Keep writing** on `/write`, or further edits in Emacs) creates a new session and a new record linked through `parent_record`. It records new mutations only. Its elapsed clock begins at the previous segment's signed finish, so time away appears before the next captured edit. Older saved records without a signed finish use the retained local upload time as an approximate boundary.
+A published record is immutable. Continuing it (**Continue in chosen field** in the Chrome extension, **Keep writing** on `/write`, or further edits in Emacs) creates a new session and a new record linked through `parent_record`. It records new mutations only. Its elapsed clock begins at the previous segment's signed finish, so time away appears before the next captured edit. Older saved records without a signed finish use the retained local upload time as an approximate boundary.
 
 The relationship does not establish that the document was unchanged or observed during the pause. Unknown positions remain unknown, and the viewer does not extend a known document-length curve across missing measurements. The previous public link stays available.
 

@@ -27,13 +27,13 @@ Producers may read the editor's text for an instant to measure an edit (for exam
 
 Each producer also keeps local state on your machine:
 
-- **Browser extension.** Unfinished drafts and saved links live in `chrome.storage.local`. A draft holds numeric edit events, session details, the hash-chain tip and a **bearer** token that authenticates the draft's server-observed checkpoints. The token is sent only to the service; it is never shown to web pages, logged, or published. Saved links and drafts stay until you remove them. **Export all links** downloads your saved-link list, including private draft names and site information; it contains no document text and no tokens. Removing browser data or uninstalling the extension removes this history.
+- **Chrome extension.** Unfinished drafts and saved links live in `chrome.storage.local`. A draft holds numeric edit events, session details, the hash-chain tip and a **bearer** token that authenticates the draft's server-observed checkpoints. The token is sent only to the service; it is never shown to web pages, logged, or published. Saved links and drafts stay until you remove them. **Export all links** downloads your saved-link list, including private draft names and site information; it contains no document text and no tokens. Removing browser data or uninstalling the extension removes this history.
 - **The `/write` drafting page.** Your drafts' text is saved in this browser so you can come back to it, and it is never sent to the service. It is kept apart from the drafts' writing history, which holds the same numeric edit events and bearer token as the extension. Deleting a draft removes both from this browser. Clearing the site's data removes all of them.
 - **Emacs `pmbah-mode`.** Writing history for opted-in files lives in owner-only files under `pmbah-state-directory` (by default `~/.emacs.d/pmbah/`): numeric events, session details and the checkpoint token, never document text. Signing and uploading, or discarding, clears a file's current history. Unreadable history is kept aside with a `.stale` suffix until you remove it.
 
 ## What the signer controls
 
-The browser extension records only the editor you explicitly choose, through its context menu, keyboard shortcut or side panel. Its controls live in the browser's side panel, never over the web page. Reloading, navigating away, stopping or finishing ends recording in that editor.
+The Chrome extension records only the editor you explicitly choose, through its context menu, keyboard shortcut or side panel. Its controls live in the browser's side panel, never over the web page. Reloading, navigating away, stopping or finishing ends recording in that editor.
 
 Before publishing, you can:
 

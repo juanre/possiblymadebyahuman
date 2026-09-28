@@ -34,12 +34,12 @@ Oh well. It cannot be done but we are doing it anyway. You can at least assert t
 
 </div>
 
-<p class="home-pitch">You write where you already write: the <a href="/docs/browser-extension/">Chrome extension</a> records the text boxes you choose, in comments, forum replies and email. You can also write on <a href="/write">/write</a> with nothing to install, or in <a href="/docs/emacs/">Emacs</a>. We record the shape of your editing as you go, sign it with a hash chain, and give you a short URL anyone can check. <a href="/8MxUYwiQ3q">Here is one</a>.</p>
+<p class="home-pitch">You write where you already write: the <a href="/docs/chrome-extension/">Chrome extension</a> records the text boxes you choose, in comments, forum replies and email. You can also write on <a href="/write">/write</a> with nothing to install, or in <a href="/docs/emacs/">Emacs</a>. We record the shape of your editing as you go, sign it with a hash chain, and give you a short URL anyone can check. <a href="/8MxUYwiQ3q">Here is one</a>.</p>
 
 <p class="home-closer">Think of it as a reverse Turing test.<br>This is what it's come to!</p>
 
 <p class="home-ctas">
-  <a class="home-cta" href="/docs/browser-extension/">Get the Chrome extension</a>
+  <a class="home-cta" href="/docs/chrome-extension/">Get the Chrome extension</a>
   <a class="home-cta" href="/write">Write here</a>
   <a class="home-cta" href="/docs/emacs/">Write in Emacs</a>
 </p>

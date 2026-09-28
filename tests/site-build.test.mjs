@@ -31,7 +31,7 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
       "docs/write/index.html",
       "docs/terms/index.html",
       "docs/emacs/index.html",
-      "docs/browser-extension/index.html",
+      "docs/chrome-extension/index.html",
     ];
 
     for (const relative of expected) {
@@ -84,7 +84,7 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
     assert.ok(home.includes("But we can record the writing process"), "home missing the H2 counter-claim");
     assert.ok(home.includes("home-figure"), "home missing the hand-drawn figure block");
     assert.ok(home.includes("/images/pmbah-figure"), "home missing the figure asset reference");
-    assert.ok(home.includes("href=/docs/browser-extension/"), "home missing browser extension CTA");
+    assert.ok(home.includes("href=/docs/chrome-extension/"), "home missing Chrome extension CTA");
     assert.ok(home.includes("href=/write"), "home missing /write CTA");
     assert.ok(home.includes("href=/docs/emacs/"), "home missing /emacs/ CTA");
     assert.ok(home.includes("href=/docs/"), "header nav missing /docs/ link");

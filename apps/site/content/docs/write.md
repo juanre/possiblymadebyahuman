@@ -7,7 +7,7 @@ weight: 2
 
 The [drafting page](/write) needs no installation. Write there, and it records how the text was edited: when each edit happened, where it landed and how large it was. When a piece is ready, sign it to publish that record at a short link you can share.
 
-To record writing in the text boxes of other websites, such as comments, forum replies or email, use the [browser extension](/docs/browser-extension/).
+To record writing in the text boxes of other websites, such as comments, forum replies or email, use the [Chrome extension](/docs/chrome-extension/).
 
 ## Drafts
 
@@ -26,7 +26,7 @@ One tab at a time works with your drafts. If they are open in another tab, close
 - whether an edit was typed, pasted, cut, dropped, or came from composition input, autocomplete or an unknown source;
 - server-observed checkpoints: while you write, the page sends the service the number of recorded edits and a hash of them, so the service can confirm when it saw the writing unfold.
 
-The record never contains the text. It does not capture other tabs or websites; for those, use the [browser extension](/docs/browser-extension/) or [Emacs](/docs/emacs/).
+The record never contains the text. It does not capture other tabs or websites; for those, use the [Chrome extension](/docs/chrome-extension/) or [Emacs](/docs/emacs/).
 
 When you return to a draft, the page checks that the saved text is exactly what the recorded edits produced. If it is, the record continues seamlessly. If it is not (for example, the browser closed before the last edit was saved), the record marks a gap at your next edit instead of pretending the writing was continuous.
 

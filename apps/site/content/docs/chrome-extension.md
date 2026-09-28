@@ -1,5 +1,5 @@
 ---
-title: "Use the browser extension"
+title: "Use the Chrome extension"
 summary: "Record your writing in the text boxes you already use, and publish it with a shareable link."
 group: "Write a record"
 weight: 1

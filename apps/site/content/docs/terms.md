@@ -26,7 +26,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 - **Don't try to break the service.** No automated abuse, mass-scraping, or attempts to overload the ingest endpoint. No attempts to inject content into other people's records. No exploitation of platform features in ways that materially degrade the service for others.
 - **Don't impersonate.** When you choose what `capture_context` to include with a record, the page URL, page title, buffer name, or major mode you upload is information *you* asserted about a session *you* signed; it is not validated by the service. Don't upload context that implies another person, organisation, or platform authored the writing.
 - **Don't upload unlawful material.** Records that contain instructions, links, or other content that is illegal in the operator's jurisdiction may be removed when reported. See the moderation section below.
-- **Respect the no-deletion model when you sign.** Once a record is uploaded, the service has no public deletion API. Before you click sign, the browser extension and the Emacs producer show you the capture context and let you redact or omit it; the `/write` page uploads a fixed, non-identifying context (its own URL and a fixed label). Use that review step.
+- **Respect the no-deletion model when you sign.** Once a record is uploaded, the service has no public deletion API. Before you click sign, the Chrome extension and the Emacs producer show you the capture context and let you redact or omit it; the `/write` page uploads a fixed, non-identifying context (its own URL and a fixed label). Use that review step.
 
 ## What you keep
 
