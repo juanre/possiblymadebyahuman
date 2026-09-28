@@ -1,7 +1,7 @@
 # Chrome Web Store preparation
 
 Status: the extension is published in the Chrome Web Store, where the store
-shows version 0.3.3. The source is at **0.4.1** (tag `v0.4.1`); upload that
+shows version 0.3.3. The source is at **0.4.2** (tag `v0.4.2`); upload that
 release's ZIP to the listing as an update.
 
 This document holds the technical facts a store submission depends on: what the
@@ -38,15 +38,15 @@ The published listing:
 
 ## Package facts
 
-Built from tag `v0.4.1` with the default `EXT_BASE_URL`
+Built from tag `v0.4.2` with the default `EXT_BASE_URL`
 (`https://possiblymadebyahuman.com`) by `make extension-package`:
 
 | Field | Value |
 | --- | --- |
-| File | `apps/browser-extension/dist/possiblymadebyahuman-extension-0.4.1.zip` |
+| File | `apps/browser-extension/dist/possiblymadebyahuman-extension-0.4.2.zip` |
 | Size | 159398 bytes |
-| SHA-256 | `fd9b9f177a14d947fb7251107977d6a52d7a316ddfea2f2657c58aeb6086e1c5` |
-| Manifest | MV3, `name` `possiblymadebyahuman`, `version` `0.4.1`, `minimum_chrome_version` `120` |
+| SHA-256 | `727fcaabc241b212b3a67647042678f45822e47acf0f84f85c043b12af928e81` |
+| Manifest | MV3, `name` `possiblymadebyahuman`, `version` `0.4.2`, `minimum_chrome_version` `120` |
 | Store summary | The store takes it from the manifest `description`: "Content-blind writing records for text fields." |
 | Bundling | esbuild, minified, no source maps, no legal comments. All code ships in the package; nothing is fetched and executed at runtime. |
 
