@@ -708,3 +708,16 @@ test("/write asks before leaving while the draft is still being saved", async ({
   await page.close({ runBeforeUnload: true });
   expect(await prompted).toBe("beforeunload");
 });
+
+test("/write records every keystroke typed as soon as the canvas takes focus, even on a slow machine", async ({ page }) => {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 20 });
+  await page.goto("/write");
+  const canvas = page.getByRole("textbox", { name: "Writing canvas" });
+  await expect(canvas).toBeFocused();
+  await page.keyboard.type("Every key counts.");
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+  await expect(canvas).toHaveValue("Every key counts.");
+  await expect(page.getByText("17 edits")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Sign", exact: true })).toBeEnabled();
+});
