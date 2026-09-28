@@ -23,6 +23,12 @@ days later.
   position. Resuming, toggling capture, reverting, or edits made while hooks
   were suppressed can introduce a gap. Binding text requires another recorded
   edit after that boundary; signing without a binding remains available.
+- The segment that starts after a successful upload continues from the
+  published text: its first edit has a known position, so the document length
+  stays known across records. This holds only when the same Emacs session froze
+  the record from live capture and the buffer did not change, and capture was
+  not paused, before the segment started. After recovering a frozen record from
+  disk, or any change in between, the segment starts with a gap.
 - Public uploads contain mutation shape, timing, source labels, manifest metadata,
   and public process hashes. They do **not** include plaintext insertion text.
 - The local helper receives process metadata and a private numeric-journal path,
@@ -151,7 +157,7 @@ file-visit hook installed. The `use-package` example below uses `:demand t` for 
 
 (use-package pmbah-mode
   :demand t
-  :commands (pmbah-mode pmbah-sign-buffer pmbah-show-session-status)
+  :commands (pmbah-mode pmbah-sign-buffer pmbah-show-session-status pmbah-copy-file)
   :custom
   (pmbah-api-base-url "https://possiblymadebyahuman.com")
   (pmbah-helper-script
@@ -297,8 +303,19 @@ synced between machines:
   time as the approximate boundary. Accepted links are retained in
   `published-<session-id>.json` before the old draft state is removed.
   `pmbah-discard-session` removes draft state and starts an unlinked session.
-- Renaming the visited file (`write-file`, `set-visited-file-name`) moves the
-  state file with it, so the renamed file resumes the same session. If the target
+- `M-x pmbah-copy-file` copies a recorded file to a new file and records the
+  copy as a separate segment of the same published record. If the buffer has
+  unsigned edits, it first asks to publish them, since a copy can only continue
+  a published record; declining copies nothing. The copy gets the buffer's
+  text, the same parent record and start time, its own session, recovery
+  state, and server observation, and no gap at its first edit. The original
+  buffer keeps recording its own segment. The command refuses a target file
+  that already exists or already has recovery state, and buffers that do not
+  visit a file.
+- Renaming the visited file inside Emacs (`M-x rename-visited-file`,
+  `write-file`, `set-visited-file-name`) moves the state file with it, so the
+  renamed file resumes the same session. Rename recorded files from Emacs;
+  a file renamed outside Emacs is not recognised as the recorded one. If the target
   already has unrelated recovery state, that state is preserved and the current
   session continues saving at its original recovery path, reported in a message.
 - Non-file buffers (`*scratch*`, temporary buffers) save their sessions under
@@ -354,6 +371,13 @@ synced between machines:
 
    ```elisp
    M-x pmbah-discard-session
+   ```
+
+7. To continue the published writing in a second file while this one keeps
+   recording separately:
+
+   ```elisp
+   M-x pmbah-copy-file
    ```
 
 Before network work, the mode freezes and saves the record, including its signed
