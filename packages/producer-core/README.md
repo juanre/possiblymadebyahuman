@@ -8,7 +8,7 @@
 - **`SessionRegistry`** — the kernel. Multiple parallel sessions, per-session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`), append-mutation, sign, sweep-expired, snapshot/load.
 - **`resolveSession`** — fingerprint-based identity with explicit `IdentityCertainty` of `fresh` | `resumed` | `degraded` | `collision`. No silent merging of distinct fields.
 - **Wall-clock timeline** — `appendBufferMutation` stamps each event with `t = wall_ms - base_wall_ms`. Idle gaps are preserved, never compressed.
-- **`buildCaptureContext` / `redactCaptureContext` / `stripQueryAndHash`** — pre-upload provenance helpers. URLs are stripped of query/hash by default; title and field-kind are editable/omittable before signing.
+- **`CaptureSurface`** — `SessionRecord.capture_context` is a local `{ surface }` tag (such as `"browser"` or `"web-draft"`) that tells a producer which of its surfaces owns a session. It never leaves the producer: signed records carry nothing about where the text was written. Sessions loaded from storage with any other capture-context fields keep only the surface.
 - **TTL sweep** — `sweepExpired` removes sessions whose `last_edit_wall_ms` is older than `ttl_ms` (default 3 days) and clears `uploaded` sessions after a short grace. A user-driven `registry.discard(session_id)` removes one specific session immediately and is distinct from the time-based sweep — it returns the removed record or `null` when the id is not present. The extension overrides this default with indefinite draft retention and saved-link anchors; `/write` now uses the same indefinite draft/link retention. If a checkpoint POST is in flight at discard, it may still succeed and leave server checkpoint metadata. Local discard does not delete that metadata, which has no automatic server expiry and contains no document text.
 - **Adapter interfaces** — `StorageAdapter`, `UploadAdapter`, `CheckpointAdapter`, `ClockAdapter`, `UuidAdapter`, `ClipboardAdapter`. The kernel never imports a chrome/window/DOM symbol; consumers wire these.
 - **Server-observed checkpoint orchestration** — when a `CheckpointAdapter` is wired, the kernel maintains an incremental BLAKE3 chain tip per session, runs an activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; never on idle), holds a single in-flight checkpoint with one queued coalescing slot, doubles backoff 1s→60s on transient/rate-limited failure, pins to `diverged` on 409/400, resets observation on 404 `observation_unavailable`, and caps retained commitments at 32 (oldest anchor + last 31).
@@ -35,7 +35,7 @@ const registry = new SessionRegistry({
 
 await registry.init();
 
-const session = registry.findOrCreate(origin, descriptor, captureContext);
+const session = registry.findOrCreate(origin, descriptor, { surface: "browser" });
 registry.appendMutation(session.session_id, {
   op: "insert",
   pos: 0,
@@ -167,7 +167,7 @@ If a capability becomes unsupported mid-session (e.g. the source attribution heu
 
 ## Testing
 
-`tests/producer-core.test.mjs` covers the acceptance scenarios from default-aaaa.29 plus invariants (no plaintext keys in the public draft, identity helpers exposed independently, capture-context redaction). `tests/producer-core-checkpoints.test.mjs` covers the server-observed checkpoint orchestration: immediate first-mutation commit, delta-50 and 60s-time cadence, single-in-flight + queued coalescing, transient/rate-limited backoff doubling without idle retries, `diverged` pinning on 409/400, `observation_unavailable` reset + fresh observed-session minting, chain-tip incremental advance equivalence, and commitment eviction at watermark. `tests/producer-core-audit.test.mjs` is a static source audit that fails the build if any banned plaintext-handling symbol or import escape appears in `packages/producer-core/src`. Tests inject a mutable clock, a deterministic UUID factory, an in-memory storage adapter, and a recording checkpoint adapter — no real time, no real browser, no real network.
+`tests/producer-core.test.mjs` covers the acceptance scenarios from default-aaaa.29 plus invariants (no plaintext keys in the public draft, identity helpers exposed independently, signed records carrying no capture context). `tests/producer-core-checkpoints.test.mjs` covers the server-observed checkpoint orchestration: immediate first-mutation commit, delta-50 and 60s-time cadence, single-in-flight + queued coalescing, transient/rate-limited backoff doubling without idle retries, `diverged` pinning on 409/400, `observation_unavailable` reset + fresh observed-session minting, chain-tip incremental advance equivalence, and commitment eviction at watermark. `tests/producer-core-audit.test.mjs` is a static source audit that fails the build if any banned plaintext-handling symbol or import escape appears in `packages/producer-core/src`. Tests inject a mutable clock, a deterministic UUID factory, an in-memory storage adapter, and a recording checkpoint adapter — no real time, no real browser, no real network.
 
 Run `make check` to exercise the full project test suite including these tests.
 

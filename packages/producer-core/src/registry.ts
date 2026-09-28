@@ -11,7 +11,6 @@ import type {
   Attestation,
   B3Hash,
   BufferMutation,
-  CaptureContext,
   FormatVersion,
   RecordManifest,
   TextBinding,
@@ -24,7 +23,6 @@ import type {
   StorageAdapter,
   UuidAdapter,
 } from "./adapters.ts";
-import { redactCaptureContext as applyCaptureContextRedactions, type CaptureContextRedactions } from "./capture-context.ts";
 import { resolveSession } from "./session-id.ts";
 import { advanceChain, buildNextMutation } from "./timeline.ts";
 import { DEFAULT_TTL_MS, DEFAULT_UPLOADED_GRACE_MS, sweepExpired } from "./ttl.ts";
@@ -35,6 +33,7 @@ import type {
   IngestRecordResponse,
   ObservationLocalState,
   ObservationUploadRequest,
+  CaptureSurface,
   ObservedCommitment,
   PendingMutation,
   ProducerIdentity,
@@ -199,7 +198,7 @@ export class SessionRegistry {
   findOrCreate(
     origin: FieldOrigin,
     descriptor: FieldDescriptor,
-    capture: CaptureContext,
+    capture: CaptureSurface,
     options: { fresh?: boolean; initial_content_unknown?: boolean; started_at_wall_ms?: number } = {},
   ): SessionRecord {
     validateCaptureWallTime(options.started_at_wall_ms);
@@ -230,7 +229,7 @@ export class SessionRegistry {
       descriptor,
       identity_certainty: resolution.certainty,
       producer: { ...this.#producer, capabilities: [...this.#producer.capabilities] },
-      capture_context: capture,
+      capture_context: { surface: capture.surface },
       events: [],
       ...(this.#storage.journal ? { journaled: true as const, event_count: 0, last_event_t: 0 } : {}),
       last_event_chain_tip: null,
@@ -336,7 +335,6 @@ export class SessionRegistry {
       record_hash,
       session_id: record.session_id,
       producer: { ...record.producer, capabilities: [...record.producer.capabilities] },
-      capture_context: record.capture_context,
       ...(textBinding ? { text_binding: textBinding } : {}),
       event_count: sessionEventCount(record),
       duration_ms: duration,
@@ -359,13 +357,6 @@ export class SessionRegistry {
     record.signed_duration_ms = duration;
     if (this.#storage.journal) record.upload_id ??= this.#uuid.uuid();
     return { manifest, events, ...(record.upload_id ? { upload_id: record.upload_id } : {}) };
-  }
-
-  /** Applies the signer's capture-context choices before the record is signed. */
-  redactCaptureContext(session_id: SessionId, redactions: CaptureContextRedactions): SessionRecord {
-    const record = this.#requireInState(session_id, ["active"]);
-    record.capture_context = applyCaptureContextRedactions(record.capture_context, redactions);
-    return cloneSession(record);
   }
 
   markUploading(session_id: SessionId): void {
@@ -448,7 +439,7 @@ export class SessionRegistry {
       descriptor: { ...(location.descriptor ?? previous.descriptor) },
       identity_certainty: "resumed",
       producer: { ...this.#producer, capabilities: [...this.#producer.capabilities] },
-      capture_context: JSON.parse(JSON.stringify(previous.capture_context)),
+      capture_context: { surface: previous.capture_context.surface },
       events: [],
       ...(this.#storage.journal ? { journaled: true as const, event_count: 0, last_event_t: 0 } : {}),
       last_event_chain_tip: null,
@@ -945,7 +936,7 @@ function cloneSession(record: SessionRecord): SessionRecord {
     origin: { ...record.origin },
     descriptor: { ...record.descriptor },
     producer: { ...record.producer, capabilities: [...record.producer.capabilities] },
-    capture_context: JSON.parse(JSON.stringify(record.capture_context)),
+    capture_context: { surface: record.capture_context.surface },
     events: record.events.map((event) => ({ ...event })),
     uploaded_response: record.uploaded_response ? { ...record.uploaded_response } : undefined,
     observation: {

@@ -1,7 +1,7 @@
 # Chrome Web Store preparation
 
 Status: the extension is published in the Chrome Web Store, where the store
-shows version 0.3.3. The source is at **0.4.0** (tag `v0.4.0`); upload that
+shows version 0.3.3. The source is at **0.4.1** (tag `v0.4.1`); upload that
 release's ZIP to the listing as an update.
 
 This document holds the technical facts a store submission depends on: what the
@@ -38,15 +38,15 @@ The published listing:
 
 ## Package facts
 
-Built from tag `v0.4.0` with the default `EXT_BASE_URL`
+Built from tag `v0.4.1` with the default `EXT_BASE_URL`
 (`https://possiblymadebyahuman.com`) by `make extension-package`:
 
 | Field | Value |
 | --- | --- |
-| File | `apps/browser-extension/dist/possiblymadebyahuman-extension-0.4.0.zip` |
-| Size | 162174 bytes |
-| SHA-256 | `5c619780d383245d4659183cb704caef4a80f6b57a96ab79dd1705f13a193052` |
-| Manifest | MV3, `name` `possiblymadebyahuman`, `version` `0.4.0`, `minimum_chrome_version` `120` |
+| File | `apps/browser-extension/dist/possiblymadebyahuman-extension-0.4.1.zip` |
+| Size | 159398 bytes |
+| SHA-256 | `fd9b9f177a14d947fb7251107977d6a52d7a316ddfea2f2657c58aeb6086e1c5` |
+| Manifest | MV3, `name` `possiblymadebyahuman`, `version` `0.4.1`, `minimum_chrome_version` `120` |
 | Store summary | The store takes it from the manifest `description`: "Content-blind writing records for text fields." |
 | Bundling | esbuild, minified, no source maps, no legal comments. All code ships in the package; nothing is fetched and executed at runtime. |
 
@@ -95,8 +95,8 @@ Paste each justification into the matching dashboard field.
 
 > Keeps the user's unfinished drafts and saved record links in
 > chrome.storage.local: numeric edit events (time, position, length, input
-> source), the page address and title the user will review before publishing,
-> private draft names, and the token that authenticates the draft's checkpoints
+> source), the site and page path of each draft so it can be resumed in the
+> same field, private draft names, and the token that authenticates the draft's checkpoints
 > with our service. Document text is never stored. Drafts and links stay until
 > the user removes them.
 
@@ -206,9 +206,6 @@ destination is the service origin compiled into the build
    - a manifest with the record hash, session id, producer
      (`browser-extension` and its version), event count, duration and signed
      finish time;
-   - the capture context the user reviewed: page URL without query or
-     fragment, page title, field kind and a public label. The user can untick
-     the URL and title and edit the label;
    - a text-binding commitment (`scheme`, `canonical_length`, salted
      `commitment`) over the selected text, or the whole field when nothing is
      selected. It is computed locally at finish. When the scope is unavailable
@@ -216,9 +213,12 @@ destination is the service origin compiled into the build
    - the checkpoint session id and token, so the service can attach its
      checkpoints to the record.
 
-Never sent: document text, per-edit inserted text, per-edit hashes, field
-names, ids or labels from the page's markup, private draft names, cookies,
-browsing history, or any identifier of the user or device.
+Never sent: document text, per-edit inserted text, per-edit hashes, the page
+address or title, the site, field names, ids or labels from the page's markup,
+private draft names, cookies, browsing history, or any identifier of the user
+or device. Records carry no capture context. Extension versions up to 0.4.0
+sent the page address, title, field kind and a public label; the service
+discards those on arrival and has removed them from stored records.
 
 Read locally: the content script reads the chosen field's text inside each
 input event to measure it and discards it when the handler returns. At finish

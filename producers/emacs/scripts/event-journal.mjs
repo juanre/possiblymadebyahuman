@@ -139,7 +139,6 @@ export async function buildJournalManifest(input) {
     record_hash: sealRecordHash(scan.chain_tip, version, binding, { duration_ms: duration, parent_record: parent }),
     session_id: input.session_id,
     producer: input.producer,
-    capture_context: input.capture_context ?? null,
     ...(binding ? { text_binding: binding } : {}),
     event_count: scan.event_count,
     duration_ms: duration,

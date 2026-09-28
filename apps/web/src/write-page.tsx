@@ -2,7 +2,6 @@ import { IndexedDbSessionStorage } from "../../../packages/browser-storage/src/i
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SessionRegistry,
-  stripQueryAndHash,
   type CheckpointAdapter,
   type CheckpointRequest,
   type CheckpointResponse,
@@ -117,11 +116,7 @@ export function WritePage() {
       dom_signature: "pmbah-write-canvas-v1",
       index_among_similar: 0,
     };
-    const record = registry.findOrCreate(origin, descriptor, {
-      surface: "web-draft",
-      label: "First-party drafting page",
-      browser: { url: stripQueryAndHash(`${window.location.origin}/write`), field_kind: "textarea" },
-    }, { fresh: true, initial_content_unknown: options.initial_content_unknown });
+    const record = registry.findOrCreate(origin, descriptor, { surface: "web-draft" }, { fresh: true, initial_content_unknown: options.initial_content_unknown });
     await registry.persist();
     return record;
   }, [registry]);

@@ -33,20 +33,6 @@ const UNKNOWN_SLUG = "unknown";
 const [golden] = JSON.parse(await readFile(goldenPath, "utf8"));
 const record = JSON.parse(JSON.stringify(golden.record));
 
-const captureContext = {
-  surface: "browser",
-  label: "Smoke test record",
-  browser: {
-    url: "https://example.test/thread/123",
-    title: "Smoke Test Page Title",
-    field_kind: "textarea",
-  },
-  emacs: {
-    buffer_name: "smoke.md",
-    major_mode: "markdown-mode",
-  },
-};
-record.manifest.capture_context = captureContext;
 record.manifest.ingested_server_t = "2026-05-28T00:00:00.000Z";
 
 const stats = {
@@ -181,7 +167,6 @@ const unknownManifest = {
   ...record.manifest,
   format_version: "0.2",
   parent_record: record.manifest.record_hash,
-  capture_context: { surface: "emacs", label: "essay.md", emacs: { buffer_name: "essay.md", major_mode: "markdown-mode" } },
   event_count: unknownEvents.length,
   duration_ms: 400,
   record_hash: computeRecordHash(unknownEvents, unknownSessionId, "0.2"),

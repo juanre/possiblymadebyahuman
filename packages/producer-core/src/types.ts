@@ -2,7 +2,6 @@ import type {
   B3Hash,
   BufferMutation,
   Capability,
-  CaptureContext,
   FormatVersion,
   Operation,
   RecordManifest,
@@ -11,6 +10,12 @@ import type {
 } from "../../format/src/index.ts";
 
 export type SessionId = string;
+
+/**
+ * Which producer surface a session belongs to, such as "browser" or
+ * "web-draft". It stays in the producer's own storage and is never published.
+ */
+export type CaptureSurface = { surface: string };
 
 export type IdentityCertainty = "fresh" | "resumed" | "degraded" | "collision";
 
@@ -118,7 +123,7 @@ export type SessionRecord = {
   descriptor: FieldDescriptor;
   identity_certainty: IdentityCertainty;
   producer: ProducerIdentity;
-  capture_context: CaptureContext;
+  capture_context: CaptureSurface;
   events: BufferMutation[];
   /** Journal-backed sessions keep history in storage, never in this metadata. */
   event_count?: number;

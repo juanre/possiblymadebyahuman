@@ -4,8 +4,8 @@ Vite/React public record viewer and first-party `/write` producer.
 
 ## Responsibility
 
-- Public `/<short_signature>` and full-hash record pages with capture context,
-  measured statistics, timelines, descriptive analyzer facts and local integrity
+- Public `/<short_signature>` and full-hash record pages with measured
+  statistics, timelines, descriptive analyzer facts and local integrity
   verification through `packages/format`. Large records load a bounded summary;
   explicit full verification runs in a worker over 4096-event pages, with a fixed
   128-bin activity overview. A partial download never enables a document check.

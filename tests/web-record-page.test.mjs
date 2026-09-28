@@ -54,7 +54,6 @@ test("RecordPage source defines required public record sections without verdict 
     "RecordHeader",
     "VerificationAlert",
     "TechnicalDetails",
-    "CaptureContextSummary",
     "TimingAndCounts",
     "EditTimeline",
     "SignalList",
@@ -136,14 +135,6 @@ test("ObservationStatusLine UI strings avoid positive-claim phrasings that would
   for (const pattern of positiveClaims) {
     assert.doesNotMatch(source, pattern, `components.tsx leaked overclaim: ${pattern}`);
   }
-});
-
-test("CaptureContextSummary renders browser.title and emacs.major_mode when present", async () => {
-  const source = await readFile("apps/web/src/components.tsx", "utf8");
-  assert.match(source, /context\.browser\?\.title/);
-  assert.match(source, /Page title/);
-  assert.match(source, /context\.emacs\?\.major_mode/);
-  assert.match(source, /Major mode/);
 });
 
 test("browser-side verification helper recomputes the hash chain", async () => {
@@ -328,7 +319,6 @@ async function summaryFixture() {
   const record = await recordFixture();
   record.manifest.format_version = "0.3";
   record.manifest.duration_ms = 24 * 60_000;
-  record.manifest.capture_context = { surface: "emacs" };
   record.manifest.ingested_server_t = "2026-05-28T23:30:00.000Z";
   record.stats.event_count = 312;
   record.stats.paste_event_count = 0;
@@ -341,17 +331,11 @@ async function summaryFixture() {
   return record;
 }
 
-test("record summary sentence says where and over what span, leaving the numbers to the facts", async () => {
+test("record summary sentence gives only the span and publication date", async () => {
   const { describeRecordSummary } = await import("../apps/web/src/record-utils.ts");
   const record = await summaryFixture();
-  assert.equal(describeRecordSummary(record), "Written in Emacs over 24 minutes and published 28 May 2026.");
-  record.manifest.capture_context = { surface: "browser", browser: { url: "https://forum.example.org/t/123?reply=1" } };
-  assert.equal(describeRecordSummary(record), "Written in a text field on forum.example.org over 24 minutes and published 28 May 2026.");
-  record.manifest.capture_context = { surface: "browser" };
-  assert.equal(describeRecordSummary(record), "Written in a browser text field over 24 minutes and published 28 May 2026.");
-  record.manifest.capture_context = { surface: "web-draft" };
-  assert.equal(describeRecordSummary(record), "Written on the possiblymadebyahuman writing page over 24 minutes and published 28 May 2026.");
-  for (const phrase of [/\bonly\b/i, /\bjust\b/i, /suspicious/i, /natural/i, /simply/i, /\bedits?\b/, /paste/]) {
+  assert.equal(describeRecordSummary(record), "Written over 24 minutes and published 28 May 2026.");
+  for (const phrase of [/\bonly\b/i, /\bjust\b/i, /suspicious/i, /natural/i, /simply/i, /\bedits?\b/, /paste/, /Emacs|browser|page/]) {
     assert.doesNotMatch(describeRecordSummary(record), phrase);
   }
 });
@@ -360,7 +344,6 @@ test("record summary sentence marks estimated spans", async () => {
   const { describeRecordSummary } = await import("../apps/web/src/record-utils.ts");
   const record = await summaryFixture();
   record.manifest.format_version = "0.2";
-  record.manifest.capture_context = null;
   record.manifest.ingested_server_t = null;
   assert.equal(describeRecordSummary(record), "Written over an estimated 24 minutes.");
   record.manifest.duration_ms = 240;

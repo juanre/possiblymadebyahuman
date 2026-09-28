@@ -196,7 +196,7 @@ test("content-script-reachable BackgroundResponse never carries the observation 
   const reg = await dispatcher.handle({
     kind: "register_field",
     tab_id: 1, frame_id: 0,
-    origin_url: "https://a.test", page_path: "/post", page_title: "x",
+    origin_url: "https://a.test", page_path: "/post",
     descriptor: {
       tag_name: "TEXTAREA", field_kind: "textarea",
       name: "reply", id: "reply", aria_label: null, nearest_form_id: null,

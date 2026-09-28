@@ -165,46 +165,19 @@ function TechnicalSection({ title, id, children }: { title: string; id?: string;
   );
 }
 
-export function CaptureContextSummary({ record }: { record: RecordApiResponse }) {
-  const context = record.manifest.capture_context;
-  const timing = recordTimingWindow(record);
-  const timingRows = timing ? (
-    <>
-      <dt>{timing.estimated ? "Start inferred from upload and claimed duration" : "First checkpoint received"}</dt><dd><UtcInstant iso={timing.began} /></dd>
-      <dt>{timing.estimated ? "Uploaded" : "Last checkpoint received"}</dt><dd><UtcInstant iso={timing.ended} /></dd>
-    </>
-  ) : null;
-  if (!context) {
-    return (
-      <TechnicalSection title="Capture context">
-        {timingRows ? <dl className="details">{timingRows}</dl> : <p className="muted">No capture context was included.</p>}
-      </TechnicalSection>
-    );
-  }
-  return (
-    <TechnicalSection title="Capture context">
-      <dl className="details">
-        {context.surface && <><dt>Surface</dt><dd>{String(context.surface)}</dd></>}
-        {context.label && <><dt>Label</dt><dd>{String(context.label)}</dd></>}
-        {context.browser?.url && <><dt>URL</dt><dd>{context.browser.url}</dd></>}
-        {context.browser?.title && <><dt>Page title</dt><dd>{context.browser.title}</dd></>}
-        {context.browser?.field_kind && <><dt>Field</dt><dd>{context.browser.field_kind}</dd></>}
-        {context.emacs?.buffer_name && <><dt>Buffer</dt><dd>{context.emacs.buffer_name}</dd></>}
-        {context.emacs?.major_mode && <><dt>Major mode</dt><dd>{context.emacs.major_mode}</dd></>}
-        {timingRows}
-      </dl>
-    </TechnicalSection>
-  );
-}
-
 // Measurements that the header does not already state, for readers who want
 // the arithmetic behind the summary.
 export function TimingAndCounts({ record }: { record: RecordApiResponse }) {
   const stats = record.stats;
   const timing = recordTimingDetails(record);
+  const window = recordTimingWindow(record);
   return (
     <TechnicalSection title="Timing and counts">
       <dl className="details timing-counts">
+        {window && <>
+          <dt>{window.estimated ? "Start inferred from upload and claimed duration" : "First checkpoint received"}</dt><dd><UtcInstant iso={window.began} /></dd>
+          <dt>{window.estimated ? "Uploaded" : "Last checkpoint received"}</dt><dd><UtcInstant iso={window.ended} /></dd>
+        </>}
         <dt>{timing.signedFinish ? "Signed duration" : "Reported duration"}</dt><dd>{formatDuration(stats.duration_ms)}</dd>
         <dt>Editing span, first to last edit</dt><dd>{formatDuration(timing.editingSpanMs)}</dd>
         <dt>Between edits, active and paused</dt><dd>{formatDuration(stats.active_time_ms)} active, {formatDuration(stats.idle_time_ms)} in pauses of 30 seconds or more</dd>
@@ -867,7 +840,6 @@ export function RecordPage({ record }: { record?: RecordApiResponse }) {
           <VerificationPanel record={record} verification={verification} />
           <TimingAndCounts record={record} />
           <SignalList signals={record.signals} />
-          <CaptureContextSummary record={record} />
         </TechnicalDetails>
       </> : <div className="record-section timeline-placeholder" aria-hidden="true" />}
       <RecordFooter />

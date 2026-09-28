@@ -17,7 +17,7 @@ it there.
 ### Summary
 
 The dashboard takes the summary from the manifest `description` (132 characters
-at most). The 0.4.0 package says:
+at most). The 0.4.1 package says:
 
 > Content-blind writing records for text fields.
 
@@ -51,9 +51,8 @@ releasing a new version.
 > recorded.
 > 2. Write as usual. The field can already contain text; the record covers the
 > edits you make from then on.
-> 3. Choose "Finish & get link". Review the page address, title and label that
-> will be published with the record, and remove anything you would rather keep
-> private.
+> 3. Choose "Finish & get link" and confirm the text to check against the
+> record. Nothing about the page or site is published.
 > 4. Confirm. You get a link to a public record page with a writing-rhythm
 > chart, an edit timeline and the signature details.
 >
@@ -72,7 +71,7 @@ releasing a new version.
 >
 > Stop pauses a draft, and you can resume it later in the same field. Drafts
 > and saved links stay in your browser until you remove them. Published records
-> are permanent, so review the public details before you confirm.
+> are permanent, so check the review before you confirm.
 >
 > No account needed. Open source under the MIT license.
 >
@@ -92,15 +91,20 @@ releasing a new version.
 | Store icon (128x128) | `apps/browser-extension/store-assets/chrome-web-store-icon-128.png` |
 | Screenshot 1 | `apps/browser-extension/store-assets/screenshots/1-start.png`: Start writing record in the right-click menu of a Gmail draft |
 | Screenshot 2 | `apps/browser-extension/store-assets/screenshots/2-recording.png`: the draft being recorded, with the side panel |
-| Screenshot 3 | `apps/browser-extension/store-assets/screenshots/3-review.png`: the finish review with the public context |
+| Screenshot 3 | `apps/browser-extension/store-assets/screenshots/3-review.png`: the finish review |
 | Screenshot 4 | `apps/browser-extension/store-assets/screenshots/4-record.png`: the published record page beside the saved-record panel |
 | Screenshot 5 | `apps/browser-extension/store-assets/screenshots/5-timeline.png`: the edit timeline and writing rhythm |
 | Small promo tile (440x280) | `apps/browser-extension/store-assets/promo-tile-440x280.png` |
 | Marquee promo tile (1400x560) | Optional; none prepared |
 
-All screenshots are 1280x800 and come from the real extension and viewer; see
-`docs/browser-extension-release.md#store-screenshots` to regenerate them. The
-blog in the screenshots is fictional and served locally.
+All screenshots are 1280x800, captured by hand in Chrome with the published
+extension in a Gmail draft, with the writer's email address removed.
+
+Screenshots 3 and 4 show 0.4.0 behavior that has since been removed.
+Screenshot 3 shows the finish review with its Public context section (page URL,
+page title and public label), and screenshot 4 shows a record page whose
+summary names the site ("Written in a text field on mail.google.com"). Retake
+both once the next version is published, and replace them in the dashboard.
 
 ### Additional fields
 
@@ -129,23 +133,26 @@ Paste each one from
 ### Data usage
 
 The form asks which kinds of user data the extension collects, meaning data
-that leaves the browser. Tick these three:
+that leaves the browser. Tick these two:
 
 - **User activity.** The extension logs keystroke-level edit events in the
   chosen field (time, position, length, input source) and sends them as
   checkpoints and in the published record. No keys or characters are recorded.
-- **Web history.** A published record includes the address (without query or
-  fragment) and title of the page the user wrote on. The user reviews both and
-  can remove either before publishing. No other browsing history is collected.
 - **Website content.** A published record includes a salted fingerprint of the
   text the user chose (selection or whole field), computed locally. The text
   itself is never sent. This is ticked to be conservative, because the
   fingerprint is derived from page content.
 
-Leave the others unticked: personally identifiable information, health,
-financial and payment information, authentication information (the checkpoint
-token is issued by our service, not a user credential), personal
+Leave the others unticked: web history, personally identifiable information,
+health, financial and payment information, authentication information (the
+checkpoint token is issued by our service, not a user credential), personal
 communications, and location.
+
+Earlier submissions ticked **Web history**, because extension versions up to
+0.4.0 published the address and title of the page the user wrote on. Records no
+longer carry either, so untick Web history when uploading the next version.
+The description and the reviewer test instructions above also changed with it
+and must be pasted again.
 
 Tick all three certifications:
 
@@ -173,9 +180,11 @@ The dashboard offers a field for reviewer instructions. Paste:
 > (or press Alt+Shift+W). The side panel opens and shows an active draft.
 > 3. Type a few sentences. The draft's edit count rises. Other fields on the
 > page are not recorded.
-> 4. Click "Finish & get link", review the page address and title under Public
-> context, and click "Confirm & publish".
-> 5. Click "Open record" to see the public record page. It shows timing and
+> 4. Click "Finish & get link", check the text scope shown, and click "Confirm &
+> publish".
+> 5. The review says that nothing about the page or site is published. The
+> record page and the upload request contain no page address or title.
+> 6. Click "Open record" to see the public record page. It shows timing and
 > edit measurements; the typed text does not appear anywhere in it or in the
 > network requests.
 
@@ -203,8 +212,8 @@ Do these in order.
 5. **Fill the Account page.** Publisher display name, a contact email (verify
    it from the email Google sends), and the trader or non-trader declaration
    for the EU. Keep a public email off the listing unless you want one there.
-6. **Download the package** `possiblymadebyahuman-extension-0.4.0.zip` from the
-   GitHub release for tag `v0.4.0`, or the release you are submitting. Run
+6. **Download the package** `possiblymadebyahuman-extension-0.4.1.zip` from the
+   GitHub release for tag `v0.4.1`, or the release you are submitting. Run
    `shasum -a 256` on it and compare with the value in
    [`chrome-web-store-prep.md#package-facts`](chrome-web-store-prep.md#package-facts).
    Upload only a matching file.
@@ -255,11 +264,10 @@ the rejection email.
 These are Juan's decisions; nothing in this repository settles them.
 
 1. **Summary text.** Keep "Content-blind writing records for text fields." for
-   0.4.0, or ship a version with the suggested summary before submitting.
+   0.4.1, or ship a version with the suggested summary before submitting.
 2. **Host permission scope.** Submit with `host_permissions: ["<all_urls>"]`,
    or first narrow it to `https://possiblymadebyahuman.com/*` in a new version
    (the content script keeps `<all_urls>`; two tests pin the current value).
 3. **Visibility.** Public or unlisted.
 4. **Category.** Tools or Communication.
-5. **Data types.** Whether to tick Website content as well as User activity and
-   Web history.
+5. **Data types.** Whether to tick Website content as well as User activity.

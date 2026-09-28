@@ -8,7 +8,6 @@ import {
   SessionRegistry,
   UnknownSessionError,
   advanceChain,
-  buildCaptureContext,
 } from "../packages/producer-core/src/index.ts";
 
 function mutableClock(start = 0) {
@@ -112,7 +111,7 @@ function descriptor(overrides = {}) {
 }
 
 function captureContext() {
-  return buildCaptureContext({ origin: ORIGIN, descriptor: descriptor(), page_title: "Test Page" });
+  return { surface: "browser" };
 }
 
 function makeRegistry(opts = {}) {

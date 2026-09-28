@@ -2,7 +2,7 @@
 
 ;; Copyright (c) 2026
 ;; SPDX-License-Identifier: MIT
-;; Version: 0.1.2
+;; Version: 0.1.3
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, writing
 
@@ -118,7 +118,7 @@ your init file so this also works after restarting Emacs."
   :type 'boolean
   :group 'pmbah)
 
-(defconst pmbah-producer-version "0.1.2")
+(defconst pmbah-producer-version "0.1.3")
 (defconst pmbah-format-version "0.3")
 
 (defconst pmbah-max-session-ms 9007199254740991
@@ -656,7 +656,7 @@ must repeat recovery rather than append with a partially installed cursor."
                (> (file-attribute-size (file-attributes (pmbah--journal-file))) pmbah--journal-bytes))
       (setq pmbah--journal-repair t))
     (when pmbah--frozen-record
-      (let ((manifest (alist-get 'manifest (pmbah--parse-public-json pmbah--frozen-record))))
+      (let ((manifest (pmbah--frozen-manifest pmbah--frozen-record)))
         (unless (= (alist-get 'event_count manifest) pmbah--next-seq)
           (user-error "Frozen record does not match its journal prefix"))
         (setq pmbah--frozen-record (pmbah--json-encode (list (cons 'manifest manifest)))
@@ -685,7 +685,7 @@ must repeat recovery rather than append with a partially installed cursor."
     (when blocker (user-error "Cannot recover saved session: %s" blocker)))
   (let* ((legacy (not (equal (plist-get state :storage_version) 2)))
          (frozen (plist-get state :frozen_record))
-         (manifest (when frozen (alist-get 'manifest (pmbah--parse-public-json frozen)))))
+         (manifest (when frozen (pmbah--frozen-manifest frozen))))
     (unless legacy
       (unless (and (integerp (plist-get state :event_count)) (>= (plist-get state :event_count) 0)
                    (integerp (plist-get state :journal_bytes)) (>= (plist-get state :journal_bytes) 0))
@@ -1393,16 +1393,16 @@ Capture remains enabled and a fresh session starts from the next edit."
           (message "Please answer y or n.")))))))
 
 ;;;###autoload
-(defun pmbah-sign-buffer (&optional capture-context no-prompts)
+(defun pmbah-sign-buffer (&optional no-prompts)
   "Freeze and publish this session; interactive work runs asynchronously.
-With a prefix argument, accept the usual context and binding defaults.
+With a prefix argument NO-PROMPTS, accept the usual binding default.
 Noninteractive callers retain the synchronous result-returning interface."
-  (interactive (list nil current-prefix-arg))
+  (interactive (list current-prefix-arg))
   (if (and (called-interactively-p 'interactive) (not noninteractive))
-      (pmbah--sign-buffer-async capture-context no-prompts)
-    (pmbah--sign-buffer-sync capture-context no-prompts)))
+      (pmbah--sign-buffer-async no-prompts)
+    (pmbah--sign-buffer-sync no-prompts)))
 
-(defun pmbah--prepare-signing-input (capture-context no-prompts)
+(defun pmbah--prepare-signing-input (no-prompts)
   "Confirm and freeze capture, returning only the transient local helper input."
   (when pmbah--recovery-job (user-error "Wait for PMBAH recovery before signing"))
   (unless pmbah-mode (user-error "Enable pmbah-mode before signing a buffer"))
@@ -1413,8 +1413,7 @@ Noninteractive callers retain the synchronous result-returning interface."
     (when (>= (pmbah--elapsed-ms) pmbah-max-session-ms)
       (pmbah--retire-live-session)
       (user-error "PMBAH session clock exceeded its exact integer range; a fresh session started"))
-    (let* ((context (or capture-context (if no-prompts (pmbah--capture-context t t) (pmbah-review-capture-context))))
-           (region (use-region-p))
+    (let* ((region (use-region-p))
            (bind (and (not (equal pmbah--session-format "0.1"))
                       (if no-prompts t
                         (and (not noninteractive)
@@ -1434,7 +1433,7 @@ Noninteractive callers retain the synchronous result-returning interface."
             pmbah--signing t)
       (pmbah--lock-buffer)
       (pmbah--write-state t)
-      (pmbah--record-helper-payload context final-text t))))
+      (pmbah--record-helper-payload final-text t))))
 
 (defun pmbah--accept-frozen-manifest (built)
   "Keep only BUILT's manifest and immutable journal boundary."
@@ -1458,12 +1457,12 @@ Noninteractive callers retain the synchronous result-returning interface."
   (pmbah--write-state t)
   (user-error "Server rejected the observation binding (%s); retry signing the same record without that binding" code))
 
-(defun pmbah--sign-buffer-sync (capture-context no-prompts)
+(defun pmbah--sign-buffer-sync (no-prompts)
   "Synchronous noninteractive signing interface for automation and tests."
   (when pmbah--recovery-job (user-error "Wait for PMBAH recovery before signing"))
   (when pmbah--sign-job (user-error "This record is already being prepared or uploaded"))
   (unwind-protect
-      (let ((payload (pmbah--prepare-signing-input capture-context no-prompts)))
+      (let ((payload (pmbah--prepare-signing-input no-prompts)))
         (when payload (pmbah--accept-frozen-manifest (pmbah--journal-helper payload))))
     (setq pmbah--signing nil)
     (unless (or pmbah--frozen-record pmbah--save-failure) (pmbah--unlock-buffer)))
@@ -1530,12 +1529,12 @@ Noninteractive callers retain the synchronous result-returning interface."
   (unless (or pmbah--frozen-record pmbah--save-failure) (pmbah--unlock-buffer))
   (message "PMBAH signing stopped: %s" failure))
 
-(defun pmbah--sign-buffer-async (capture-context no-prompts)
+(defun pmbah--sign-buffer-async (no-prompts)
   "Start interactive signing without blocking Emacs during scans or uploads."
   (when pmbah--recovery-job (user-error "Wait for PMBAH recovery before signing"))
   (when pmbah--sign-job (user-error "This record is already being prepared or uploaded"))
   (condition-case error
-      (let ((payload (pmbah--prepare-signing-input capture-context no-prompts)))
+      (let ((payload (pmbah--prepare-signing-input no-prompts)))
         (setq pmbah--sign-job (list :token (pmbah--uuid-v4) :session pmbah--session-id))
         (if payload
             (pmbah--start-sign-helper 'manifest payload)
@@ -1614,6 +1613,13 @@ Noninteractive callers retain the synchronous result-returning interface."
   (json-parse-string json :object-type 'alist :array-type 'array
                      :null-object nil :false-object :json-false))
 
+(defun pmbah--frozen-manifest (frozen-record)
+  "Return the manifest in persisted FROZEN-RECORD without any capture context.
+Recovery state saved by earlier producer versions can hold a `capture_context'
+naming the buffer and major mode; it is never part of a published record."
+  (assq-delete-all 'capture_context
+                   (alist-get 'manifest (pmbah--parse-public-json frozen-record))))
+
 ;;;###autoload
 (defun pmbah-recover-session (path)
   "Recover a non-file session from PATH into the current buffer.
@@ -1640,32 +1646,19 @@ No document text is restored. Frozen uploads can be retried unchanged."
               (when buffer-file-name (pmbah--follow-visited-file))))
         (unless recovered (pmbah--release-ownership owned))))))
 
-(defun pmbah-review-capture-context ()
-  "Collect capture context for upload.
-Absolute file paths are omitted by default and are never included."
-  (let* ((buffer-label (buffer-name))
-         (mode-label (symbol-name major-mode))
-         (file-label (or (buffer-file-name) "not visiting a file"))
-         include-buffer-name
-         include-major-mode)
-    (message "PMBAH upload is content-blind; absolute file path omitted (%s)" file-label)
-    (setq include-buffer-name (pmbah--y-or-n-p-default-yes (format "Include buffer name `%s` in capture context? " buffer-label)))
-    (setq include-major-mode (pmbah--y-or-n-p-default-yes (format "Include major mode `%s` in capture context? " mode-label)))
-    (pmbah--capture-context include-buffer-name include-major-mode)))
-
-(defun pmbah-build-record-for-current-buffer (&optional capture-context final-text)
+(defun pmbah-build-record-for-current-buffer (&optional final-text)
   "Explicitly export a public PMBAH record for diagnostics.
 This materializes the event array; normal capture, checkpointing, and signing
 use bounded journal operations instead. The returned alist has manifest/events.
 FINAL-TEXT, when non-nil, is handed to the local helper transiently so it can
 compute the content-blind text binding; it is never stored or uploaded."
-  (alist-get 'record (pmbah--build-record-result capture-context final-text)))
+  (alist-get 'record (pmbah--build-record-result final-text)))
 
-(defun pmbah--build-record-result (&optional capture-context final-text manifest-only)
+(defun pmbah--build-record-result (&optional final-text manifest-only)
   "Run an explicit synchronous export or manifest computation."
-  (pmbah--journal-helper (pmbah--record-helper-payload capture-context final-text manifest-only)))
+  (pmbah--journal-helper (pmbah--record-helper-payload final-text manifest-only)))
 
-(defun pmbah--record-helper-payload (&optional capture-context final-text manifest-only)
+(defun pmbah--record-helper-payload (&optional final-text manifest-only)
   "Return the private journal descriptor for the current buffer's helper call.
 FINAL-TEXT, when a non-empty string, is passed to the local helper SOLELY to
 compute the content-blind text binding and is never persisted or uploaded."
@@ -1679,7 +1672,6 @@ compute the content-blind text binding and is never persisted or uploaded."
                          :producer (list :id "emacs"
                                          :version pmbah-producer-version
                                          :capabilities ["timing" "pause_fidelity"])
-                         :capture_context (or capture-context (pmbah--capture-context nil nil))
                          :operation (if manifest-only "manifest" "export")
                          :journal_path (pmbah--journal-file)
                          :event_count pmbah--journal-count
@@ -1723,7 +1715,7 @@ compute the content-blind text binding and is never persisted or uploaded."
 
 (defun pmbah--upload-descriptor ()
   "Return a small private descriptor for chunked publication of the frozen prefix."
-  (append (pmbah--parse-public-json pmbah--frozen-record)
+  (append (list (cons 'manifest (pmbah--frozen-manifest pmbah--frozen-record)))
           (pmbah--parse-public-json pmbah--frozen-upload)
           (list (cons 'operation "publish") (cons 'upload_id pmbah--upload-id)
                 (cons 'api_base_url pmbah-api-base-url)
@@ -1743,17 +1735,6 @@ compute the content-blind text binding and is never persisted or uploaded."
             (signal 'pmbah-observation-rejected (list code))
           (user-error "PMBAH upload failed: %s" (alist-get 'message failure)))))
     response))
-
-(defun pmbah--capture-context (include-buffer-name include-major-mode)
-  "Build capture context, including only accepted Emacs metadata fields."
-  (let ((emacs-fields nil))
-    (when include-buffer-name
-      (setq emacs-fields (plist-put emacs-fields :buffer_name (buffer-name))))
-    (when include-major-mode
-      (setq emacs-fields (plist-put emacs-fields :major_mode (symbol-name major-mode))))
-    (if emacs-fields
-        (list :surface "emacs" :emacs emacs-fields)
-      (list :surface "emacs"))))
 
 ;;; Server-observed checkpoints
 ;;

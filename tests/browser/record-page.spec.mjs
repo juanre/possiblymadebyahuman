@@ -22,7 +22,7 @@ test.describe("public record page", () => {
   test("header summarizes the process in one descriptive sentence and states its limit once", async ({ page }) => {
     const header = page.locator("header.record-header");
     await expect(header.locator(".record-summary")).toHaveText(
-      "Written in a text field on example.test in under a second (estimated) and published 28 May 2026.",
+      "Written in under a second (estimated) and published 28 May 2026.",
     );
     await expect(header.locator(".record-limit")).toHaveText("This record shows how the text was edited. How records work");
     const text = (await page.locator("main").innerText()).toLowerCase();
@@ -69,13 +69,10 @@ test.describe("public record page", () => {
     await expect(region(page, "How this was written")).toHaveCount(0);
   });
 
-  test("shows browser.title and emacs.major_mode in capture context", async ({ page }) => {
+  test("says nothing about where the text was written", async ({ page }) => {
     await openTechnicalDetails(page);
-    const card = region(page, "Capture context");
-    await expect(card).toContainText("Page title");
-    await expect(card).toContainText("Smoke Test Page Title");
-    await expect(card).toContainText("Major mode");
-    await expect(card).toContainText("markdown-mode");
+    await expect(region(page, "Capture context")).toHaveCount(0);
+    await expect(page.locator("main")).not.toContainText(/Page title|Major mode|Surface|example\.test/);
   });
 
   test("renders the edit timeline without document text", async ({ page }) => {
@@ -126,9 +123,9 @@ test.describe("public record page", () => {
     await page.goto("/tampered");
     await page.getByRole("heading", { name: "Signed writing record" }).waitFor();
     await openTechnicalDetails(page);
-    const capture = region(page, "Capture context");
-    await expect(capture).toContainText("Start inferred from upload and claimed duration");
-    await expect(capture).toContainText("Uploaded");
+    const timing = region(page, "Timing and counts");
+    await expect(timing).toContainText("Start inferred from upload and claimed duration");
+    await expect(timing).toContainText("Uploaded");
   });
 
   test("observation status line shows public state copy without overclaim", async ({ page }) => {
@@ -181,11 +178,11 @@ test.describe("public record page", () => {
 
   test("labels checkpoint receipt times without calling them writing boundaries", async ({ page }) => {
     await openTechnicalDetails(page);
-    const capture = region(page, "Capture context");
-    await expect(capture).toContainText("First checkpoint received");
-    await expect(capture).toContainText("2026-05-28 14:02 UTC");
-    await expect(capture).toContainText("Last checkpoint received");
-    await expect(capture).toContainText("2026-05-28 14:34 UTC");
+    const timing = region(page, "Timing and counts");
+    await expect(timing).toContainText("First checkpoint received");
+    await expect(timing).toContainText("2026-05-28 14:02 UTC");
+    await expect(timing).toContainText("Last checkpoint received");
+    await expect(timing).toContainText("2026-05-28 14:34 UTC");
   });
 });
 
@@ -249,8 +246,8 @@ test.describe("record with unknown document length", () => {
     await expect(page.locator(".record-fact").filter({ hasText: "Length" }).locator("dd")).toHaveText("not measured");
   });
 
-  test("header names the Emacs capture context and the unobserved state", async ({ page }) => {
-    await expect(page.locator(".record-summary")).toContainText("Written in Emacs");
+  test("header states the unobserved state without naming the tool", async ({ page }) => {
+    await expect(page.locator(".record-summary")).not.toContainText("Emacs");
     await expect(page.locator(".record-check")).toContainText("The server received no checkpoints while it was written.");
   });
 

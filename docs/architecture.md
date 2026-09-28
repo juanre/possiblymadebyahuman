@@ -80,11 +80,11 @@ Build landing/docs pages (the blog was dropped) that explain the product promise
 
 ### M6 — browser extension producer
 
-Build local capture, sign/freeze/upload/copy-link flow, local TTL, capture-context review, and conformance pass.
+Build local capture, sign/freeze/upload/copy-link flow, local TTL, ~~capture-context review~~, and conformance pass. Capture-context review was removed with capture context itself; see the capture context removal amendment in [`sot.md`](sot.md).
 
 ### M7 — Emacs producer
 
-Build the minor mode, buffer capture, signing/upload flow, capture-context review, and conformance pass.
+Build the minor mode, buffer capture, signing/upload flow, ~~capture-context review~~, and conformance pass. Capture-context review was removed with capture context itself; see the capture context removal amendment in [`sot.md`](sot.md).
 
 ## Original M0 exclusions (historical)
 

@@ -76,7 +76,6 @@ try {
         version: "0.1.0",
         capabilities: ["timing", "pause_fidelity"],
       },
-      capture_context: input.capture_context ?? null,
       ...(textBinding ? { text_binding: textBinding } : {}),
       event_count: events.length,
       duration_ms: duration,

@@ -648,7 +648,6 @@ test("Postgres read SQL uses explicit columns so created_at is the record timest
           producer_id: record.manifest.producer.id,
           producer_version: record.manifest.producer.version,
           producer_capabilities: record.manifest.producer.capabilities,
-          capture_context: record.manifest.capture_context,
           event_count: record.manifest.event_count,
           duration_ms: record.manifest.duration_ms,
           created_client_t: record.manifest.created_client_t,
@@ -694,38 +693,6 @@ test("Postgres read SQL uses explicit columns so created_at is the record timest
   assert.ok(queries[0].sql.includes("r.created_at"));
   assert.match(queries[0].sql, /jsonb_agg\(to_jsonb\(analysis_results\) order by created_at, analyzer_id, analyzer_version, id\)/i);
   assert.doesNotMatch(queries[0].sql, /select\s+r\.\*,\s*s\.\*/i);
-});
-
-test("public ingest rejects capture_context outside the documented shape or over the string cap", async () => {
-  const { api } = makeApi();
-  const withUnknownKey = await fixtureRecord();
-  withUnknownKey.manifest.capture_context = { surface: "browser", notes: "a whole document" };
-  const unknown = await api.postRecord(withUnknownKey);
-  assert.equal(unknown.status, 400);
-  assert.match(unknown.body.details.join("\n"), /capture_context.*notes/);
-
-  const withNestedUnknownKey = await fixtureRecord();
-  withNestedUnknownKey.manifest.capture_context = { surface: "browser", browser: { url: "https://x", body: "text" } };
-  assert.equal((await api.postRecord(withNestedUnknownKey)).status, 400);
-
-  const withLongLabel = await fixtureRecord();
-  withLongLabel.manifest.capture_context = { surface: "browser", label: "x".repeat(513) };
-  const long = await api.postRecord(withLongLabel);
-  assert.equal(long.status, 400);
-  assert.match(long.body.details.join("\n"), /label.*512/);
-
-  const withNonString = await fixtureRecord();
-  withNonString.manifest.capture_context = { surface: "browser", label: 42 };
-  assert.equal((await api.postRecord(withNonString)).status, 400);
-
-  const documented = await fixtureRecord();
-  documented.manifest.capture_context = {
-    surface: "browser",
-    label: "Example",
-    browser: { url: "https://example.com/thread/123", title: "Example", field_kind: "textarea" },
-    emacs: { buffer_name: "essay.md", major_mode: "markdown-mode" },
-  };
-  assert.equal((await api.postRecord(documented)).status, 201);
 });
 
 test("public ingest bounds attestations to small typed objects", async () => {

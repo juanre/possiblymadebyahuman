@@ -47,14 +47,11 @@ days later.
   time, format version, checkpoint token, and frozen manifest when present.
   Numeric events live in `events-<session-id>.jsonl`; metadata stores only its
   durable count and byte boundary. Neither file holds document text or a document
-  path. Reviewed public
-  context can include a buffer name. File sessions use the SHA-256 of the visited
+  path. File sessions use the SHA-256 of the visited
   file's true name; non-file sessions use a session UUID. State files have
   owner-only permissions because the token is a bearer secret.
-- Absolute local file paths are noted as omitted at sign time and are not
-  uploaded by default.
-- Emacs buffer names and major modes can identify a document or workflow; the
-  mode asks before including them in `capture_context`.
+- Records say nothing about where the text was written: no file path, buffer
+  name, or major mode is uploaded.
 - This producer does not make or imply a human/AI verdict. It records facts about
   an editing session.
 
@@ -346,8 +343,8 @@ synced between machines:
    M-x pmbah-show-session-status
    ```
 
-5. Freeze, optionally bind the active region or whole buffer, answer y/n
-   capture-context prompts, upload, and copy the short URL:
+5. Freeze, optionally bind the active region or whole buffer, upload, and copy
+   the short URL:
 
    ```elisp
    M-x pmbah-sign-buffer
@@ -419,19 +416,18 @@ A quick public-service check:
 2. Type a short draft.
 3. Run `M-x pmbah-show-session-status`; confirm the API URL is
    `https://possiblymadebyahuman.com`.
-4. Run `M-x pmbah-sign-buffer`; answer the y/n binding and capture-context
-   prompts (RET accepts the default `y`), upload, and confirm a short URL is
-   copied to the kill ring.
+4. Run `M-x pmbah-sign-buffer`; answer the y/n binding prompt (RET accepts the
+   default `y`), upload, and confirm a short URL is copied to the kill ring.
 
 For a local development check instead, start with `make local-container` (or
 `PMBAH_PORT=18800 make local-container`) and set `PMBAH_API_BASE_URL` /
 `pmbah-api-base-url` to the matching local origin.
 
-## Sign-time binding and capture context
+## Sign-time binding
 
 `pmbah-sign-buffer` asks whether to bind the selected region or the whole buffer
-to the record, depending on what is active when you sign. All sign-time questions
-are y/n prompts where RET accepts the default `y`. If you bind, the text used is:
+to the record, depending on what is active when you sign. The question is a y/n
+prompt where RET accepts the default `y`. If you bind, the text used is:
 
 - the active, non-empty region when `use-region-p` is true; or
 - the whole buffer when there is no active region.
@@ -445,21 +441,8 @@ The selected text is passed only transiently to the local helper to compute the
 content-blind `text_binding` commitment, then discarded. Only the binding object
 is uploaded.
 
-For capture context, `pmbah-sign-buffer` does not open a preview buffer. It
-prompts separately for whether to include `emacs.buffer_name` and
-`emacs.major_mode`; absolute file paths are omitted. If both metadata fields are
-declined, the uploaded `capture_context` is:
-
-```json
-{ "surface": "emacs" }
-```
-
-That `capture_context` is separate from the optional `manifest.text_binding`; a
-record can have minimal capture context and still include a document binding.
-
-Use `C-u M-x pmbah-sign-buffer` to skip the prompts and accept the default yes
-answers: include buffer name and major mode, and bind the selected region if
-active or the whole buffer otherwise.
+Use `C-u M-x pmbah-sign-buffer` to skip the prompt and accept the default yes
+answer: bind the selected region if active or the whole buffer otherwise.
 
 ## Event semantics and limitations
 
@@ -495,7 +478,9 @@ The repository test suite includes Emacs batch tests that:
   compute the content-blind binding does not leak into the output;
 - confirm non-empty buffers start, later absolute positions are retained, and no
   plaintext canaries are uploaded;
-- confirm default capture context avoids absolute file paths;
+- confirm the helper payload and uploaded record contain no buffer name, major
+  mode, or file path, including when a frozen session saved by an earlier
+  version carries a capture context;
 - run the real ingest API in-process and confirm checkpoints are committed while
   writing and bound at sign time, that a session whose checkpoints never reached
   the server uploads as `unobserved`, and that transient failures back off,

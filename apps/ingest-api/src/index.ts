@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { analyzeEventLog } from "../../../packages/analyzers/src/streaming.ts";
 import { createChunkedApi } from "./chunked-api.ts";
+import { withoutCaptureContext } from "./capture-context.ts";
 
 import {
   DEFAULT_IDLE_THRESHOLD_MS as ANALYZER_DEFAULT_IDLE_THRESHOLD_MS,
@@ -415,7 +416,7 @@ function parseIngestInput(input: unknown): ParseResult {
   if (unexpected.length > 0) return { ok: false, errors: unexpected.map((key) => `unexpected top-level field ${key}`) };
   return {
     ok: true,
-    record: { manifest: input.manifest as RecordManifest, events: input.events as EventLog },
+    record: { manifest: withoutCaptureContext(input.manifest) as RecordManifest, events: input.events as EventLog },
     observation: input.observation as ObservationBindingRequest | undefined,
   };
 }
@@ -463,7 +464,6 @@ const PUBLIC_MANIFEST_FIELDS = new Set([
   "record_hash",
   "session_id",
   "producer",
-  "capture_context",
   "text_binding",
   "event_count",
   "duration_ms",

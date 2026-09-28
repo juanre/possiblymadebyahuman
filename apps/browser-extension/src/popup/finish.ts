@@ -1,4 +1,4 @@
-import type { CaptureContextRedactions, SessionId } from "../../../../packages/producer-core/src/index.ts";
+import type { SessionId } from "../../../../packages/producer-core/src/index.ts";
 import type { BackgroundResponse, ContentToBackground, FinishScopePreview } from "../lib/messages.ts";
 
 export type Send = (message: ContentToBackground) => Promise<BackgroundResponse>;
@@ -9,7 +9,7 @@ export type FinishOutcome =
 
 // Freeze/flush and binding are one worker-owned operation. A missing requested
 // binding NEVER reaches sign_session; process-only is a separate human choice.
-export async function finishRecord(send: Send, sessionId: SessionId, bind: boolean, redactions: CaptureContextRedactions, scopeToken?: string): Promise<FinishOutcome> {
+export async function finishRecord(send: Send, sessionId: SessionId, bind: boolean, scopeToken?: string): Promise<FinishOutcome> {
   const prepared = await send({ kind: "prepare_finish", session_id: sessionId, bind, ...(bind && scopeToken ? { expected_scope_token: scopeToken } : {}) });
   if (prepared.kind !== "prepare_finish_result") {
     return { kind: "response", response: prepared };
@@ -24,7 +24,6 @@ export async function finishRecord(send: Send, sessionId: SessionId, bind: boole
     response: await send({
       kind: "sign_session", session_id: sessionId,
       ...(prepared.text_binding ? { text_binding: prepared.text_binding } : {}),
-      ...(Object.keys(redactions).length ? { capture_context_redactions: redactions } : {}),
     }),
   };
 }

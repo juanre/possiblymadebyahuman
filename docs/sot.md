@@ -61,6 +61,27 @@ corresponds to; a restored draft resumes without a capture gap only when that
 tag matches the journal, and otherwise its next edit starts after a gap. One
 tab at a time owns the drafts. Public records remain plaintext-free.
 
+Capture context removal amendment, 28 September 2026: the owner requires that
+records store nothing about where or how the text was written. The product
+signs the writing process; the only way to be sure nothing identifying leaks
+is to not store it. Consequences: the public manifest has no
+`capture_context`, and `packages/format` rejects one ("capture_context is not
+a public manifest field"). No page URL or title, public label, site or host,
+field kind, surface, Emacs buffer name or major mode is published. The ingest
+API discards `capture_context` sent by producers released before this change,
+on whole-record and chunked uploads, and never stores or returns it. Migration
+`008_remove_capture_context.sql` cleared it from every stored record and
+staged upload; it was never part of the record hash, so every record still
+verifies. The extension no longer reads the page title and its finish review
+has no public-context choices; private draft names and saved-link history stay
+local. `/write` attaches no label or URL. Emacs sends no buffer name or major
+mode and asks no capture-context questions. The record page summary no longer
+names the tool or site, and Technical details has no capture-context section.
+Producer sessions keep a local `{ surface }` tag in `SessionRecord.capture_context`
+that is never uploaded. The manifest still names the producer (`producer.id`,
+`producer.version`, `producer.capabilities`). Section 5 and the sections below
+that mention capture-context review are amended accordingly.
+
 ---
 
 ## 1. Product promise
@@ -135,7 +156,7 @@ Owns:
 - event mutation types
 - record manifest types
 - producer info types
-- capture context types
+- ~~capture context types~~ (removed by the capture context removal amendment; the format rejects `capture_context`)
 - source enum
 - capability enum
 - canonical JSON serialization
@@ -145,7 +166,7 @@ Owns:
 - content-blind process-length validation using Unicode codepoint offsets, with explicit JSON `null` for unknown process measurements
 - the format `0.2`/`0.3` text binding: `canon-letters/0.1` canonicalization, the salted commitment, and sealing the binding into `record_hash` (normative detail in `docs/text-binding.md` and `docs/spec/canonicalization.md`)
 - the format `0.3` final seal over elapsed finish time, optional `parent_record`, and optional text binding, while reusing the `0.2` event-chain domain to preserve checkpoints and keeping historical hashes unchanged
-- bounded metadata: `capture_context` accepts only its documented keys with capped string lengths, `attestations` only small typed objects with field names capped at 64 characters, producer id/version capped at 128 characters with no extra producer keys, counts/offsets within the 32-bit storage range, and elapsed millisecond fields within the JavaScript safe-integer range
+- bounded metadata: `capture_context` is rejected as a public manifest field, `attestations` only small typed objects with field names capped at 64 characters, producer id/version capped at 128 characters with no extra producer keys, counts/offsets within the 32-bit storage range, and elapsed millisecond fields within the JavaScript safe-integer range
 
 Does not own:
 
@@ -203,7 +224,7 @@ Owns:
 - wall-clock-anchored event timeline (idle gaps preserved)
 - content-blind manifest construction via `packages/format`
 - session state machine (`active` → `signing` → `uploading` → `uploaded` | `failed_upload`)
-- capture-context redaction helpers (URL query/hash strip, title/field-kind omit)
+- ~~capture-context redaction helpers (URL query/hash strip, title/field-kind omit)~~ removed by the capture context removal amendment; sessions keep only a local `{ surface }` tag that is never uploaded
 - configurable TTL sweep; the extension disables draft expiry and retains uploaded-record references indefinitely, without events or checkpoint tokens after cleanup; `/write` also retains drafts and saved links without automatic expiry
 - server-observed checkpoint orchestration: incremental BLAKE3 chain advance per event, activity-gated cadence (first mutation immediate; otherwise 50-event delta-from-last-commit OR 60s since last attempt with at least one new event; no idle heartbeats), single-in-flight with one queued coalescing slot, a 30-second attempt deadline (including response-body reads), immediate serialized persistence of checkpoint outcomes, exponential 1s→60s backoff for transient/rate-limited responses, hard `diverged` pin for 409/400, observation reset on 404 `observation_unavailable`, commitment retention capped at 32 (oldest anchor + last 31), explicit `flushObservation()` before upload (after freezing and persisting the signed record in extension 0.3.0) that completes observation of a session with at least one commitment (final checkpoint over the uncommitted tail, plus one more round for events that arrive while it is in flight; at most two rounds) and leaves a never-committed session alone, and a `getObservationEnvelope()` accessor that yields the `(observed_session_id, token)` binding for `POST /api/records` when a commitment exists and the session has not diverged, `{ state: "unobserved" }` when it has no commitment or is `diverged`, and `null` when no checkpoint adapter is wired
 - local observation state vocabulary (`disabled` / `unknown` / `known` / `partial` / `diverged`) distinct from the public wire vocabulary on records (`observed` / `partial` / `unobserved` / `not_requested`)
@@ -312,7 +333,7 @@ Owns:
 - durable unsigned captures and saved links, retained until explicit local removal
 - sign/freeze/upload/copy-link flow
 - uploaded event/token cleanup after the saved link is durably retained
-- capture-context prompt review before upload; private card names are separate from the public label
+- ~~capture-context prompt review before upload; private card names are separate from the public label~~ removed by the capture context removal amendment; private card names stay local and nothing about the page or site is published
 - exact focused-editor routing scoped to the panel’s browser window and active tab; focus alone never authorizes capture
 - compact saved history with search, paging, link export and explicit local removal
 - format 0.3 signed finish and linked continuation, shared in correctness with the other producers
@@ -328,7 +349,7 @@ Owns:
 - buffer/session status
 - sign-buffer command
 - conformant event logs (new sessions use format `0.3`; frozen legacy uploads retain their format)
-- capture-context prompts/redaction before upload
+- ~~capture-context prompts/redaction before upload~~ removed by the capture context removal amendment; no buffer name or major mode is sent
 - server-observed checkpoint orchestration with the `packages/producer-core` cadence and state machine (first event immediate; 50-event delta or 60 s with new events; no idle heartbeats; single in-flight plus one queued slot; 30 s attempt watchdog; 1 s→60 s backoff; `diverged` on 409/400; reset on 404 `observation_unavailable`; up to two flush rounds of an already-observed session before sign), with chain tips advanced from the last known tip by the local `scripts/chain-tip.mjs` helper from public events only
 - observation binding on upload: `(observed_session_id, token)` when a checkpoint succeeded and the session is not diverged, explicit `unobserved` when observation was requested but never succeeded or diverged (the upload message says so), absent when `pmbah-observe-process` is nil
 - one session per buffer, kept across major-mode changes and `revert-buffer` (permanent-local state)
@@ -339,7 +360,7 @@ Owns:
 
 All v0 producers record the writing process captured after a user starts a session. They do not silently wrap pre-existing document content into a new record scope.
 
-- **Emacs** may enable `pmbah-mode` in a non-empty buffer. It records only mutations after capture starts, using Emacs' absolute positions and lengths for those later mutations. Its helper receives only process metadata (a private journal descriptor, producer info, capture context, duration), not inserted text, text hashes-for-anything-else, initial snapshots/baselines, or text replay fixtures. **Local transient-binding exception:** at sign time the helper may receive the active region when `use-region-p` is true, otherwise the whole buffer, *solely* to compute the approved content-blind text binding (the `canon-letters/0.1` commitment) locally via the shared `packages/format` implementation. The helper must discard that text without persisting, logging, replaying, uploading, or passing it onward; only the sealed binding object (`scheme`, `canonical_length`, `commitment`) and the record survive. The text never leaves the user's machine — this is a local-compute exception, not a storage-policy exception, and plaintext storage/upload remains forbidden.
+- **Emacs** may enable `pmbah-mode` in a non-empty buffer. It records only mutations after capture starts, using Emacs' absolute positions and lengths for those later mutations. Its helper receives only process metadata (a private journal descriptor, producer info, duration), not inserted text, text hashes-for-anything-else, initial snapshots/baselines, or text replay fixtures. **Local transient-binding exception:** at sign time the helper may receive the active region when `use-region-p` is true, otherwise the whole buffer, *solely* to compute the approved content-blind text binding (the `canon-letters/0.1` commitment) locally via the shared `packages/format` implementation. The helper must discard that text without persisting, logging, replaying, uploading, or passing it onward; only the sealed binding object (`scheme`, `canonical_length`, `commitment`) and the record survive. The text never leaves the user's machine — this is a local-compute exception, not a storage-policy exception, and plaintext storage/upload remains forbidden.
 - **Browser extension** requires explicit start in an editor for a new independent session; existing text does not prevent starting. Only subsequent mutations are captured. No initial text or length baseline is imported, so a session started in a non-empty editor must preserve unknown total document length rather than infer an empty starting document. Explicit resumption or linked continuation may attach to a non-empty editor on the same site origin; missing edits remain unknown and are never reconstructed. It never enrolls another field by heuristic matching. An additional editor may explicitly join the same active document session; this is a user choice, not an automatic inference. Reload, full-document navigation, stop, and finish retire capture authorization. Historical local drafts remain stopped. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths. Normal extension publication includes a text binding without an opt-out checkbox. If its scope is unavailable or computation fails, offer cancellation or an explicit editing-activity-only fallback. At sign time, the content script may transiently read selected text in the active field/editor, or all current content of that field/editor when no in-field selection is available, solely to compute the content-blind binding commitment; only the binding object may cross to the service worker/upload. It must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
 - **`/write` first-party page** keeps a list of drafts. Each draft's text is saved only in the browser, in a database separate from the content-blind session journal, and restored when the draft is reopened; see the /write drafts amendment above. A new draft starts from an empty textarea. At sign time, if binding is enabled, it binds selected text in the writing canvas, or all current canvas content when nothing is selected.
 - **`packages/producer-core`** accepts only public mutation shapes and session metadata. It must not require plaintext, final text, inserted text, text hashes, or text replay to sign/verify a record.
@@ -387,7 +408,6 @@ Manifest includes:
     "version": "0.1.0",
     "capabilities": ["timing", "source_attribution", "selection", "pause_fidelity", "keystroke_level"]
   },
-  "capture_context": {},
   "text_binding": { "scheme": "canon-letters/0.1", "canonical_length": 1840, "commitment": "b3:..." }, // optional, formats 0.2 and 0.3
   "event_count": 1429,
   "duration_ms": 1384502,
@@ -403,53 +423,20 @@ Manifest includes:
 
 `parent_record` is the public manifest field for multi-session documents. It may be null. In format 0.3 it is part of the final seal and lets a record say “this session continues from that earlier signed record” without pretending one capture covers all writing. `parent_record_hash` is the existing database column name, not a public manifest input field.
 
-Format 0.3 always computes a final record hash over the event tip plus canonical JSON of exactly `{format_version: "0.3", duration_ms, parent_record: hash-or-null, text_binding: object-or-null}`. The event chain uses the literal 0.2 domain. Duration is the safe-integer elapsed time at confirmed finish, at least the last event time; changing it changes the hash. Freeze and persist it before checkpoint flushing or upload, and reuse it unchanged on retry. It is a signed client claim, not a server observation. Calendar metadata and capture context remain outside this final seal. See `docs/spec/canonicalization.md` for normative bytes. Formats 0.1 and 0.2 keep their original hashes; old 0.1 drafts and failed legacy uploads keep their original finalization semantics.
+Format 0.3 always computes a final record hash over the event tip plus canonical JSON of exactly `{format_version: "0.3", duration_ms, parent_record: hash-or-null, text_binding: object-or-null}`. The event chain uses the literal 0.2 domain. Duration is the safe-integer elapsed time at confirmed finish, at least the last event time; changing it changes the hash. Freeze and persist it before checkpoint flushing or upload, and reuse it unchanged on retry. It is a signed client claim, not a server observation. Calendar metadata remains outside this final seal. See `docs/spec/canonicalization.md` for normative bytes. Formats 0.1 and 0.2 keep their original hashes; old 0.1 drafts and failed legacy uploads keep their original finalization semantics.
 
 ---
 
 ## 5. Capture context metadata
 
-Records should store where they were taken whenever possible, while preserving user control and privacy.
+Records carry no capture context. Per the capture context removal amendment (28 September 2026), a record describes the writing process only and stores nothing about where or how the text was written: no page URL or title, label, site or host, field kind, surface, file path, Emacs buffer name or major mode. What is not stored cannot leak.
 
-Add `capture_context` to the manifest and database.
-
-Browser example:
-
-```jsonc
-{
-  "surface": "browser",
-  "label": "Example Forum Thread",
-  "browser": {
-    "url": "https://example.com/thread/123",
-    "title": "Example Forum Thread",
-    "field_kind": "textarea"
-  }
-}
-```
-
-Emacs example:
-
-```jsonc
-{
-  "surface": "emacs",
-  "label": "essay.md",
-  "emacs": {
-    "buffer_name": "essay.md",
-    "major_mode": "markdown-mode"
-  }
-}
-```
-
-Only the documented keys are accepted (`surface`, `label`, `browser.url`, `browser.title`, `browser.field_kind`, `emacs.buffer_name`, `emacs.major_mode`), every value is a string, and lengths are capped, so capture context cannot become a side channel for document text.
-
-Privacy rules:
-
-- The signer must be able to review, edit, or omit capture context before upload. A producer whose context is fixed and non-identifying (`/write` uploads its own URL and a fixed label) documents exactly what it sends instead.
-- Browser URLs should strip query strings and fragments by default.
-- Browser page title may be identifying; show it before upload.
-- Emacs buffer names may be identifying; show them before upload.
-- Absolute local file paths should not be uploaded by default.
-- The frontend should present capture context as provenance context, not as proof of authorship.
+- The public manifest has no `capture_context`; `packages/format` rejects it as an unknown public manifest field.
+- The ingest API discards `capture_context` sent by producers released before the amendment, on `POST /api/records` and on chunked `/api/record-uploads`, before validation and storage. It is never stored or returned. It was never part of the record hash, so those uploads still verify.
+- Migration `008_remove_capture_context.sql` set `records.capture_context` to null for every stored record and removed the key from staged `record_uploads` manifests.
+- Producers may keep a local `{ surface }` tag on a session (`SessionRecord.capture_context`, for example `"browser"` or `"web-draft"`) to route their own sessions. It never leaves the producer.
+- Private draft names and saved-link history (site and link) stay in the browser.
+- The record page shows no capture context and its summary does not name the tool or site.
 
 ---
 
@@ -538,7 +525,7 @@ producer_id              text not null
 producer_version         text not null
 producer_capabilities    jsonb not null
 
-capture_context          jsonb null
+capture_context          jsonb null # always null since migration 008; code no longer reads or writes it; to be dropped in a later release
 
 event_count              integer not null
 duration_ms              bigint not null
@@ -719,7 +706,7 @@ A producer binds `(observed_session_id, token)` only for a session with at least
 
 Backend behavior:
 
-1. Validate schema, including the bounded `capture_context` and `attestations` shapes, 32-bit count/offset ranges, and non-negative safe-integer elapsed milliseconds (`t` and `duration_ms`, at most 9,007,199,254,740,991). Durations and derived delay/active/idle statistics use PostgreSQL `bigint`; actual dates remain `timestamptz`. Widening the time range preserves existing canonical bytes and hashes. The separately versioned format 0.3 final seal follows its own verification rules.
+1. Discard any `capture_context` a legacy producer sent, then validate schema, including the bounded `attestations` shape, 32-bit count/offset ranges, and non-negative safe-integer elapsed milliseconds (`t` and `duration_ms`, at most 9,007,199,254,740,991). Durations and derived delay/active/idle statistics use PostgreSQL `bigint`; actual dates remain `timestamptz`. Widening the time range preserves existing canonical bytes and hashes. The separately versioned format 0.3 final seal follows its own verification rules.
 2. Verify events are content-blind: no plaintext or text-derived field is accepted, with the single exception of the format `0.2`/`0.3` `text_binding` commitment (§4).
 3. Recompute canonical event bytes.
 4. Recompute BLAKE3 hash chain.
@@ -833,7 +820,6 @@ RecordPage / PagedRecordPage
     TimingAndCounts
     SignalList
       SignalCard
-    CaptureContextSummary
 ```
 
 ### 11.1 Record page content
@@ -841,11 +827,11 @@ RecordPage / PagedRecordPage
 The page should show, in this order:
 
 1. A top-level alert, only when a completed hash or format check fails, linking to the signature section.
-2. Header: the title; one strictly descriptive summary sentence (where it was written, naming the site for a browser text field, the signed or estimated span, and the publication date); key facts (writing time, which leaves out pauses of 30 seconds or more, edits, characters deleted, pastes, largest insertion, length, and the signed text size in letters and digits when a document is bound); a check line saying whether the hash chain was checked in the reader's browser and what the server received, linking to the signature section; and one limit caption. Unknown values read "not measured".
+2. Header: the title; one strictly descriptive summary sentence (the signed or estimated span and the publication date, for example "Written over 27 seconds and published 27 September 2026."; it names neither the tool nor the site); key facts (writing time, which leaves out pauses of 30 seconds or more, edits, characters deleted, pastes, largest insertion, length, and the signed text size in letters and digits when a document is bound); a check line saying whether the hash chain was checked in the reader's browser and what the server received, linking to the signature section; and one limit caption. Unknown values read "not measured".
 3. Edit timeline. Pauses of 5 minutes or more, including waits before the first edit and before signing, are cut from the time axis and labelled with their length; the end of the axis names a signed finish.
 4. Writing rhythm: gaps between edits on a log scale from 16 ms to 10 s, with separate bars below and above.
 5. Document check, or a statement that no document was bound.
-6. Technical details, collapsed: signature & details, timing and counts (signed or reported duration, editing span, active and paused time between edits, delay summary, typing and operation counts, unknown sources), analyzer signals, capture context.
+6. Technical details, collapsed: signature & details, timing and counts (first and last checkpoint received, or the upload time and inferred start when unobserved; signed or reported duration, editing span, active and paused time between edits, delay summary, typing and operation counts, unknown sources), analyzer signals.
 
 Each measurement appears once outside the technical details.
 
@@ -917,17 +903,17 @@ Surfaces:
 - An explicit start action on a chosen editor, with context-menu and accessible keyboard/toolbar paths.
 - Extension toolbar status and browser-owned session controls. A browser side panel hosts those controls; persistent controls over the host page are prohibited.
 - Sign modal: “Finish & get link.”
-- Capture-context review/redaction before upload.
+- ~~Capture-context review/redaction before upload.~~ Removed by the capture context removal amendment; the review states that nothing about the page or site is published.
 - Actionable explanations that distinguish editor identity, available measurements and server observation; no raw `degraded` or `collision` labels.
 - Current-editor section follows exact editor focus within the panel’s window/active tab; inactive fields explicitly show no capture. Other drafts stay separate.
-- Private Rename controls use site/field metadata and a stable distinguishing number for defaults; they never read document contents to invent names or automatically publish names as labels.
+- Private Rename controls use site/field metadata and a stable distinguishing number for defaults; they never read document contents to invent names, and names are never published.
 - Saved records appear last in collapsed, searchable history with bounded pages. Export all links includes private names and link metadata but no document text, event logs or checkpoint tokens. Explicit removal changes local history only.
 - A single latest saved-record result shows the full URL, Open record and Copy link until Done; separate upload and clipboard outcomes. History retains the link afterward.
 
 Behavior:
 
 1. Start only after explicit activation of the chosen editor. Unchosen fields create no sessions, capture text measurements or send checkpoints. Define activation, stop, reload and continuation behavior explicitly; local retention must not silently enroll fields again.
-2. The user finishes when they want a link and reviews context and binding. The target stays pinned during review. Show “Selected text” or “Whole field” separately; if scope changes, require renewed confirmation. Normal confirmation computes a text binding; no opt-out checkbox or long text-check explanation appears in the panel. Keep scope wording generic and document text-check limitations in the public guide. An unavailable scope or failed binding must pause for Cancel or an explicit process-only choice; it cannot be silently omitted. An immutable stopped snapshot cannot be resampled from later edits, so do not offer a dead-end binding retry. Upload failures can retry the same frozen record.
+2. The user finishes when they want a link and reviews the binding. The target stays pinned during review. Show “Selected text” or “Whole field” separately; if scope changes, require renewed confirmation. Normal confirmation computes a text binding; no opt-out checkbox or long text-check explanation appears in the panel. Keep scope wording generic and document text-check limitations in the public guide. An unavailable scope or failed binding must pause for Cancel or an explicit process-only choice; it cannot be silently omitted. An immutable stopped snapshot cannot be resampled from later edits, so do not offer a dead-end binding retry. Upload failures can retry the same frozen record.
 3. Signing freezes and durably persists the session and format 0.3 elapsed finish time before network work. No synthetic mutation is added for waiting.
 4. Extension computes the public process hash chain locally.
 5. Extension uploads content-free manifest/events.
@@ -964,7 +950,7 @@ UX:
 - session status reports event count, duration, observation state with the last checkpoint failure, and API URL
 - several buffers record at once, each in its own session; an opted-in file automatically resumes on reopening while explicitly paused files stay paused; recovery errors keep the buffer read-only with `PMBAH:recover!` and preserve saved history
 - sign-buffer command, freezing and saving the record before flushing the final checkpoint and uploading
-- capture-context review/redaction before upload
+- ~~capture-context review/redaction before upload~~ removed by the capture context removal amendment
 - upload returns and copies short URL
 
 ---
@@ -1139,7 +1125,7 @@ Rules:
 
 - Capture text fields/contenteditable.
 - Local session store and consumer-specific retention policy.
-- Capture-context prompt review.
+- ~~Capture-context prompt review.~~ Removed by the capture context removal amendment.
 - Sign/freeze/upload/copy-link flow.
 - Conformance pass.
 
@@ -1147,7 +1133,7 @@ Rules:
 
 - Minor mode capture.
 - Sign-buffer/upload flow.
-- Capture-context prompt review.
+- ~~Capture-context prompt review.~~ Removed by the capture context removal amendment.
 - Conformance pass.
 
 ---

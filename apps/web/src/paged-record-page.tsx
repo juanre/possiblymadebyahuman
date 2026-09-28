@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  CaptureContextSummary,
   DATA_INK,
   RecordFooter,
   RecordHeader,
@@ -148,7 +147,6 @@ export function PagedRecordPage({ summary }: { summary: RecordSummary }) {
         <VerificationPanel record={record} verification={verification} />
         <TimingAndCounts record={record} />
         <SignalList signals={record.signals} />
-        <CaptureContextSummary record={record} />
       </TechnicalDetails>
       <RecordFooter />
     </main>

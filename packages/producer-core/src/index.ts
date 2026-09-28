@@ -35,16 +35,15 @@ export type {
   ProducerIdentity,
   SessionId,
   SessionObservation,
+  CaptureSurface,
   SessionRecord,
   SessionState,
   SignedRecordDraft,
   SignOptions,
 } from "./types.ts";
 
-export { buildCaptureContext, redactCaptureContext, stripQueryAndHash } from "./capture-context.ts";
 export { deriveMutationFromMeasuredInput, lineBreakInsertedCodepoints, sourceFromInputType, unknownMutation } from "./measured-input.ts";
 export type { MeasuredInputIntent } from "./measured-input.ts";
-export type { CaptureContextRedactions } from "./capture-context.ts";
 export { advanceChain, appendBufferMutation, durationMs } from "./timeline.ts";
 export {
   DEFAULT_TTL_MS,
