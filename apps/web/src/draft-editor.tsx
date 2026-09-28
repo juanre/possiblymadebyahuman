@@ -207,10 +207,17 @@ export function DraftEditor({ registry, store, draft, createSession, onDraftChan
       setMessage("Finish the current edit or composition before signing.");
       return;
     }
-    if (session.state === "active" && bindDocument && (captureGap.current?.() || registry.get(session.session_id)?.pending_observation_gap)) {
-      setStatus("ready");
-      setMessage("Part of this draft was written while it was not being recorded. Make one more edit before binding the text, or sign without binding it.");
-      return;
+    // Text that changed without being captured is recorded as one change of
+    // unknown position and size; signing then reaches the current text.
+    if (session.state === "active" && (captureGap.current?.() || registry.get(session.session_id)?.pending_observation_gap)) {
+      try {
+        setSession(registry.recordUnrecordedChange(session.session_id));
+        await registry.persist();
+      } catch (error) {
+        setStatus("storage_error");
+        setMessage(`The writing history could not be saved in this browser: ${errorText(error)}`);
+        return;
+      }
     }
     setStatus("signing");
     setMessage("Publishing the signed record…");

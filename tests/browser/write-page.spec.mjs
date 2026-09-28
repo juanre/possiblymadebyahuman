@@ -653,7 +653,7 @@ test('/write seals trailing idle time and preserves the saved parent when contin
 });
 
 for (const recordAnotherEdit of [false, true]) {
-  test(`/write rejects an unobserved final length change and recovers with another edit=${recordAnotherEdit}`, async ({ page }) => {
+  test(`/write publishes an unobserved change with the text check, recording it as an unknown change unless another edit follows=${recordAnotherEdit}`, async ({ page }) => {
     const uploads = [];
     const canvas = await setupRecoveryUpload(page, route => {
       const payload = route.request().postDataJSON();
@@ -661,23 +661,15 @@ for (const recordAnotherEdit of [false, true]) {
       return successfulUpload(route, payload);
     });
     await canvas.evaluate(element => { element.value += ' UNOBSERVED'; });
+    if (recordAnotherEdit) await canvas.pressSequentially('n');
     await finishWrite(page);
-    await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('written while it was not being recorded');
-    await expect(canvas).toBeEditable();
-    expect(uploads).toEqual([]);
-    if (recordAnotherEdit) {
-      await canvas.pressSequentially('n');
-      await finishWrite(page);
-    } else {
-      await page.getByRole('button', { name: 'Sign', exact: true }).click();
-      await page.getByRole('checkbox').uncheck();
-      await page.getByRole('button', { name: 'Sign & publish' }).click();
-    }
     await expect(page.getByRole('link', { name: 'Open record' })).toBeVisible();
     expect(uploads).toHaveLength(1);
-    expect(Boolean(uploads[0].manifest.text_binding)).toBe(recordAnotherEdit);
-    expect(uploads[0].events).toHaveLength('recover fixture'.length + Number(recordAnotherEdit));
-    if (recordAnotherEdit) expect(uploads[0].events.at(-1).pos).toBeNull();
+    expect(Boolean(uploads[0].manifest.text_binding)).toBe(true);
+    expect(uploads[0].events).toHaveLength('recover fixture'.length + 1);
+    const last = uploads[0].events.at(-1);
+    if (recordAnotherEdit) expect({ pos: last.pos, ins_len: last.ins_len, source: last.source }).toEqual({ pos: null, ins_len: 1, source: 'typing' });
+    else expect({ op: last.op, pos: last.pos, del_len: last.del_len, ins_len: last.ins_len, source: last.source }).toEqual({ op: 'replace', pos: null, del_len: null, ins_len: null, source: 'unknown' });
     expect(verifyRecord(uploads[0]).valid).toBe(true);
   });
 }
