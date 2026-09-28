@@ -335,7 +335,9 @@ async function summaryFixture() {
   record.stats.largest_atomic_insert_codepoints = 12;
   record.stats.observed_final_length = 1204;
   record.stats.active_time_ms = 18 * 60_000;
-  record.observation = { state: "observed", observed_session_id: null, commitments: [], checkpoint_count: 0, first_observed_at: null, last_observed_at: null, server_observed_span_ms: null };
+  record.stats.delete_op_count = 41;
+  record.stats.deleted_codepoints_total = 1310;
+  record.observation = { state: "observed", observed_session_id: null, commitments: [], checkpoint_count: 12, first_observed_at: null, last_observed_at: null, server_observed_span_ms: 23 * 60_000 };
   return record;
 }
 
@@ -343,6 +345,8 @@ test("record summary sentence says where and over what span, leaving the numbers
   const { describeRecordSummary } = await import("../apps/web/src/record-utils.ts");
   const record = await summaryFixture();
   assert.equal(describeRecordSummary(record), "Written in Emacs over 24 minutes and published 28 May 2026.");
+  record.manifest.capture_context = { surface: "browser", browser: { url: "https://forum.example.org/t/123?reply=1" } };
+  assert.equal(describeRecordSummary(record), "Written in a text field on forum.example.org over 24 minutes and published 28 May 2026.");
   record.manifest.capture_context = { surface: "browser" };
   assert.equal(describeRecordSummary(record), "Written in a browser text field over 24 minutes and published 28 May 2026.");
   record.manifest.capture_context = { surface: "web-draft" };
@@ -370,28 +374,36 @@ test("record facts show each measurement once, with writing time that leaves out
   assert.deepEqual(recordFacts(record), [
     { label: "Writing time", value: "18 minutes" },
     { label: "Edits", value: "312" },
+    { label: "Deleted", value: "1,310 characters" },
     { label: "Pastes", value: "none" },
     { label: "Largest insertion", value: "12 characters" },
     { label: "Length", value: "1,204 characters" },
-    { label: "Server-confirmed timing", value: "yes, whole session" },
   ]);
   record.manifest.text_binding = { scheme: "canon-letters/0.1", commitment: "b3:00", canonical_length: 950 };
-  assert.deepEqual(recordFacts(record).find(fact => fact.label === "Signed text"), { label: "Signed text", value: "950 letters and digits" });
-  assert.deepEqual(recordFacts(record).map(fact => fact.label).slice(4, 7), ["Length", "Signed text", "Server-confirmed timing"]);
+  assert.deepEqual(recordFacts(record).at(-1), { label: "Signed text", value: "950 letters and digits" });
   record.manifest.format_version = "0.2";
   record.stats.active_time_ms = 400;
   record.stats.paste_event_count = 2;
   record.stats.largest_atomic_insert_codepoints = null;
   record.stats.observed_final_length = null;
+  record.stats.delete_op_count = 1;
+  record.stats.deleted_codepoints_total = null;
   const facts = Object.fromEntries(recordFacts(record).map(({ label, value }) => [label, value]));
+  assert.equal(facts.Deleted, "not measured");
   assert.equal(facts["Writing time"], "under a second");
   assert.equal(facts.Pastes, "2");
   assert.equal(facts["Largest insertion"], "not measured");
   assert.equal(facts.Length, "not measured");
-  const timing = (state) => Object.fromEntries(recordFacts({ ...record, observation: { ...record.observation, state } }).map(({ label, value }) => [label, value]))["Server-confirmed timing"];
-  assert.equal(timing("partial"), "partly");
-  assert.equal(timing("unobserved"), "no");
-  assert.equal(timing("not_requested"), "not requested");
+});
+
+test("the server's part in a record is described in one plain sentence", async () => {
+  const { describeObservation } = await import("../apps/web/src/record-utils.ts");
+  const observation = { state: "observed", commitments: [], checkpoint_count: 12, first_observed_at: null, last_observed_at: null, server_observed_span_ms: 23 * 60_000 };
+  assert.equal(describeObservation(observation), "The server received 12 checkpoints over 23 minutes while it was written.");
+  assert.equal(describeObservation({ ...observation, checkpoint_count: 1, server_observed_span_ms: 0 }), "The server received 1 checkpoint while it was written.");
+  assert.equal(describeObservation({ ...observation, state: "partial" }), "The server received 12 checkpoints over 23 minutes, covering only part of the writing.");
+  assert.equal(describeObservation({ ...observation, state: "unobserved" }), "The server received no checkpoints while it was written.");
+  assert.equal(describeObservation({ ...observation, state: "not_requested" }), "The writing tool did not send the server checkpoints.");
 });
 
 test("signed text length is phrased as letters and digits", async () => {

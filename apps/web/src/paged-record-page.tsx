@@ -111,7 +111,7 @@ export function PagedRecordPage({ summary }: { summary: RecordSummary }) {
   return (
     <main className="page-shell record-page">
       <VerificationAlert verification={verification} onShowDetails={() => setDetailsOpen(true)} />
-      <RecordHeader record={record} />
+      <RecordHeader record={record} verification={verification} checking={running} onShowDetails={() => setDetailsOpen(true)} />
       {overview ? (
         <StreamedOverview overview={overview} durationMs={summary.manifest.duration_ms} />
       ) : (

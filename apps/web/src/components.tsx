@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildActivityColumns, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeRecordSummary, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
+import { buildActivityColumns, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeObservation, describeRecordSummary, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 const SITE_NAME = "possiblymadebyahuman";
@@ -80,7 +80,9 @@ type HeaderSource = Pick<RecordApiResponse, "manifest" | "stats" | "observation"
 
 // The header keeps the same geometry while the record loads: the title is
 // reserved but hidden, and placeholders stand in for the summary and facts.
-export function RecordHeader({ record }: { record?: HeaderSource }) {
+export function RecordHeader({ record, verification, checking = false, onShowDetails }: {
+  record?: HeaderSource; verification?: VerificationState; checking?: boolean; onShowDetails?: () => void;
+}) {
   return (
     <header className={`record-header${record ? "" : " record-header-loading"}`}>
       <HomeLink />
@@ -93,6 +95,7 @@ export function RecordHeader({ record }: { record?: HeaderSource }) {
               <div key={fact.label} className="record-fact"><dt>{fact.label}</dt><dd>{fact.value}</dd></div>
             ))}
           </dl>
+          <RecordCheck record={record} verification={verification} checking={checking} onShowDetails={onShowDetails} />
         </>
       ) : (
         <>
@@ -105,6 +108,28 @@ export function RecordHeader({ record }: { record?: HeaderSource }) {
         <a href="/docs/what-pmbah-does/">How records work</a>
       </p>
     </header>
+  );
+}
+
+// The reader's own check of the record, and what the server saw, stated where
+// the reader looks first. A failure is also raised by VerificationAlert.
+function RecordCheck({ record, verification, checking, onShowDetails }: {
+  record: HeaderSource; verification?: VerificationState; checking: boolean; onShowDetails?: () => void;
+}) {
+  const state = checking ? "checking" : !verification ? "loading" : verification.ok ? "ok" : verification.pending ? "pending" : "failed";
+  const headline = {
+    checking: "Checking the hash chain in your browser…",
+    loading: "Checking the hash chain in your browser…",
+    ok: "Hash chain checked in your browser.",
+    pending: "Not checked yet: this long record is checked in your browser when you choose Verify full record below.",
+    failed: "Hash chain check failed.",
+  }[state];
+  return (
+    <p className={`record-check record-check-${state}`}>
+      {state === "ok" && <svg className="record-check-mark" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+      <strong>{headline}</strong> {describeObservation(record.observation)}{" "}
+      {onShowDetails && <a href={`#${SIGNATURE_HEADING_ID}`} onClick={(event) => { event.preventDefault(); revealSignatureDetails(onShowDetails); }}>How it was checked</a>}
+    </p>
   );
 }
 
@@ -755,39 +780,44 @@ const FP_TICKS: { ms: number; label: string }[] = [
 
 export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   const [chartRef, W] = useContentWidth<SVGSVGElement>(FP_FALLBACK_W);
+  const hatchId = `rhythm-hatch-${useId().replace(/:/g, "")}`;
   const histogram = useMemo(() => buildDelayHistogram(record.events), [record.events]);
   if (histogram.total === 0) return null;
   const { bins, underflow, overflow } = histogram;
   const logMin = Math.log10(RHYTHM_MIN_MS);
   const span = Math.log10(RHYTHM_MAX_MS) - logMin;
   const maxCount = Math.max(underflow, overflow, ...bins.map(bin => bin.count), 1);
-  const H = 150, padL = 54, padR = 64, padT = 10, padB = 26;
+  const H = 170, padL = 54, padR = 64, padT = 10, padB = 26;
   const innerW = Math.max(1, W - padL - padR);
   const innerH = H - padT - padB;
   const baseY = padT + innerH;
   const xForMs = (ms: number) => padL + (Math.log10(ms) - logMin) / span * innerW;
   const barWidth = innerW / bins.length;
   const boundaryBarWidth = 24;
+  const pencil = { fill: `url(#${hatchId})`, stroke: "#3d2f17", strokeWidth: 0.8 };
   return (
-    <TechnicalSection title="Writing rhythm">
-      <p className="muted">Gaps between consecutive edits. The middle bars use a log scale from 16ms to 100s; separate bars show shorter and longer gaps. Bar height counts gaps.</p>
+    <section className="record-section writing-rhythm" aria-labelledby="writing-rhythm-heading">
+      <h2 id="writing-rhythm-heading">Writing rhythm</h2>
+      <p className="section-intro">How long the writer paused between one edit and the next. Bar height counts pauses; the scale runs from under 16 milliseconds to over 100 seconds.</p>
       <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of gaps between edits, with separate bars below 16 milliseconds and above 100 seconds">
+        <PencilHatch id={hatchId} />
         {FP_TICKS.map((tick) => (
           <line key={`line-${tick.ms}`} x1={xForMs(tick.ms)} y1={padT} x2={xForMs(tick.ms)} y2={baseY} className="fp-tick-line" />
         ))}
         {bins.map((bin, index) => <rect key={index} className="fp-bin" data-count={bin.count}
           x={padL + index * barWidth} y={baseY - bin.count / maxCount * innerH}
-          width={Math.max(0.5, barWidth - 0.5)} height={bin.count / maxCount * innerH} fill="#8b7355">
+          width={Math.max(0.5, barWidth - 1)} height={bin.count / maxCount * innerH} {...(bin.count > 0 ? pencil : { fill: "none" })}>
           <title>{`${bin.count} gaps, approximately ${formatDuration(Math.round(bin.start))} to ${formatDuration(Math.round(bin.end))}`}</title>
         </rect>)}
         <rect className="fp-underflow" data-count={underflow} x={8} y={baseY - underflow / maxCount * innerH}
-          width={boundaryBarWidth} height={underflow / maxCount * innerH} fill="#8b7355">
+          width={boundaryBarWidth} height={underflow / maxCount * innerH} {...(underflow > 0 ? pencil : { fill: "none" })}>
           <title>{`${underflow} gaps shorter than 16ms, including simultaneous edits`}</title>
         </rect>
         <rect className="fp-overflow" data-count={overflow} x={W - 36} y={baseY - overflow / maxCount * innerH}
-          width={boundaryBarWidth} height={overflow / maxCount * innerH} fill="#8b7355">
+          width={boundaryBarWidth} height={overflow / maxCount * innerH} {...(overflow > 0 ? pencil : { fill: "none" })}>
           <title>{`${overflow} gaps longer than 100 seconds`}</title>
         </rect>
+        <line x1={0} y1={baseY} x2={W} y2={baseY} stroke="#3d2f17" strokeWidth={1} />
         <text x={20} y={H - 6} className="fp-label" textAnchor="middle">&lt;16ms</text>
         {FP_TICKS.map((tick) => (
           <text key={`text-${tick.ms}`} x={xForMs(tick.ms)} y={H - 6} className="fp-label" textAnchor="middle">{tick.label}</text>
@@ -795,7 +825,7 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
         <text x={W - 24} y={H - 6} className="fp-label" textAnchor="middle">&gt;100s</text>
       </svg>
       <p className="muted rhythm-overflow-summary">{overflow} {overflow === 1 ? "gap longer" : "gaps longer"} than 100 seconds. {underflow} shorter than 16ms, including gaps of zero milliseconds.</p>
-    </TechnicalSection>
+    </section>
   );
 }
 
@@ -835,14 +865,14 @@ export function RecordPage({ record }: { record?: RecordApiResponse }) {
   return (
     <main className="page-shell record-page">
       <VerificationAlert verification={verification} onShowDetails={() => setDetailsOpen(true)} />
-      <RecordHeader record={record} />
+      <RecordHeader record={record} verification={verification} onShowDetails={() => setDetailsOpen(true)} />
       <p className="visually-hidden" role="status">{record ? "Writing record loaded." : "Loading writing record…"}</p>
       {record ? <>
         <EditTimeline record={record} />
+        <TimingFingerprint record={record} />
         <TextBindingSection record={record} verification={verification} />
         <TechnicalDetails open={detailsOpen} onToggle={setDetailsOpen}>
           <VerificationPanel record={record} verification={verification} />
-          <TimingFingerprint record={record} />
           <TimingAndCounts record={record} />
           <SignalList signals={record.signals} />
           <CaptureContextSummary record={record} />

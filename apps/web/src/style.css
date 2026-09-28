@@ -162,6 +162,12 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
+.record-check { margin: -8px 0 22px; color: #514a40; font-size: 0.95rem; line-height: 1.5; }
+.record-check strong { color: var(--ink); font-weight: 600; }
+.record-check-ok strong, .record-check-mark { color: #2f6b3a; }
+.record-check-failed strong { color: #a13a3a; }
+.record-check-mark { vertical-align: -2px; margin-right: 6px; }
+.record-check a { white-space: nowrap; }
 .record-limit {
   font-family: var(--serif);
   font-style: italic;
@@ -191,7 +197,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 
 /* The edit timeline is drawn straight onto the graph paper, in pencil, and
    is wider than the reading column. */
-.timeline-chart, .overview-chart, .overview-axis, .activity-strip {
+.timeline-chart, .overview-chart, .overview-axis, .activity-strip, .writing-rhythm .fingerprint-chart {
   display: block;
   margin-inline: calc(50% - min(520px, 50vw - 24px));
 }
@@ -387,6 +393,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 
 /* Writing-rhythm fingerprint — log-bucketed inter-edit delay histogram. */
 .fingerprint-chart { display: block; width: 100%; height: auto; margin: 10px 0 4px; }
+.writing-rhythm .fingerprint-chart { width: auto; margin-top: 20px; }
 .fp-tick-line { stroke: #e3d7c0; stroke-width: 1; }
 .fp-label { fill: #6e665d; font-size: 11px; text-anchor: middle; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
 
@@ -468,7 +475,7 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   .record-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
   .record-summary.record-placeholder { min-height: 6em; }
   .record-facts.record-placeholder { height: 226px; }
-  .timeline-chart, .overview-chart, .overview-axis, .activity-strip { margin-inline: calc(50% - (50vw - 16px)); }
+  .timeline-chart, .overview-chart, .overview-axis, .activity-strip, .writing-rhythm .fingerprint-chart { margin-inline: calc(50% - (50vw - 16px)); }
   .record-section { margin-top: 56px; }
   .measure-grid { grid-template-columns: minmax(0, 1fr) minmax(0, auto); }
   .details { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }

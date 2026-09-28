@@ -375,6 +375,18 @@ const CAPTURE_SURFACE_PHRASES: Record<string, string> = {
   "web-draft": "on the possiblymadebyahuman writing page",
 };
 
+// A text field on another website is named by the site it was on.
+function captureSite(context: RecordApiResponse["manifest"]["capture_context"]): string | null {
+  if (context?.surface !== "browser") return null;
+  const url = (context.browser as { url?: unknown } | undefined)?.url;
+  if (typeof url !== "string") return null;
+  try {
+    return `in a text field on ${new URL(url).hostname}`;
+  } catch {
+    return null;
+  }
+}
+
 // A duration is signed when the record seals its finish time; older formats
 // carry a producer-reported duration, which is presented as an estimate.
 function durationPhrase(record: SummarySource): string {
@@ -401,18 +413,24 @@ export function formatCharacters(count: number | null): string {
  * themselves are in the facts beside it.
  */
 export function describeRecordSummary(record: SummarySource): string {
-  const context = CAPTURE_SURFACE_PHRASES[String(record.manifest.capture_context?.surface ?? "")];
+  const context = captureSite(record.manifest.capture_context) ?? CAPTURE_SURFACE_PHRASES[String(record.manifest.capture_context?.surface ?? "")];
   const written = ["Written", context, durationPhrase(record)].filter(Boolean).join(" ");
   const date = publishedDate(record.manifest.ingested_server_t);
   return `${written}${date ? ` and published ${date}` : ""}.`;
 }
 
-const SERVER_TIMING: Record<string, string> = {
-  observed: "yes, whole session",
-  partial: "partly",
-  unobserved: "no",
-  not_requested: "not requested",
-};
+/** What the server saw while the record was written, in one sentence. */
+export function describeObservation(observation: Pick<RecordApiResponse["observation"], "state" | "checkpoint_count" | "server_observed_span_ms">): string {
+  const count = plural(observation.checkpoint_count, "checkpoint", "checkpoints");
+  const span = observation.server_observed_span_ms;
+  const received = `The server received ${count}${span !== null && span >= 1000 ? ` over ${formatServerObservedSpan(span)}` : ""}`;
+  switch (observation.state) {
+    case "observed": return `${received} while it was written.`;
+    case "partial": return `${received}, covering only part of the writing.`;
+    case "unobserved": return "The server received no checkpoints while it was written.";
+    default: return "The writing tool did not send the server checkpoints.";
+  }
+}
 
 export type RecordFact = { label: string; value: string };
 
@@ -424,11 +442,11 @@ export function recordFacts(record: SummarySource): RecordFact[] {
   return [
     { label: "Writing time", value: readableDuration(stats.active_time_ms) ?? "under a second" },
     { label: "Edits", value: countFormat.format(stats.event_count) },
+    { label: "Deleted", value: formatCharacters(stats.deleted_codepoints_total) },
     { label: "Pastes", value: stats.paste_event_count === 0 ? "none" : countFormat.format(stats.paste_event_count) },
     { label: "Largest insertion", value: formatCharacters(stats.largest_atomic_insert_codepoints) },
     { label: "Length", value: formatCharacters(stats.observed_final_length) },
     ...(binding ? [{ label: "Signed text", value: formatSignedTextLength(binding.canonical_length) }] : []),
-    { label: "Server-confirmed timing", value: SERVER_TIMING[record.observation.state] ?? "not requested" },
   ];
 }
 

@@ -22,7 +22,7 @@ test.describe("public record page", () => {
   test("header summarizes the process in one descriptive sentence and states its limit once", async ({ page }) => {
     const header = page.locator("header.record-header");
     await expect(header.locator(".record-summary")).toHaveText(
-      "Written in a browser text field in under a second (estimated) and published 28 May 2026.",
+      "Written in a text field on example.test in under a second (estimated) and published 28 May 2026.",
     );
     await expect(header.locator(".record-limit")).toContainText("This record shows how the text was edited. Who had the ideas, and who typed them, is for you to judge.");
     const text = (await page.locator("main").innerText()).toLowerCase();
@@ -37,20 +37,30 @@ test.describe("public record page", () => {
     expect(pairs).toEqual([
       ["Writing time", "under a second"],
       ["Edits", "4"],
+      ["Deleted", "1 character"],
       ["Pastes", "1"],
       ["Largest insertion", "6 characters"],
       ["Length", "8 characters"],
-      ["Server-confirmed timing", "yes, whole session"],
     ]);
     await expect(page.getByRole("heading", { name: "Quick facts" })).toHaveCount(0);
     await expect(page.locator(".fingerprint-stats")).toHaveCount(0);
     for (const section of ["header.record-header", "section.edit-timeline"]) await expect(page.locator(section)).not.toContainText("codepoints");
   });
 
+  test("the header says the hash chain was checked here and what the server saw", async ({ page }) => {
+    const check = page.locator("header.record-header .record-check");
+    await expect(check).toContainText("Hash chain checked in your browser.");
+    await expect(check).toContainText("The server received 4 checkpoints over 33 minutes while it was written.");
+    await check.getByRole("link", { name: "How it was checked" }).click();
+    await expect(page.locator("details.technical-details")).toHaveAttribute("open", "");
+    await expect(page.locator(".chain-status.ok")).toBeVisible();
+  });
+
   test("sections follow the reading order, with technical details collapsed last", async ({ page }) => {
     await expect(page.getByRole("heading", { level: 1 })).toHaveText(["Signed writing record"]);
-    await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Edit timeline", "Check a document", "Technical details"]);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Edit timeline", "Writing rhythm", "Check a document", "Technical details"]);
     await expect(page.locator("details.technical-details")).not.toHaveAttribute("open", "");
+    await expect(page.locator("svg.fingerprint-chart")).toBeVisible();
     await expect(region(page, "How this was written")).toHaveCount(0);
   });
 
@@ -236,7 +246,7 @@ test.describe("record with unknown document length", () => {
 
   test("header names the Emacs capture context and the unobserved state", async ({ page }) => {
     await expect(page.locator(".record-summary")).toContainText("Written in Emacs");
-    await expect(page.locator(".record-fact").filter({ hasText: "Server-confirmed timing" }).locator("dd")).toHaveText("no");
+    await expect(page.locator(".record-check")).toContainText("The server received no checkpoints while it was written.");
   });
 
   test("observation status reports the unobserved state", async ({ page }) => {
@@ -261,7 +271,7 @@ test.describe("text binding — bound record", () => {
   });
 
   test("the document check comes right after the timeline", async ({ page }) => {
-    await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Edit timeline", "Check a document", "Technical details"]);
+    await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Edit timeline", "Writing rhythm", "Check a document", "Technical details"]);
   });
 
   test("exact paste of the signed text matches as same wording", async ({ page }) => {
@@ -338,7 +348,7 @@ test.describe("text binding — bound record", () => {
   test("the header gives the signed text's size in letters and digits beside the length", async ({ page }) => {
     const facts = page.locator("header.record-header .record-fact");
     const labels = await facts.locator("dt").allTextContents();
-    expect(labels.slice(4, 7)).toEqual(["Length", "Signed text", "Server-confirmed timing"]);
+    expect(labels.slice(-2)).toEqual(["Length", "Signed text"]);
     await expect(facts.filter({ hasText: "Signed text" }).locator("dd")).toHaveText("95 letters and digits");
     await expect(region(page, "How this was written")).toHaveCount(0);
   });
