@@ -86,7 +86,7 @@ if (!assetText.includes('Writing canvas')) throw new Error('Vite asset missing /
 if (!assetText.includes('Drafting status')) throw new Error('Vite asset missing /write status affordance');
 if (!assetText.includes('Edit timeline')) throw new Error('Vite asset missing edit timeline copy');
 if (!assetText.includes('Signed writing record')) throw new Error('Vite asset missing signed-record copy');
-if (!assetText.includes('is for you to judge')) throw new Error('Vite asset missing the reader-judgment limit statement');
+if (!assetText.includes('This record shows how the text was edited.')) throw new Error('Vite asset missing the record limit statement');
 assertNoPlaintext('Vite asset', assetText);
 
 console.log(JSON.stringify({ ok: true, short_signature: created.short_signature, record_hash: created.record_hash }));

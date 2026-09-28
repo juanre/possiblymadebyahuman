@@ -66,7 +66,7 @@ test("RecordPage source defines required public record sections without verdict 
     "Edit timeline",
     "Technical details",
     "Analyzer signals",
-    "is for you to judge",
+    "This record shows how the text was edited.",
     "Server observed checkpoints.",
     "Partially observed.",
     "Not observed.",

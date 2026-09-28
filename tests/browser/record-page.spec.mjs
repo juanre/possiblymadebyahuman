@@ -24,7 +24,7 @@ test.describe("public record page", () => {
     await expect(header.locator(".record-summary")).toHaveText(
       "Written in a text field on example.test in under a second (estimated) and published 28 May 2026.",
     );
-    await expect(header.locator(".record-limit")).toContainText("This record shows how the text was edited. Who had the ideas, and who typed them, is for you to judge.");
+    await expect(header.locator(".record-limit")).toHaveText("This record shows how the text was edited. How records work");
     const text = (await page.locator("main").innerText()).toLowerCase();
     for (const term of ["human/ai score", "verdict", "humanness", "suspicious", "certificate"]) {
       expect(text.includes(term), `record page leaked evaluative term: ${term}`).toBe(false);
@@ -61,6 +61,7 @@ test.describe("public record page", () => {
     await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Edit timeline", "Writing rhythm", "Check a document", "Technical details"]);
     await expect(page.locator("details.technical-details")).not.toHaveAttribute("open", "");
     await expect(page.locator("svg.fingerprint-chart")).toBeVisible();
+    await expect(page.locator(".writing-rhythm .section-intro")).toHaveText("How long the writer paused between one edit and the next. Bar height counts pauses.");
     await expect(region(page, "How this was written")).toHaveCount(0);
   });
 

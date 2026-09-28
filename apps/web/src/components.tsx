@@ -104,7 +104,7 @@ export function RecordHeader({ record, verification, checking = false, onShowDet
         </>
       )}
       <p className="record-limit">
-        This record shows how the text was edited. Who had the ideas, and who typed them, is for you to judge.{" "}
+        This record shows how the text was edited.{" "}
         <a href="/docs/what-pmbah-does/">How records work</a>
       </p>
     </header>
@@ -798,7 +798,7 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   return (
     <section className="record-section writing-rhythm" aria-labelledby="writing-rhythm-heading">
       <h2 id="writing-rhythm-heading">Writing rhythm</h2>
-      <p className="section-intro">How long the writer paused between one edit and the next. Bar height counts pauses; the scale runs from under 16 milliseconds to over 100 seconds.</p>
+      <p className="section-intro">How long the writer paused between one edit and the next. Bar height counts pauses.</p>
       <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of gaps between edits, with separate bars below 16 milliseconds and above 100 seconds">
         <PencilHatch id={hatchId} />
         {FP_TICKS.map((tick) => (
