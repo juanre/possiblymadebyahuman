@@ -190,7 +190,7 @@ test("Emacs automatically restores frozen uploads read-only without retrying pub
     (pmbah-mode 1) (insert "seal this prefix")
     (let ((require-final-newline nil)) (save-buffer))
     (cl-letf (((symbol-function 'pmbah--post-record) (lambda (&rest _) (error "offline fixture"))))
-      (condition-case nil (pmbah-sign-buffer (list :surface "emacs") t) (error nil)))
+      (condition-case nil (pmbah-sign-buffer t) (error nil)))
     (setq session pmbah--session-id frozen pmbah--frozen-record)
     (lifecycle-check frozen "fixture did not freeze a record")
     (lifecycle-close))

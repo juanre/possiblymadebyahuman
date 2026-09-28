@@ -105,7 +105,7 @@ test("native interactive signing keeps other buffers responsive and completes a 
     const output = await native(temp, `(with-temp-buffer
       (pmbah-mode 1) (insert "private writing")
       (let ((pmbah-helper-script ${JSON.stringify(helper)}) (started (float-time)) returned locked same-job responsive)
-        (pmbah--sign-buffer-async nil t)
+        (pmbah--sign-buffer-async t)
         (setq returned (* 1000 (- (float-time) started)) locked buffer-read-only)
         (condition-case nil (pmbah-retry-save) (user-error nil))
         (unless buffer-read-only (error "retry-save unlocked active signing"))
@@ -113,7 +113,7 @@ test("native interactive signing keeps other buffers responsive and completes a 
           (condition-case nil (insert "blocked") (buffer-read-only nil)))
         (unless (= pmbah--next-seq 1) (error "active signing accepted another event"))
         (let ((token (plist-get pmbah--sign-job :token)))
-          (condition-case nil (pmbah--sign-buffer-async nil t) (user-error nil))
+          (condition-case nil (pmbah--sign-buffer-async t) (user-error nil))
           (setq same-job (equal token (plist-get pmbah--sign-job :token))))
         (with-temp-buffer (insert "other buffer") (setq responsive (= (buffer-size) 12)))
         (let ((deadline (+ (float-time) 8)))
@@ -140,7 +140,7 @@ test("native disabling capture cancels an unfinished manifest without stale call
     const output = await native(temp, `(with-temp-buffer
       (pmbah-mode 1) (insert "captured")
       (setq-local pmbah-helper-script ${JSON.stringify(helper)})
-      (pmbah--sign-buffer-async nil t)
+      (pmbah--sign-buffer-async t)
       (let ((process (plist-get pmbah--sign-job :process)))
         (pmbah-mode -1)
         (when (process-live-p process) (error "paused capture kept its manifest process"))
@@ -163,7 +163,7 @@ test("native quitting while launching a signing helper releases the unsigned fre
     const output = await native(temp, `(with-temp-buffer
       (pmbah-mode 1) (insert "captured")
       (cl-letf (((symbol-function 'process-send-string) (lambda (&rest _) (signal 'quit nil))))
-        (condition-case nil (pmbah--sign-buffer-async nil t) (quit nil)))
+        (condition-case nil (pmbah--sign-buffer-async t) (quit nil)))
       (when (seq-some (lambda (process) (and (string-prefix-p "pmbah-node" (process-name process)) (process-live-p process))) (process-list))
         (error "quit left a signing process alive"))
       (insert "continued")
@@ -182,7 +182,7 @@ test("native quitting at async publication retains the frozen prefix without a s
         (cl-letf (((symbol-function 'process-send-string)
                    (lambda (&rest args)
                      (if (= (cl-incf calls) 2) (signal 'quit nil) (apply send args)))))
-          (pmbah--sign-buffer-async nil t)
+          (pmbah--sign-buffer-async t)
           (let ((deadline (+ (float-time) 8)))
             (while (and pmbah--sign-job (< (float-time) deadline)) (accept-process-output nil 0.02))))
         (unless (= calls 2) (error "did not reach publication cancellation"))
@@ -202,7 +202,7 @@ test("native closing a signing buffer cancels its process and preserves the froz
       (with-current-buffer source
         (pmbah-mode 1) (insert "private writing")
         (setq-local pmbah-helper-script ${JSON.stringify(helper)})
-        (pmbah--sign-buffer-async nil t)
+        (pmbah--sign-buffer-async t)
         (let ((deadline (+ (float-time) 8)))
           (while (and (not (eq (plist-get pmbah--sign-job :stage) 'publish)) (< (float-time) deadline))
             (accept-process-output nil 0.01)))
@@ -251,9 +251,10 @@ test("native legacy migration keeps the old frozen hash without retaining embedd
   try {
     const events = eventsFor(3000);
     const manifest = { format_version: "0.2", record_hash: computeRecordHash(events, id, "0.2"), session_id: id,
-      producer: { id: "emacs", version: "0.1.0", capabilities: ["timing"] }, capture_context: null,
+      producer: { id: "emacs", version: "0.1.0", capabilities: ["timing"] },
       event_count: events.length, duration_ms: elapsed, created_client_t: "2024-09-23T00:00:00.000Z", ingested_server_t: null, parent_record: null, attestations: [] };
-    const record = { manifest, events };
+    const captureContext = { surface: "emacs", emacs: { buffer_name: "LEGACY-BUFFER-CANARY", major_mode: "text-mode" } };
+    const record = { manifest: { ...manifest, capture_context: captureContext }, events };
     const state = join(temp, `session-${id}.json`);
     await writeFile(state, JSON.stringify({ session_id: id, session_start_ms: Date.now() - elapsed, format_version: "0.2", events,
       frozen_record: JSON.stringify(record), frozen_upload: JSON.stringify({ ...record, observation: { state: "unobserved" } }), observation: { state: "disabled" } }));
@@ -265,10 +266,12 @@ test("native legacy migration keeps the old frozen hash without retaining embedd
     assert.equal(output.count, events.length);
     assert.equal(output.tail, 256);
     assert.equal(output.locked, true);
-    assert.deepEqual(output.frozen, { manifest });
+    assert.deepEqual(output.frozen, { manifest }, "a recovered frozen manifest drops its capture context");
     assert.deepEqual(output.upload, { observation: { state: "unobserved" } });
     assert.equal(output.snapshot.storage_version, 2);
     assert.equal(output.snapshot.events, undefined);
+    assert.equal(JSON.stringify(output).includes("LEGACY-BUFFER-CANARY"), false);
+    assert.equal((await readFile(state, "utf8")).includes("LEGACY-BUFFER-CANARY"), false);
     assert.ok((await stat(state)).size < 4000);
     assert.equal(await readFile(join(temp, `events-${id}.jsonl`), "utf8"), serialize(events));
   } finally { await rm(temp, { recursive: true, force: true }); }

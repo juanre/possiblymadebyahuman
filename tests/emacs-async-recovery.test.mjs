@@ -57,7 +57,7 @@ process.stdout.write(JSON.stringify(await runJournalOperation(input)));`);
       (let ((require-final-newline nil)) (save-buffer))
       (when freeze
         (cl-letf (((symbol-function 'pmbah--post-record) (lambda (&rest _) (error "offline fixture"))))
-          (condition-case nil (pmbah-sign-buffer (list :surface "emacs") t) (error nil))))
+          (condition-case nil (pmbah-sign-buffer t) (error nil))))
       (setq seed (list :file file :session pmbah--session-id :metadata (pmbah--state-file)
                        :journal (pmbah--journal-file) :frozen pmbah--frozen-record))
       (async-close))
@@ -134,7 +134,7 @@ test("Emacs refuses pause, discard and signing while recovery is pending without
   (with-current-buffer (find-file-noselect (plist-get seed :file))
     (async-started seed) (setq token (plist-get pmbah--recovery-job :token))
     (dolist (command (list (lambda () (pmbah-mode -1)) #'pmbah-discard-session
-                           (lambda () (pmbah-sign-buffer (list :surface "emacs") t))))
+                           (lambda () (pmbah-sign-buffer t))))
       (let (refused)
         (condition-case nil (funcall command) (user-error (setq refused t)))
         (async-check refused "unfinished recovery accepted a conflicting action")
