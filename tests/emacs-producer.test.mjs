@@ -206,7 +206,7 @@ test("Emacs marks interrupted capture without inventing events and retains absol
   await writeFile(scriptPath, `;;; gaps.el -*- lexical-binding: t; -*-
 (load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
 (setq pmbah-observe-process nil)
-(let (events snapshot refused whole-binding)
+(let (events snapshot gap-signed whole-binding)
   (with-temp-buffer
     (insert "unobserved prefix")
     (narrow-to-region (point-max) (point-max))
@@ -225,9 +225,14 @@ test("Emacs marks interrupted capture without inventing events and retains absol
     (pmbah-mode -1)
     (setq snapshot (pmbah--state-snapshot))
     (pmbah-mode 1)
-    (setq refused (condition-case err
-                      (progn (pmbah-sign-buffer t) nil)
-                    (user-error (error-message-string err)))))
+    (cl-letf (((symbol-function 'pmbah--run-helper)
+               (lambda (payload &optional _script)
+                 (setq gap-signed (list :final_text (plist-get payload :final_text)
+                                        :events (vconcat (pmbah--session-events))))
+                 (list :record (list :manifest nil :events []))))
+              ((symbol-function 'pmbah--post-record)
+               (lambda (_body) (list :url "https://example.test/record"))))
+      (pmbah-sign-buffer t)))
   (with-temp-buffer
     (pmbah-mode 1)
     (insert "outside MIDDLE outside")
@@ -241,7 +246,7 @@ test("Emacs marks interrupted capture without inventing events and retains absol
       (pmbah-sign-buffer t)))
   (with-temp-file ${JSON.stringify(outputPath)}
     (insert (pmbah--json-encode
-             (list :events events :snapshot snapshot :refused refused :whole_binding whole-binding)))))
+             (list :events events :snapshot snapshot :gap_signed gap-signed :whole_binding whole-binding)))))
 `);
   try {
     const result = await runEmacs(scriptPath);
@@ -251,7 +256,12 @@ test("Emacs marks interrupted capture without inventing events and retains absol
     assert.deepEqual(output.events.map((event) => event.pos), [null, 18, null, null, 23]);
     assert.ok(output.events.every((event) => event.ins_len === 1 && event.del_len === 0));
     assert.equal(output.snapshot.pending_gap, true, "stopping capture persists the boundary");
-    assert.match(output.refused, /Capture has a gap/);
+    // Signing records the unrecorded change as one edit of unknown position
+    // and size, then binds the current text.
+    const signedEvents = output.gap_signed.events;
+    assert.deepEqual(signedEvents.at(-1), { seq: 5, t: signedEvents.at(-1).t, op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
+    assert.equal(signedEvents.length, 6);
+    assert.equal(output.gap_signed.final_text, "unobserved prefixABCDEFG");
     assert.equal(output.whole_binding, "outside MIDDLE outside", "whole-buffer binding includes text outside narrowing");
     assert.equal(JSON.stringify(output.snapshot).includes("unobserved prefix"), false);
   } finally {
@@ -259,24 +269,35 @@ test("Emacs marks interrupted capture without inventing events and retains absol
   }
 });
 
-test("Emacs refuses binding immediately after edits hidden from its hooks", { skip: emacs ? false : "emacs binary not available" }, async () => {
+test("Emacs records edits hidden from its hooks as an unknown change and still binds the text", { skip: emacs ? false : "emacs binary not available" }, async () => {
   const temp = await mkdtemp(join(tmpdir(), "pmbah-emacs-hidden-edit-"));
   const scriptPath = join(temp, "hidden.el");
   await writeFile(scriptPath, `;;; hidden.el -*- lexical-binding: t; -*-
+(require 'cl-lib)
 (load ${JSON.stringify(resolve("producers/emacs/pmbah-mode.el"))})
 (setq pmbah-observe-process nil)
 (with-temp-buffer
   (pmbah-mode 1)
   (insert "known")
   (let ((inhibit-modification-hooks t)) (insert " hidden"))
-  (condition-case err
-      (progn (pmbah-sign-buffer t) (error "binding should fail"))
-    (user-error (princ (error-message-string err)))))
+  (let (signed)
+    (cl-letf (((symbol-function 'pmbah--run-helper)
+               (lambda (payload &optional _script)
+                 (setq signed (list :final_text (plist-get payload :final_text)
+                                    :last (car (last (append (pmbah--session-events) nil)))))
+                 (list :record (list :manifest nil :events []))))
+              ((symbol-function 'pmbah--post-record)
+               (lambda (_body) (list :url "https://example.test/record"))))
+      (pmbah-sign-buffer t))
+    (princ (pmbah--json-encode signed))))
 `);
   try {
     const result = await runEmacs(scriptPath);
     assert.equal(result.status, 0, result.stderr || result.stdout);
-    assert.match(result.stdout, /Capture has a gap/);
+    const signed = JSON.parse(result.stdout);
+    assert.equal(signed.final_text, "known hidden");
+    // "known" is one recorded edit; the hidden insert becomes exactly one unknown change.
+    assert.deepEqual({ ...signed.last, t: 0 }, { seq: 1, t: 0, op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

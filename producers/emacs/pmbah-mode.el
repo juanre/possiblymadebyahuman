@@ -2,7 +2,7 @@
 
 ;; Copyright (c) 2026
 ;; SPDX-License-Identifier: MIT
-;; Version: 0.1.4
+;; Version: 0.1.5
 ;; Package-Requires: ((emacs "29.1"))
 ;; Keywords: convenience, writing
 
@@ -118,7 +118,7 @@ your init file so this also works after restarting Emacs."
   :type 'boolean
   :group 'pmbah)
 
-(defconst pmbah-producer-version "0.1.4")
+(defconst pmbah-producer-version "0.1.5")
 (defconst pmbah-format-version "0.3")
 
 (defconst pmbah-max-session-ms 9007199254740991
@@ -1418,6 +1418,15 @@ Noninteractive callers retain the synchronous result-returning interface."
       (pmbah--sign-buffer-async no-prompts)
     (pmbah--sign-buffer-sync no-prompts)))
 
+(defun pmbah--record-unrecorded-change ()
+  "Record a pending capture gap as one edit of unknown position and size.
+Signing never waits for another edit: the record states that the text changed
+here without being recorded, and then reaches the current text."
+  (when pmbah--pending-gap
+    (pmbah--append-event "replace" nil nil nil "unknown")
+    ;; The record now reaches the buffer as it is; later checks compare with it.
+    (setq pmbah--observed-tick (buffer-chars-modified-tick))))
+
 (defun pmbah--prepare-signing-input (no-prompts)
   "Confirm and freeze capture, returning only the transient local helper input."
   (when pmbah--recovery-job (user-error "Wait for PMBAH recovery before signing"))
@@ -1426,6 +1435,7 @@ Noninteractive callers retain the synchronous result-returning interface."
   (when (= pmbah--next-seq 0) (user-error "No PMBAH events captured for this buffer"))
   (unless pmbah--frozen-record
     (pmbah--check-capture-gap)
+    (pmbah--record-unrecorded-change)
     (when (>= (pmbah--elapsed-ms) pmbah-max-session-ms)
       (pmbah--retire-live-session)
       (user-error "PMBAH session clock exceeded its exact integer range; a fresh session started"))
@@ -1439,8 +1449,7 @@ Noninteractive callers retain the synchronous result-returning interface."
                                 "Anyone can test guesses against this public commitment. Bind the whole buffer? "))))))
            (final-text (when bind
                          (pmbah--check-capture-gap)
-                         (when pmbah--pending-gap
-                           (user-error "Capture has a gap; make a recorded edit before binding text, or sign without a text binding"))
+                         (pmbah--record-unrecorded-change)
                          (if region (buffer-substring-no-properties (region-beginning) (region-end))
                            (save-restriction (widen) (buffer-substring-no-properties (point-min) (point-max)))))))
       (when (equal pmbah--session-format "0.2") (setq pmbah--session-format "0.3"))
@@ -1673,7 +1682,10 @@ interactive upload is still running."
         (pmbah--check-copy-target target)
         (if (and publish interactive)
             (progn
-              (pmbah--sign-buffer-async nil (lambda () (pmbah--copy-after-upload target)))
+              ;; A failure before the upload starts publishes nothing and copies nothing.
+              (condition-case error
+                  (pmbah--sign-buffer-async nil (lambda () (pmbah--copy-after-upload target)))
+                (error (user-error "%s; nothing was published or copied" (error-message-string error))))
               nil)
           (when publish (pmbah--sign-buffer-sync nil))
           (let ((copy (pmbah--copy-continuation target)))
