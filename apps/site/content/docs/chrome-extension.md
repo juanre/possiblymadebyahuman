@@ -31,13 +31,13 @@ Opening the panel or focusing a field does not start capture. Other fields remai
 
 The side panel's **This editor** section follows the focused editor in the active tab of that browser window. It shows the matching draft or tells you that the field has no active writing record. **Other drafts** remain below. No label or controls cover the webpage.
 
-Each draft gets a name based on its site, available field label and a distinguishing number. Choose **Rename** to give it a private name. This name stays in your browser and is separate from the **Public label** reviewed before publication. Field contents are not read to invent a name.
+Each draft gets a name based on its site, available field label and a distinguishing number. Choose **Rename** to give it a private name. This name stays in your browser and is never published. Field contents are not read to invent a name.
 
 Write normally. Supported rich-text editors measure Unicode characters, including line breaks; ambiguous edits are reported as unknown measurements. Checkpoints send event counts and chain commitments while a chosen draft is active. The extension does not save or upload your document's words. See [privacy details](/docs/privacy/).
 
 ## Finish and share
 
-Choose **Finish & get link**. The review identifies the draft being finished; moving focus elsewhere does not change that target. Under **Public context**, review the page URL, title and public label, removing identifying details if appropriate.
+Choose **Finish & get link**. The review identifies the draft being finished; moving focus elsewhere does not change that target. Your text is not uploaded, and nothing about the page or site is published.
 
 Publishing includes a text check. The scope appears separately as **Selected text** or **Whole field**. It checks the text present when you finish, which may include text written before capture started; it does not claim that earlier writing was captured. If the selection changes before confirmation, review the updated scope and confirm again. A match does not establish exact text equality, authorship, or that these edits produced that text. The check is public and permits wording guesses; it is not encryption.
 

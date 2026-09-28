@@ -38,9 +38,9 @@ It does **not** confirm:
 - That the signer authored the words. The hash chain never inspects the text. A signer may separately **bind** a document so a reader can check that a given text is the one signed (see [Bind and check a document](/docs/checking-a-document/)), but even a match confirms *wording*, not authorship.
 - That a human typed the events instead of a script driving the producer.
 - That signed duration is independently observed time. It is a client claim; server-observed span measures time between received checkpoints. A long pause may contain no captured edits.
-- That the `capture_context` is true; that field is metadata the signer chose to include, not a sworn attribution.
+- Where the text was written. Records carry nothing about the page, site or file.
 
-A matching hash is a consistency check, not a verdict. Comparing the recomputed hash to the manifest's own hash field tells you the record is internally consistent; it says nothing about who wrote the text or whether the server replaced both the events and the displayed hash. To check against an earlier record, retain its full hash independently and compare it using a verifier you trust. Other metadata, such as capture context, is not committed by the record hash.
+A matching hash is a consistency check, not a verdict. Comparing the recomputed hash to the manifest's own hash field tells you the record is internally consistent; it says nothing about who wrote the text or whether the server replaced both the events and the displayed hash. To check against an earlier record, retain its full hash independently and compare it using a verifier you trust. Other metadata, such as ingestion time, is not committed by the record hash.
 
 ## Hand-verifying without the record page
 

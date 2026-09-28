@@ -4,7 +4,8 @@ Core content-blind event-log contract package for PMBAH format versions `0.1`, `
 
 ## Responsibility
 
-- Event mutation, public manifest, producer, capture-context, source, capability, and signal-adjacent shared types.
+- Event mutation, public manifest, producer, source, capability, and signal-adjacent shared types.
+- Manifest validation that rejects `capture_context`: a record carries nothing about where the text was written.
 - UUIDv4 session-id validation for public manifests.
 - Canonical JSON serialization for public event objects.
 - BLAKE3 `b3:` hashing helpers for public process records.

@@ -10,7 +10,7 @@ weight: 2
 ## What public records contain
 
 - An event log of edits: `seq`, `t`, `op`, `pos`, `del_len`, `ins_len` and `source`. Each numeric field is a measured position, length or time. When a producer cannot measure a value without keeping text, the field is an explicit `null`.
-- A manifest with the BLAKE3 record hash, producer name and version, declared capabilities, capture context (when provided), event count and duration. Newer records also seal the finish time and an optional link to an earlier record they continue.
+- A manifest with the BLAKE3 record hash, producer name and version, declared capabilities, event count and duration. Newer records also seal the finish time and an optional link to an earlier record they continue.
 - Precomputed statistics: counts of typed, pasted, cut, dropped, composed, autocompleted, programmatic and unknown edits; characters inserted and deleted when known; the largest single insertion; document length when known; delays between edits; and a delay histogram.
 - Analyzer signals, each with its measurements and an explanation.
 - An optional `text_binding`, only when the signer chose it: a `scheme`, a `canonical_length` and a salted `commitment` over the signed text's letters and digits. Anyone can test candidate wording against it.
@@ -19,7 +19,8 @@ weight: 2
 
 - The text of the document, or any fingerprint of it other than the optional `text_binding`.
 - Fingerprints of individual insertions or of the raw document. The event hash chain covers the edit events, never the words.
-- Account or identity fields. There is no user system, though capture context such as a page title can identify a person or a document.
+- Account or identity fields. There is no user system.
+- Anything about where the text was written: no page address or title, site, field, label, file name, buffer name or editor mode.
 
 ## What stays on your machine
 
@@ -37,19 +38,14 @@ The Chrome extension records only the editor you explicitly choose, through its 
 
 Before publishing, you can:
 
-- review or remove the **capture context** the extension and Emacs attach (page title, address, buffer name, major mode);
-- strip query strings and fragments from addresses, which happens by default;
 - choose whether readers can check a copy of the text against the record;
 - decide not to publish at all.
 
-The `/write` page attaches a fixed, non-identifying capture context: "First-party drafting page" and its own address.
+## Nothing about where you wrote
 
-## Capture context
+A record describes the writing process and nothing else. It carries no capture context: nothing about the page, site, field or file you wrote in. It names the producer that made it, such as the Chrome extension or Emacs, with its version and declared capabilities. Draft names in the extension and on `/write` stay in your browser.
 
-- Browser addresses drop query strings and fragments by default, and the producer shows what would be published.
-- Page titles and Emacs buffer names can identify you or your document; both are shown before publishing.
-- Absolute local file paths are not published by default.
-- The public record page presents capture context as information the signer asserted, not as proof of anything.
+Earlier versions of the Chrome extension, Emacs `pmbah-mode` and the `/write` page sent some of these details with a record, such as a page address and title, a label, or an Emacs buffer name and mode. The service discards them when they arrive, and they have been removed from every record already stored. They were never part of the record hash, so those records still verify.
 
 ## Signed finish time
 
