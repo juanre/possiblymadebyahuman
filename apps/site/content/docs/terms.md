@@ -12,7 +12,7 @@ If you need formal terms (for an employer, an institution, or a use case where w
 ## What the service is
 
 - A content-blind writing-record producer plus an ingest endpoint that stores those records and serves them at hash-addressed URLs.
-- The producer reads text locally to measure edits and, if you choose binding, compute a document commitment. The service receives edit structure, a hash chain, optional capture context, and the optional commitment; it receives no document text. See the [privacy page](/docs/privacy/) for the full data inventory.
+- The producer reads text locally to measure edits and, if you choose binding, compute a document commitment. The service receives edit structure, a hash chain and the optional commitment; it receives no document text and nothing about the page, site or file you wrote in. See the [privacy page](/docs/privacy/) for the full data inventory.
 - The service makes no claim about whether a human wrote anything. It is **not a detector**, and it does not issue a verdict, score, badge, or certificate.
 
 ## Service is provided as-is
@@ -24,9 +24,9 @@ If you need formal terms (for an employer, an institution, or a use case where w
 ## What we expect of you
 
 - **Don't try to break the service.** No automated abuse, mass-scraping, or attempts to overload the ingest endpoint. No attempts to inject content into other people's records. No exploitation of platform features in ways that materially degrade the service for others.
-- **Don't impersonate.** When you choose what `capture_context` to include with a record, the page URL, page title, buffer name, or major mode you upload is information *you* asserted about a session *you* signed; it is not validated by the service. Don't upload context that implies another person, organisation, or platform authored the writing.
+- **Don't impersonate.** Don't present a record as evidence that another person, organisation, or platform authored the writing.
 - **Don't upload unlawful material.** Records that contain instructions, links, or other content that is illegal in the operator's jurisdiction may be removed when reported. See the moderation section below.
-- **Respect the no-deletion model when you sign.** Once a record is uploaded, the service has no public deletion API. Before you click sign, the Chrome extension and the Emacs producer show you the capture context and let you redact or omit it; the `/write` page uploads a fixed, non-identifying context (its own URL and a fixed label). Use that review step.
+- **Respect the no-deletion model when you sign.** Once a record is uploaded, the service has no public deletion API. Before you publish, each producer shows a review and asks you to confirm. Use that review step.
 
 ## What you keep
 

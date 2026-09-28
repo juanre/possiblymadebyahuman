@@ -110,7 +110,7 @@ Unchanged from the previous version, but with the rationale corrected:
   session.lastInsertedText = event.data;
   ```
 - **IME**: buffer between `compositionstart` and `compositionend`. **Cancellation handling**: when `compositionend.data === ''` (or some browsers fire `compositionend` with no `data` after a cancel), the composition produced nothing — emit no mutation rather than a zero-length one. Otherwise emit a single mutation on `compositionend` using cursor-displacement, with the transient-`event.data.length` fallback only if displacement is unreliable.
-- **No persistence of any text-derived string**. The `SessionRecord` written to `chrome.storage.local` has only numeric event fields plus `capture_context` (signer-approved provenance metadata). The `chrome.runtime.sendMessage` envelope between content script and service worker has no text fields.
+- **No persistence of any text-derived string**. The `SessionRecord` written to `chrome.storage.local` has only numeric event fields plus the local `capture_context` surface tag (`{ surface: "browser" }`), which is never uploaded. The `chrome.runtime.sendMessage` envelope between content script and service worker has no text fields.
 - **No console.log of `event.data` or field values** in production source. Diagnostic logs may report `inputType` and numeric lengths.
 - **Programmatic capture**: best-effort via `MutationObserver`. When the only knowable length is "net delta" or genuinely unknown, **emit explicit `null`** for the unknown subfield rather than guessing.
 - **Source attribution**: declare `source_attribution` only if the manual evidence shows `inputType → Source` is reliable across the supported cases.

@@ -40,7 +40,7 @@ If publishing fails, the signed record stays saved in this browser, and **Retry 
 
 After publishing, the draft keeps its link. Choose **Keep writing** to add to it: your next edits become a new record that names the earlier one, and the earlier link never changes.
 
-The published record carries a fixed description of where it was written: "First-party drafting page" and the address of `/write`. It carries no draft names or text.
+The published record carries no draft names, no text and nothing about where it was written.
 
 ## Deleting a draft
 

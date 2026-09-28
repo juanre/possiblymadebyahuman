@@ -21,17 +21,16 @@ weight: 1
 ## What the system does defend against
 
 - **Silent tampering with stored events.** The hash chain detects any change to events relative to a fixed hash. A reader can recompute it locally and compare to an independently retained full hash.
-- **Backend silently editing a record.** An independently retained full hash and a trusted verifier let a reader check the committed events and binding. The page alone compares against a hash the server supplies, so replacing both can still pass that internal consistency check. Capture context and other uncommitted metadata need separate trust.
+- **Backend silently editing a record.** An independently retained full hash and a trusted verifier let a reader check the committed events and binding. The page alone compares against a hash the server supplies, so replacing both can still pass that internal consistency check. Uncommitted metadata, such as ingestion time, needs separate trust.
 - **A producer claiming a capability it does not have.** Conformance vectors catch missing or inconsistent capability fields. They do not authenticate a producer or establish that its claimed measurements were taken from real input.
 - **A single human/AI score creeping into the UI.** It is a product-level invariant that no aggregate verdict is rendered. Analyzer signals are facts with explanations, never combined into a single number.
-- **Text leaking into public storage.** Producers do not upload text; the ingest API rejects content-bearing fields on public submissions; the public record contains structure and bounded metadata. A document binding, when present, uploads only a content-blind commitment computed locally; the text itself never leaves the producer.
+- **Text leaking into public storage.** Producers do not upload text; the ingest API rejects content-bearing fields on public submissions; the public record contains structure and bounded metadata, and nothing about the page, site or file where the text was written. A document binding, when present, uploads only a content-blind commitment computed locally; the text itself never leaves the producer.
 - **Swapping the published text on a bound record.** When the signer bound a document, a reader can confirm in their own browser that a given document is the one signed, at the level of *wording* (letters and digits in order), not exact bytes. Publishing wholly different text under that record fails the check.
 
 ## What we explicitly do not do
 
 - We do not authenticate users. There are no accounts.
-- We do not offer public deletion. Records are permanent by default. Review capture context before upload because URLs, titles, and buffer names can identify you or your document.
-- We do not vouch for `capture_context`. The signer chose what to include. Treat URL and title as provenance hints, not as facts.
+- We do not offer public deletion. Records are permanent by default.
 - We do not promise anonymity. The signer's network and producer environment may leak identity in ways outside this service's control.
 
 ## In one sentence

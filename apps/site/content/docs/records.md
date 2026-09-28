@@ -29,7 +29,7 @@ Producers do not capture raw keystrokes. They capture *buffer mutations*: a sing
 
 ## The manifest
 
-Every record carries a manifest with format version, BLAKE3 `record_hash`, session id, producer information, capture context, event count and duration. The API adds ingestion metadata. A record may carry an optional `text_binding`, a locally computed commitment that lets readers check a copy of the text without uploading it. See [Bind and check a document](/docs/checking-a-document/).
+Every record carries a manifest with format version, BLAKE3 `record_hash`, session id, producer information, event count and duration. It says nothing about the page, site or file where the text was written. The API adds ingestion metadata. A record may carry an optional `text_binding`, a locally computed commitment that lets readers check a copy of the text without uploading it. See [Bind and check a document](/docs/checking-a-document/).
 
 Format **0.3** additionally seals elapsed finish time and an optional `parent_record` link into the record hash. Its duration includes time from the session's start to the confirmed finish action, even if no edits occurred during the final pause. That signed duration is a client claim. It is separate from the span between checkpoints received by the server. Active and idle statistics measure only intervals between captured edits.
 
