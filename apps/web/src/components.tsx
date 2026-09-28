@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildActivityColumns, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeObservation, describeRecordSummary, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
+import { buildActivityColumns, buildDelayDensity, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeObservation, describeRecordSummary, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 const SITE_NAME = "possiblymadebyahuman";
@@ -770,11 +770,12 @@ const FP_TICKS: { ms: number; label: string }[] = [
 export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   const [chartRef, W] = useContentWidth<SVGSVGElement>(FP_FALLBACK_W);
   const histogram = useMemo(() => buildDelayHistogram(record.events), [record.events]);
+  const density = useMemo(() => buildDelayDensity(record.events), [record.events]);
   if (histogram.total === 0) return null;
   const { bins, underflow, overflow } = histogram;
   const logMin = Math.log10(RHYTHM_MIN_MS);
   const span = Math.log10(RHYTHM_MAX_MS) - logMin;
-  const maxCount = Math.max(underflow, overflow, ...bins.map(bin => bin.count), 1);
+  const maxCount = Math.max(underflow, overflow, ...density.map(point => point.value), 1e-9);
   const H = 170, padL = 54, padR = 64, padT = 10, padB = 26;
   const innerW = Math.max(1, W - padL - padR);
   const innerH = H - padT - padB;
@@ -783,10 +784,10 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   const barWidth = innerW / bins.length;
   const boundaryBarWidth = 24;
   const edgeBar = { fill: DATA_INK.fill, fillOpacity: DATA_INK.barOpacity };
-  // The distribution is drawn as a line through the centre of each bucket.
-  const curve = bins.map((bin, index) => [padL + (index + 0.5) * barWidth, baseY - bin.count / maxCount * innerH] as const);
+  // The distribution is drawn as a smoothed line; the buckets below carry exact counts on hover.
+  const curve = density.map((point) => [xForMs(point.ms), baseY - point.value / maxCount * innerH] as const);
   const curvePath = curve.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x} ${y}`).join(" ");
-  const areaPath = `M ${padL} ${baseY} L ${curve.map(([x, y]) => `${x} ${y}`).join(" L ")} L ${padL + innerW} ${baseY} Z`;
+  const areaPath = curve.length === 0 ? "" : `M ${padL} ${baseY} L ${curve.map(([x, y]) => `${x} ${y}`).join(" L ")} L ${padL + innerW} ${baseY} Z`;
   return (
     <section className="record-section writing-rhythm" aria-labelledby="writing-rhythm-heading">
       <h2 id="writing-rhythm-heading">Writing rhythm</h2>

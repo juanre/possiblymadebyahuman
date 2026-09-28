@@ -287,6 +287,63 @@ export function buildDelayHistogram(events: BufferMutation[]): {
   return { bins, underflow, overflow, total: Math.max(0, events.length - 1) };
 }
 
+export type DensityPoint = { ms: number; value: number };
+
+const DENSITY_POINTS = 400;
+const DENSITY_FINE_BINS = 800;
+// Smoothing bandwidth, in decades of the log scale: between 0.04 (a gap about
+// 10% longer or shorter) and 0.25 (about 78% longer).
+const MIN_BANDWIDTH = 0.04;
+const MAX_BANDWIDTH = 0.25;
+
+/**
+ * A smoothed distribution of the gaps between edits on the rhythm's log
+ * scale, from RHYTHM_MIN_MS to RHYTHM_MAX_MS. Smoothing narrows as there are
+ * more gaps (Silverman's rule), so long records show detail and short ones
+ * stay readable. Values are in gaps per rhythm bucket, the unit of the
+ * separate bars for gaps outside the scale. Gaps are first counted into fine
+ * bins, so the cost does not grow with the length of the record.
+ */
+export function buildDelayDensity(events: BufferMutation[]): DensityPoint[] {
+  const logMin = Math.log10(RHYTHM_MIN_MS);
+  const span = Math.log10(RHYTHM_MAX_MS) - logMin;
+  const fine = new Array<number>(DENSITY_FINE_BINS).fill(0);
+  let n = 0, sum = 0, sumSquares = 0;
+  for (let index = 1; index < events.length; index++) {
+    const delay = events[index]!.t - events[index - 1]!.t;
+    if (delay < RHYTHM_MIN_MS || delay > RHYTHM_MAX_MS) continue;
+    const position = (Math.log10(delay) - logMin) / span;
+    fine[Math.min(DENSITY_FINE_BINS - 1, Math.floor(position * DENSITY_FINE_BINS))]!++;
+    const log = Math.log10(delay);
+    n++; sum += log; sumSquares += log * log;
+  }
+  if (n === 0) return [];
+  const centre = (index: number) => logMin + (index + 0.5) / DENSITY_FINE_BINS * span;
+  const deviation = Math.sqrt(Math.max(0, sumSquares / n - (sum / n) ** 2));
+  const quantile = (q: number) => {
+    let seen = 0;
+    for (let index = 0; index < fine.length; index++) {
+      seen += fine[index]!;
+      if (seen >= q * n) return centre(index);
+    }
+    return logMin + span;
+  };
+  const spread = Math.min(deviation, (quantile(0.75) - quantile(0.25)) / 1.34) || deviation;
+  const bandwidth = Math.min(MAX_BANDWIDTH, Math.max(MIN_BANDWIDTH, 0.9 * spread * n ** -0.2));
+  const bucketWidth = span / RHYTHM_BIN_COUNT;
+  const normal = 1 / (bandwidth * Math.sqrt(2 * Math.PI));
+  return Array.from({ length: DENSITY_POINTS }, (_, point) => {
+    const log = logMin + span * point / (DENSITY_POINTS - 1);
+    let density = 0;
+    for (let index = 0; index < fine.length; index++) {
+      if (fine[index] === 0) continue;
+      const u = (log - centre(index)) / bandwidth;
+      if (u > -5 && u < 5) density += fine[index]! * Math.exp(-0.5 * u * u);
+    }
+    return { ms: 10 ** log, value: density * normal * bucketWidth };
+  });
+}
+
 /** Endpoint waits are distinct from intervals between captured edits. */
 export function recordTimingDetails(record: Pick<RecordApiResponse, "manifest" | "events" | "event_times">): {
   signedFinish: boolean; editingSpanMs: number; beforeFirstEditMs: number; afterLastEditMs: number;

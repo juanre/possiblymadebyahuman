@@ -412,3 +412,35 @@ test("signed text length is phrased as letters and digits", async () => {
   assert.equal(formatSignedTextLength(1204), "1,204 letters and digits");
   assert.equal(formatSignedTextLength(1), "1 letter or digit");
 });
+
+test("the rhythm curve is a smooth density over the log scale that keeps every in-range gap", async () => {
+  const { buildDelayDensity, RHYTHM_MIN_MS, RHYTHM_MAX_MS, RHYTHM_BIN_COUNT } = await import("../apps/web/src/record-utils.ts");
+  let seed = 3; const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const gaps = Array.from({ length: 5000 }, () => Math.round(80 + random() * 140));
+  let t = 0;
+  const events = [{ seq: 0, t: 0 }, ...gaps.map((gap, index) => ({ seq: index + 1, t: t += gap }))]
+    .map(event => ({ ...event, op: "insert", pos: event.seq, del_len: 0, ins_len: 1, source: "typing" }));
+  const density = buildDelayDensity(events);
+  assert.ok(density.length >= 200, "fine enough to draw a smooth line");
+  assert.equal(density[0].ms, RHYTHM_MIN_MS);
+  assert.ok(Math.abs(density.at(-1).ms - RHYTHM_MAX_MS) < 1e-6);
+  const peak = density.reduce((best, point) => point.value > best.value ? point : best);
+  assert.ok(peak.ms > 80 && peak.ms < 220, `peak at ${peak.ms}ms sits among the gaps`);
+  // Values are in gaps per rhythm bucket, so they share a scale with the edge bars.
+  const step = (Math.log10(RHYTHM_MAX_MS) - Math.log10(RHYTHM_MIN_MS)) / (density.length - 1);
+  const bucketWidth = (Math.log10(RHYTHM_MAX_MS) - Math.log10(RHYTHM_MIN_MS)) / RHYTHM_BIN_COUNT;
+  const area = density.reduce((sum, point) => sum + point.value, 0) * step / bucketWidth;
+  assert.ok(Math.abs(area - gaps.length) / gaps.length < 0.02, `area ${area} matches ${gaps.length} gaps`);
+  // No jagged spikes: neighbouring points change gradually.
+  for (let index = 1; index < density.length; index++) assert.ok(Math.abs(density[index].value - density[index - 1].value) < peak.value * 0.1);
+});
+
+test("the rhythm curve is empty without in-range gaps and ignores gaps outside the scale", async () => {
+  const { buildDelayDensity } = await import("../apps/web/src/record-utils.ts");
+  const event = (seq, t) => ({ seq, t, op: "insert", pos: seq, del_len: 0, ins_len: 1, source: "typing" });
+  assert.deepEqual(buildDelayDensity([]), []);
+  assert.deepEqual(buildDelayDensity([event(0, 0), event(1, 0), event(2, 60_000)]), []);
+  const single = buildDelayDensity([event(0, 0), event(1, 150)]);
+  assert.ok(single.some(point => point.value > 0));
+  assert.ok(single.every(point => Number.isFinite(point.value)));
+});
