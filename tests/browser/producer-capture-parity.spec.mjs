@@ -95,9 +95,12 @@ for (const producer of ["extension", "write"]) {
         expect(result.kind).toBe("binding_error");
         expect(result.reason).toContain("Capture has a gap");
       } else {
+        // /write records the unseen change and signs; publication itself is not
+        // routed here, so the journal shows what the record will contain.
         await page.getByRole("button", { name: "Sign", exact: true }).click();
         await page.getByRole("button", { name: "Sign & publish", exact: true }).click();
-        await expect(page.getByText("written while it was not being recorded", { exact: false })).toBeVisible();
+        await expect.poll(async () => (await events()).at(-1)).toEqual(unknown);
+        await expect(page.getByText("written while it was not being recorded", { exact: false })).toHaveCount(0);
       }
     });
 

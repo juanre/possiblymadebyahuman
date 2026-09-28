@@ -28,7 +28,9 @@ One tab at a time works with your drafts. If they are open in another tab, close
 
 The record never contains the text. It does not capture other tabs or websites; for those, use the [Chrome extension](/docs/chrome-extension/) or [Emacs](/docs/emacs/).
 
-When you return to a draft, the page checks that the saved text is exactly what the recorded edits produced. If it is, the record continues seamlessly. If it is not (for example, the browser closed before the last edit was saved), the record marks a gap at your next edit instead of pretending the writing was continuous.
+When you return to a draft, the page checks that the saved text is exactly what the recorded edits produced. If it is, the record continues seamlessly. If it is not (for example, the browser closed before the last edit was saved), the record marks a gap at your next edit, or when you sign if that comes first, instead of pretending the writing was continuous.
+
+The same applies if something else changes the text on the canvas, such as a grammar-checking extension. If you sign before typing again, the record includes that change as one edit of unknown position and size, and the text check covers the text as it is when you sign.
 
 ## Signing and publishing
 

@@ -291,6 +291,17 @@ export class SessionRegistry {
     if (options.snapshot !== false) return cloneSession(record);
   }
 
+  /**
+   * Record that the text changed without being captured, as one edit of
+   * unknown position and size. Producers call this at signing when capture has
+   * a gap, instead of waiting for another edit: the record states where the
+   * text changed unrecorded, and then reaches the current text.
+   */
+  recordUnrecordedChange(session_id: SessionId): SessionRecord {
+    this.#requireMutable(session_id);
+    return this.appendMutation(session_id, { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
+  }
+
   #recomputeObservationState(record: SessionRecord): void {
     if (!this.#checkpoint) return;
     if (record.observation.state === "diverged") return;

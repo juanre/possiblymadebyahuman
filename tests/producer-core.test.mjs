@@ -705,3 +705,19 @@ test("resume continues without a gap only when restored content matches the reco
   assert.equal(registry.appendMutation(session.session_id, { op: "insert", pos: 6, del_len: 0, ins_len: 1, source: "typing" }).events[4].pos, null);
   assert.equal(verifyRecord(registry.sign(session.session_id)).valid, true);
 });
+
+test("an unrecorded change is recorded as one edit of unknown position and size, closing the gap", () => {
+  const { registry, clock } = makeRegistry();
+  clock.set(0);
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(), { initial_content_unknown: true });
+  clock.set(500);
+  const recorded = registry.recordUnrecordedChange(session.session_id);
+  assert.deepEqual(recorded.events.at(-1), { seq: 0, t: 500, op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
+  assert.equal(recorded.pending_observation_gap, undefined);
+  // A change the producer saw happen outside capture is recorded the same way.
+  clock.set(900);
+  assert.deepEqual(registry.recordUnrecordedChange(session.session_id).events.at(-1), { seq: 1, t: 900, op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
+  const draft = registry.sign(session.session_id);
+  assert.deepEqual(validateManifest(draft.manifest), []);
+});
