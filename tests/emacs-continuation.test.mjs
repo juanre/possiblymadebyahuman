@@ -69,7 +69,7 @@ async function publishedRecord(api, response) {
   const record = { manifest: fetched.body.manifest, events: fetched.body.events };
   const verification = verifyRecord(record);
   assert.equal(verification.valid, true, verification.errors.join("; "));
-  return { record, observation: fetched.body.observation };
+  return { record, observation: fetched.body.observation, stats: fetched.body.stats };
 }
 
 // Replays event shapes from a known starting length, as a continuation that
@@ -116,9 +116,13 @@ test("Emacs continues a live-signed buffer from the parent's final text without 
   assert.equal(output.exact_ms, "123", "continuation start times keep exact milliseconds");
   assert.equal(output.round_trip, 1790000000123);
   const parent = (await publishedRecord(api, output.parent)).record;
-  const child = (await publishedRecord(api, output.child)).record;
+  const published = await publishedRecord(api, output.child);
+  const child = published.record;
   assert.equal(child.manifest.parent_record, parent.manifest.record_hash);
   assert.equal(computeObservedLength(parent.events), output.parent_length);
+  // The service starts the child from the parent's length and knows its final length.
+  assert.equal(published.stats.starting_length, output.parent_length);
+  assert.equal(published.stats.observed_final_length, output.final_length);
   assert.equal(typeof child.events[0].pos, "number");
   assert.ok(child.events[0].pos <= output.parent_length);
   assert.equal(lengthFrom(output.parent_length, child.events), output.final_length);
@@ -291,6 +295,8 @@ test("pmbah-copy-file publishes first, then records the original and the copy as
   for (const published of [source, copy]) {
     assert.equal(published.record.manifest.parent_record, parentHash);
     assert.equal(lengthFrom(16, published.record.events), 16 + published.record.events[0].ins_len);
+    assert.equal(published.stats.starting_length, 16, "the service starts each copy from the parent's length");
+    assert.equal(published.stats.observed_final_length, 16 + published.record.events[0].ins_len);
     assert.equal(published.observation.observed_session_id, published.record.manifest.session_id);
   }
   assert.equal(source.record.manifest.created_client_t, copy.record.manifest.created_client_t);
