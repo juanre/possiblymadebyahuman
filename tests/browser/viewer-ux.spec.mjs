@@ -131,7 +131,9 @@ for (const width of [390, 1280]) {
     await expect(page.locator('.timeline-break')).toHaveCount(1);
     await expect(page.locator('.axis-label-break')).toHaveText('60d');
     await expect(page.locator('.fp-overflow')).toHaveAttribute('data-count', '1');
-    await expect(page.locator('.rhythm-overflow-summary')).toContainText('1 gap longer than 100 seconds');
+    await expect(page.locator('.fp-overflow title')).toHaveText('1 gap longer than 10 seconds');
+    await expect(page.locator('.fingerprint-chart')).toContainText('>10s');
+    await expect(page.locator('.writing-rhythm')).not.toContainText('100s');
     expect(await page.locator('.fp-bin').evaluateAll(bins => bins.reduce((sum, bin) => sum + Number(bin.dataset.count), 0))).toBe(0);
     await page.locator('details.technical-details > summary').click();
     const timingCounts = page.getByRole('region', {name: 'Timing and counts', exact: true});
@@ -167,7 +169,8 @@ test('simultaneous edits remain visible in the explicitly labelled short-gap buc
   await expect(page.locator('.fp-underflow')).toHaveAttribute('data-count', '1');
   await page.locator('details.technical-details > summary').click();
   await expect(page.locator('.fp-underflow')).toBeVisible();
-  await expect(page.locator('.rhythm-overflow-summary')).toContainText('including gaps of zero milliseconds');
+  await expect(page.locator('.fp-underflow title')).toHaveText('1 gap shorter than 16ms, including simultaneous edits');
+  await expect(page.locator('.rhythm-overflow-summary')).toHaveCount(0);
 });
 
 

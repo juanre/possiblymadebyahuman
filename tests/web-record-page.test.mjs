@@ -287,14 +287,14 @@ test("dense length geometry has no sloping segments and preserves the final leng
 });
 
 test("rhythm buckets conserve every gap and separate exact thresholds from overflow", () => {
-  const delays = [0, 15, 16, 100, 99_999, 100_000, 100_001, 60 * 86400000];
+  const delays = [0, 15, 16, 100, 9_999, 10_000, 10_001, 60 * 86400000];
   let elapsed = 0;
   const events = [0, ...delays].map((delay, seq) => ({ seq, t: elapsed += delay, op: "insert", pos: seq, del_len: 0, ins_len: 1, source: "typing" }));
   const histogram = buildDelayHistogram(events);
   assert.equal(histogram.underflow, 2, "zero and sub-16ms gaps are explicitly counted");
-  assert.equal(histogram.overflow, 2, "100001ms and sixty days do not masquerade as 100s");
+  assert.equal(histogram.overflow, 2, "10001ms and sixty days do not masquerade as 10s");
   assert.equal(histogram.bins[0].count, 1, "16ms belongs on the log axis");
-  assert.equal(histogram.bins.at(-1).count, 2, "100s is included in the final finite bucket");
+  assert.equal(histogram.bins.at(-1).count, 2, "10s is included in the final finite bucket");
   assert.equal(histogram.total, 8);
   assert.equal(histogram.bins.reduce((sum, bin) => sum + bin.count, histogram.underflow + histogram.overflow), histogram.total);
   assert.equal(buildDelayHistogram([]).total, 0);

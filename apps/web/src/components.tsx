@@ -774,8 +774,7 @@ const FP_FALLBACK_W = 660;
 const FP_TICKS: { ms: number; label: string }[] = [
   { ms: 100, label: "100ms" },
   { ms: 1000, label: "1s" },
-  { ms: 10000, label: "10s" },
-  { ms: RHYTHM_MAX_MS, label: "100s" },
+  { ms: RHYTHM_MAX_MS, label: "10s" },
 ];
 
 export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
@@ -799,7 +798,7 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
     <section className="record-section writing-rhythm" aria-labelledby="writing-rhythm-heading">
       <h2 id="writing-rhythm-heading">Writing rhythm</h2>
       <p className="section-intro">How long the writer paused between one edit and the next. Bar height counts pauses.</p>
-      <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of gaps between edits, with separate bars below 16 milliseconds and above 100 seconds">
+      <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of gaps between edits, with separate bars below 16 milliseconds and above 10 seconds">
         <PencilHatch id={hatchId} />
         {FP_TICKS.map((tick) => (
           <line key={`line-${tick.ms}`} x1={xForMs(tick.ms)} y1={padT} x2={xForMs(tick.ms)} y2={baseY} className="fp-tick-line" />
@@ -811,20 +810,19 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
         </rect>)}
         <rect className="fp-underflow" data-count={underflow} x={8} y={baseY - underflow / maxCount * innerH}
           width={boundaryBarWidth} height={underflow / maxCount * innerH} {...(underflow > 0 ? pencil : { fill: "none" })}>
-          <title>{`${underflow} gaps shorter than 16ms, including simultaneous edits`}</title>
+          <title>{`${underflow} ${underflow === 1 ? "gap" : "gaps"} shorter than 16ms, including simultaneous edits`}</title>
         </rect>
         <rect className="fp-overflow" data-count={overflow} x={W - 36} y={baseY - overflow / maxCount * innerH}
           width={boundaryBarWidth} height={overflow / maxCount * innerH} {...(overflow > 0 ? pencil : { fill: "none" })}>
-          <title>{`${overflow} gaps longer than 100 seconds`}</title>
+          <title>{`${overflow} ${overflow === 1 ? "gap" : "gaps"} longer than 10 seconds`}</title>
         </rect>
         <line x1={0} y1={baseY} x2={W} y2={baseY} stroke="#3d2f17" strokeWidth={1} />
         <text x={20} y={H - 6} className="fp-label" textAnchor="middle">&lt;16ms</text>
         {FP_TICKS.map((tick) => (
           <text key={`text-${tick.ms}`} x={xForMs(tick.ms)} y={H - 6} className="fp-label" textAnchor="middle">{tick.label}</text>
         ))}
-        <text x={W - 24} y={H - 6} className="fp-label" textAnchor="middle">&gt;100s</text>
+        <text x={W - 24} y={H - 6} className="fp-label" textAnchor="middle">&gt;10s</text>
       </svg>
-      <p className="muted rhythm-overflow-summary">{overflow} {overflow === 1 ? "gap longer" : "gaps longer"} than 100 seconds. {underflow} shorter than 16ms, including gaps of zero milliseconds.</p>
     </section>
   );
 }

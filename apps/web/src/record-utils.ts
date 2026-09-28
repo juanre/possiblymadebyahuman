@@ -263,7 +263,7 @@ export function buildLengthStepPoints(points: TimelinePoint[]): LengthStepPoint[
 }
 
 export const RHYTHM_MIN_MS = 16;
-export const RHYTHM_MAX_MS = 100_000;
+export const RHYTHM_MAX_MS = 10_000;
 export const RHYTHM_BIN_COUNT = 40;
 
 /** Separate out-of-range gaps instead of clamping them onto the log axis. */

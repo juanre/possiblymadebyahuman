@@ -841,11 +841,11 @@ RecordPage / PagedRecordPage
 The page should show, in this order:
 
 1. A top-level alert, only when a completed hash or format check fails, linking to the signature section.
-2. Header: the title, one strictly descriptive summary sentence (capture context, signed or estimated duration, edits, pastes, largest single insertion, publication date), key facts (editing time, edits, pastes, largest insertion, length, server-confirmed timing), and one limit caption. Unknown values read "not measured".
-3. Edit timeline.
-4. Document check, or a statement that no document was bound.
-5. How this was written (signed text size in letters and digits), only when a document is bound.
-6. Technical details, collapsed: signature & details, writing rhythm, timing and counts (signed or reported duration, editing span, active and paused time between edits, delay summary, typing and operation counts, unknown sources), analyzer signals, capture context.
+2. Header: the title; one strictly descriptive summary sentence (where it was written, naming the site for a browser text field, the signed or estimated span, and the publication date); key facts (writing time, which leaves out pauses of 30 seconds or more, edits, characters deleted, pastes, largest insertion, length, and the signed text size in letters and digits when a document is bound); a check line saying whether the hash chain was checked in the reader's browser and what the server received, linking to the signature section; and one limit caption. Unknown values read "not measured".
+3. Edit timeline. Pauses of 5 minutes or more, including waits before the first edit and before signing, are cut from the time axis and labelled with their length; the end of the axis names a signed finish.
+4. Writing rhythm: gaps between edits on a log scale from 16 ms to 10 s, with separate bars below and above.
+5. Document check, or a statement that no document was bound.
+6. Technical details, collapsed: signature & details, timing and counts (signed or reported duration, editing span, active and paused time between edits, delay summary, typing and operation counts, unknown sources), analyzer signals, capture context.
 
 Each measurement appears once outside the technical details.
 
@@ -854,8 +854,8 @@ Each measurement appears once outside the technical details.
 The public service should not render or reconstruct text. Instead, the timeline visualizes structure:
 
 - document length as a step-after curve, flat between edits and jumping only at a captured edit; stop at unknown measurements and do not extend through uncaptured trailing time
-- explicit no-captured-edit intervals before the first edit and between the last edit and a format 0.3 signed finish
-- readable duration summaries and explicit rhythm counts below 16 ms and above 100 s, without clamping long pauses into finite bins
+- no-captured-edit intervals before the first edit and between the last edit and a format 0.3 signed finish, drawn to scale when short and cut from the axis with their length when 5 minutes or more
+- readable duration summaries and explicit rhythm counts below 16 ms and above 10 s, without clamping long pauses into finite bins
 - insertion/deletion position on a horizontal document bar
 - event size
 - source color
