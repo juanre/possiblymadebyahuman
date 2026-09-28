@@ -19,7 +19,7 @@ weight: 3
 ## What it does not capture
 
 - Your document text. No plaintext leaves the producer. The local Node helper that builds the public record is passed numeric process metadata only, with one sanctioned exception: if you choose to bind the document at sign time, the helper receives the active region when one is active, otherwise the whole buffer, transiently so it can compute the content-blind binding commitment, then discards it. Only the commitment is uploaded; the text never leaves your machine. See [Bind and check a document](/docs/checking-a-document/). Checkpoints are computed by a second local helper that reads the numeric journal from its last verified byte cursor. It receives the session id, format version, journal path and prefix boundaries; after the first checkpoint only new events are hashed. Paths and byte cursors stay local.
-- Absolute local file paths. The sign-time prompts note that the path is omitted by default. Saved session state is filed under a hash of the path, not the path itself.
+- Where the text was written. Records hold no file path, buffer name, or major mode. Saved session state is filed under a hash of the path, not the path itself.
 - Anything outside the buffer `pmbah-mode` is attached to. The mode is per-buffer.
 
 ## Sessions, buffers, and files
@@ -153,7 +153,7 @@ Use the path printed by `command -v node` in a shell where Node is available.
 2. Enable capture: `M-x pmbah-mode`. The mode line shows `PMBAH:N`, where `N` is the local event count, followed by `✓` when the service has stamped every event so far, `·` while some are not yet stamped, or `✗` if the service's view diverged from the local session.
 3. Write normally. Leave and come back whenever you like; an opted-in file resumes its session automatically when reopened.
 4. Check status when desired: `M-x pmbah-show-session-status` reports the session id, event count, duration, observation state, and API URL.
-5. Freeze, optionally bind the active region or whole buffer, answer y/n capture-context prompts, upload, and copy the record URL: `M-x pmbah-sign-buffer`. Before uploading, one last checkpoint covers any events the service has not stamped yet. A session whose checkpoints never reached the service is uploaded with an explicit `unobserved` state rather than being stamped for the first time at sign time.
+5. Freeze, optionally bind the active region or whole buffer, upload, and copy the record URL: `M-x pmbah-sign-buffer`. Before uploading, one last checkpoint covers any events the service has not stamped yet. A session whose checkpoints never reached the service is uploaded with an explicit `unobserved` state rather than being stamped for the first time at sign time.
 6. If you want to throw away the local session without uploading: `M-x pmbah-discard-session`.
 
 Interactive signing scans the journal and uploads in the background while the buffer remains frozen. Closing the buffer cancels that work and preserves a saved frozen record for retry. Publication sends resumable event chunks, so a long session does not have to fit in one request. After a successful upload, the accepted link is archived before the old local journal is removed, and a new segment starts linked to that record. If upload fails, the frozen manifest and journal remain available for the same upload to resume.
@@ -165,13 +165,13 @@ A quick public-service check:
 1. In Emacs, open a buffer and run `M-x pmbah-mode`.
 2. Type a short draft.
 3. Run `M-x pmbah-show-session-status`; confirm the API URL is `https://possiblymadebyahuman.com`.
-4. Run `M-x pmbah-sign-buffer`; answer the y/n binding and capture-context prompts (RET accepts the default `y`), upload, and confirm a short URL is copied to the kill ring.
+4. Run `M-x pmbah-sign-buffer`; answer the y/n binding prompt (RET accepts the default `y`), upload, and confirm a short URL is copied to the kill ring.
 
 For a local development check instead, start with `make local-container` (or `PMBAH_PORT=18800 make local-container`) and set `PMBAH_API_BASE_URL` / `pmbah-api-base-url` to the matching local origin.
 
-## Sign-time binding and capture context
+## Sign-time binding
 
-`pmbah-sign-buffer` asks whether to bind the selected region or the whole buffer to the record, depending on what is active when you sign. All sign-time questions are y/n prompts where RET accepts the default `y`. If you bind, the text used is:
+`pmbah-sign-buffer` asks whether to bind the selected region or the whole buffer to the record, depending on what is active when you sign. The question is a y/n prompt where RET accepts the default `y`. If you bind, the text used is:
 
 - the active, non-empty region when `use-region-p` is true; or
 - the whole buffer when there is no active region.
@@ -180,15 +180,7 @@ In a default modern Emacs configuration, `use-region-p` is true when the region 
 
 The selected text is passed only transiently to the local helper to compute the content-blind `text_binding` commitment, then discarded. Only the binding object is uploaded.
 
-For capture context, `pmbah-sign-buffer` does not open a preview buffer. It prompts separately for whether to include `emacs.buffer_name` and `emacs.major_mode`; absolute file paths are omitted. If both metadata fields are declined, the uploaded `capture_context` is:
-
-```json
-{ "surface": "emacs" }
-```
-
-That `capture_context` is separate from the optional `manifest.text_binding`; a record can have minimal capture context and still include a document binding.
-
-Use `C-u M-x pmbah-sign-buffer` to skip the prompts and accept the default yes answers: include buffer name and major mode, and bind the selected region if active or the whole buffer otherwise.
+Use `C-u M-x pmbah-sign-buffer` to skip the prompt and accept the default yes answer: bind the selected region if active or the whole buffer otherwise.
 
 ## Event semantics
 
