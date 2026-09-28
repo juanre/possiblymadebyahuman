@@ -245,3 +245,23 @@ test('the site mark draws without fetching any image', async ({page}) => {
   expect(await page.locator('main img').count()).toBe(0);
   expect(imageRequests.filter(url => !url.endsWith('/favicon.svg') && !url.endsWith('/favicon.ico'))).toEqual([]);
 });
+
+test('a continuation says what it continues and draws its length from where the parent ended', async ({page, request}) => {
+  const parent = 'b3:' + 'c'.repeat(64);
+  const typedAtEnd = Array.from({length: 6}, (_, seq) => ({seq, t: seq * 200, op: 'insert', pos: 500 + seq, del_len: 0, ins_len: 1, source: 'typing'}));
+  const record = await activityRecord(request, typedAtEnd);
+  record.manifest.format_version = '0.3';
+  record.manifest.parent_record = parent;
+  record.manifest.duration_ms = 1400;
+  record.manifest.record_hash = computeRecordHash(record.events, record.manifest.session_id, '0.3', undefined, record.manifest);
+  record.stats.duration_ms = 1400;
+  record.stats.starting_length = 500;
+  record.stats.observed_final_length = 506;
+  await page.route(`**/api/records/${slug}`, route => route.fulfill({json: record}));
+  await page.goto(`/${slug}`);
+  const continues = page.locator('header.record-header .record-continues');
+  await expect(continues).toHaveText('It continues an earlier record, which covers the writing before it.');
+  await expect(continues.getByRole('link', {name: 'an earlier record'})).toHaveAttribute('href', `/${parent}`);
+  await expect(page.locator('.edit-timeline .length-curve')).toHaveCount(1);
+  await expect(page.locator('.edit-timeline text.length-scale')).toHaveText('506 characters');
+});

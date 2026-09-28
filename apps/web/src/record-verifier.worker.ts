@@ -6,9 +6,9 @@ import { verifyPagedRecord, type EventPage } from "./stream-record.ts";
 class PageUnavailable extends Error {}
 
 self.onmessage = async (
-  message: MessageEvent<{ manifest: RecordManifest }>,
+  message: MessageEvent<{ manifest: RecordManifest; starting_length?: number | null }>,
 ) => {
-  const { manifest } = message.data;
+  const { manifest, starting_length: startingLength = 0 } = message.data;
   try {
     // Address pages by the immutable full hash, not a mutable caller-supplied URL.
     const result = await verifyPagedRecord(
@@ -35,6 +35,7 @@ self.onmessage = async (
       },
       (progress) =>
         self.postMessage({ type: "progress", count: progress.count }),
+      startingLength,
     );
     self.postMessage({ type: "complete", ...result });
   } catch (error) {

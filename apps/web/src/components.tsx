@@ -90,6 +90,9 @@ export function RecordHeader({ record, verification, checking = false, onShowDet
       {record ? (
         <>
           <p className="record-summary">{describeRecordSummary(record)}</p>
+          {record.manifest.parent_record && (
+            <p className="record-continues">It continues <a href={`/${record.manifest.parent_record}`}>an earlier record</a>, which covers the writing before it.</p>
+          )}
           <dl className="record-facts">
             {recordFacts(record).map((fact) => (
               <div key={fact.label} className="record-fact"><dt>{fact.label}</dt><dd>{fact.value}</dd></div>
@@ -262,7 +265,8 @@ const TIMELINE_BREAK_W = 28;
 
 function EditTimeline({ record }: { record: RecordApiResponse }) {
   const timing = recordTimingDetails(record);
-  const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
+  const startingLength = record.stats.starting_length ?? 0;
+  const points = useMemo(() => buildTimelinePoints(record.events, startingLength), [record.events, startingLength]);
   // The length curve is drawn for the prefix of events whose document length can
   // be inferred; from the first event with an unknown position onwards only
   // markers are shown.

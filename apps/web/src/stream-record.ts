@@ -34,6 +34,7 @@ export async function verifyPagedRecord(
   manifest: RecordManifest,
   readPage: (offset: number, limit: number) => Promise<EventPage>,
   progress?: (value: StreamProgress) => void,
+  startingLength: number | null = 0,
 ): Promise<{ verification: VerificationResult; overview: RecordOverview }> {
   const verifier = new EventStreamVerifier(manifest);
   const duration = Math.max(1, manifest.duration_ms);
@@ -49,7 +50,7 @@ export async function verifyPagedRecord(
     last_t: null,
     known_length_events: 0,
   };
-  let length: number | null = 0;
+  let length: number | null = startingLength;
   while (verifier.eventCount < manifest.event_count) {
     const offset = verifier.eventCount;
     const page = await readPage(offset, EVENT_PAGE_SIZE);

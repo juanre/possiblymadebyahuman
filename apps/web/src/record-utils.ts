@@ -216,8 +216,9 @@ export function verifyRecordChain(record: RecordApiResponse): VerificationState 
   };
 }
 
-export function buildTimelinePoints(events: BufferMutation[]): TimelinePoint[] {
-  let documentLength: number | null = 0;
+/** A continuation's points start from its starting length, as the service computed it. */
+export function buildTimelinePoints(events: BufferMutation[], startingLength: number | null = 0): TimelinePoint[] {
+  let documentLength: number | null = startingLength;
   let previousT = 0;
   return events.map((event) => {
     const delayFromPreviousMs = event.seq === 0 ? 0 : event.t - previousT;
