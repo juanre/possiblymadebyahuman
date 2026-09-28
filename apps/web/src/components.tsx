@@ -281,23 +281,14 @@ function describeTimelinePoint(point: { source: string; t: number; ins_len: numb
   return `${name} at ${formatDuration(point.t)}: ${inserted}, ${removed}${length}`;
 }
 
-/** Diagonal pencil shading, the fill for the measured document length. */
-export function PencilHatch({ id }: { id: string }) {
-  return (
-    <defs>
-      <pattern id={id} width={5} height={5} patternUnits="userSpaceOnUse" patternTransform="rotate(-38)">
-        <line x1={0} y1={0} x2={0} y2={5} stroke="#3d2f17" strokeWidth={1} strokeOpacity={0.5} />
-      </pattern>
-    </defs>
-  );
-}
+/** The data colour for record charts: a line over a light fill of the same hue. */
+export const DATA_INK = { line: "#7a4f2a", fill: "#8b5e34", fillOpacity: 0.2, barOpacity: 0.45 } as const;
 
 // Width given to each pause cut out of the time axis.
 const TIMELINE_BREAK_W = 28;
 
 function EditTimeline({ record }: { record: RecordApiResponse }) {
   const timing = recordTimingDetails(record);
-  const hatchId = `pencil-hatch-${useId().replace(/:/g, "")}`;
   const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
   // The length curve is drawn for the prefix of events whose document length can
   // be inferred; from the first event with an unknown position onwards only
@@ -371,18 +362,17 @@ function EditTimeline({ record }: { record: RecordApiResponse }) {
         <p className="section-intro">Document length is unknown because this record lacks enough measurements to reconstruct it. The bars show when edits happened and how many were captured, not document length.{pauseSentence}</p>
       )}
       <svg ref={chartRef} className="timeline-chart" viewBox={`0 0 ${chartW} ${TIMELINE_VB_H + secondRowH}`} role="img" aria-label={chartLabel} preserveAspectRatio="xMidYMid meet">
-        <PencilHatch id={hatchId} />
         {!lengthKnown && activity.filter(column => column.count > 0).map(column => {
           const height = Math.max(3, column.count / maxActivity * plotH);
           return <rect className="activity-bar" key={`${column.start}-${column.x0}`} x={TIMELINE_PAD_L + column.x0} y={baseline - height}
-            width={Math.max(1, column.x1 - column.x0 - 1)} height={height} fill={`url(#${hatchId})`} stroke="#3d2f17" strokeWidth={0.8}>
+            width={Math.max(1, column.x1 - column.x0 - 1)} height={height} fill={DATA_INK.fill} fillOpacity={DATA_INK.barOpacity}>
             <title>{`${column.count} edit${column.count === 1 ? "" : "s"} from ${formatDuration(column.start)} to ${formatDuration(column.end)}`}</title>
           </rect>;
         })}
         {!lengthKnown && points.length > 0 && <text x={TIMELINE_PAD_L} y={TIMELINE_PAD_T - 12} fontSize={12} fill="#514a40" fontFamily={CHART_FONT}>edits per interval (peak {maxActivity})</text>}
         <line x1={TIMELINE_PAD_L} y1={baseline} x2={chartW - TIMELINE_PAD_R} y2={baseline} stroke="#3d2f17" strokeWidth={1} />
-        {lengthKnown ? <path className="length-area" d={areaPath} fill={`url(#${hatchId})`} stroke="none" /> : null}
-        {lengthKnown ? <path className="length-curve" d={linePath} fill="none" stroke="#3d2f17" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" /> : null}
+        {lengthKnown ? <path className="length-area" d={areaPath} fill={DATA_INK.fill} fillOpacity={DATA_INK.fillOpacity} stroke="none" /> : null}
+        {lengthKnown ? <path className="length-curve" d={linePath} fill="none" stroke={DATA_INK.line} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" /> : null}
         {axis.breaks.map((gap) => {
           const x0 = TIMELINE_PAD_L + gap.x0;
           const x1 = TIMELINE_PAD_L + gap.x1;
@@ -391,13 +381,13 @@ function EditTimeline({ record }: { record: RecordApiResponse }) {
             <g className="timeline-break" key={`break-${gap.start}`}>
               <title>{`No edits for ${formatPauseLength(gap.end - gap.start)}`}</title>
               <rect x={x0} y={TIMELINE_PAD_T - 4} width={x1 - x0} height={plotH + 12} fill="#fbf8f2" />
-              {held !== null && <line x1={x0} y1={ly(held)} x2={x1} y2={ly(held)} stroke="#3d2f17" strokeWidth={1.5} strokeDasharray="2 4" strokeLinecap="round" />}
+              {held !== null && <line x1={x0} y1={ly(held)} x2={x1} y2={ly(held)} stroke={DATA_INK.line} strokeWidth={1.5} strokeDasharray="2 4" strokeLinecap="round" />}
               <line x1={x0 + 2} y1={baseline + 6} x2={x0 + 8} y2={baseline - 6} stroke="#3d2f17" strokeWidth={1.2} />
               <line x1={x1 - 8} y1={baseline + 6} x2={x1 - 2} y2={baseline - 6} stroke="#3d2f17" strokeWidth={1.2} />
             </g>
           );
         })}
-        {knownPoints.length === 1 && !notable.some(point => point.seq === knownPoints[0]!.seq) && <circle className="length-single" cx={tx(knownPoints[0]!.t)} cy={ly(knownPoints[0]!.documentLength ?? 0)} r={3.5} fill="#3d2f17">
+        {knownPoints.length === 1 && !notable.some(point => point.seq === knownPoints[0]!.seq) && <circle className="length-single" cx={tx(knownPoints[0]!.t)} cy={ly(knownPoints[0]!.documentLength ?? 0)} r={3.5} fill={DATA_INK.line}>
           <title>{`${formatCharacters(knownPoints[0]!.documentLength)} after the first edit`}</title>
         </circle>}
         {notable.map((point) => (
@@ -427,7 +417,7 @@ function EditTimeline({ record }: { record: RecordApiResponse }) {
           {activity.filter(column => column.count > 0).map(column => {
             const height = Math.max(3, column.count / maxActivity * 48);
             return <rect className="activity-bar" key={`${column.start}-${column.x0}`} x={TIMELINE_PAD_L + column.x0} y={52 - height}
-              width={Math.max(1, column.x1 - column.x0 - 1)} height={height} fill={`url(#${hatchId})`} stroke="#3d2f17" strokeWidth={0.8}>
+              width={Math.max(1, column.x1 - column.x0 - 1)} height={height} fill={DATA_INK.fill} fillOpacity={DATA_INK.barOpacity}>
               <title>{`${column.count} edits from ${formatDuration(column.start)} to ${formatDuration(column.end)}`}</title>
             </rect>;
           })}
@@ -779,7 +769,6 @@ const FP_TICKS: { ms: number; label: string }[] = [
 
 export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   const [chartRef, W] = useContentWidth<SVGSVGElement>(FP_FALLBACK_W);
-  const hatchId = `rhythm-hatch-${useId().replace(/:/g, "")}`;
   const histogram = useMemo(() => buildDelayHistogram(record.events), [record.events]);
   if (histogram.total === 0) return null;
   const { bins, underflow, overflow } = histogram;
@@ -793,27 +782,31 @@ export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   const xForMs = (ms: number) => padL + (Math.log10(ms) - logMin) / span * innerW;
   const barWidth = innerW / bins.length;
   const boundaryBarWidth = 24;
-  const pencil = { fill: `url(#${hatchId})`, stroke: "#3d2f17", strokeWidth: 0.8 };
+  const edgeBar = { fill: DATA_INK.fill, fillOpacity: DATA_INK.barOpacity };
+  // The distribution is drawn as a line through the centre of each bucket.
+  const curve = bins.map((bin, index) => [padL + (index + 0.5) * barWidth, baseY - bin.count / maxCount * innerH] as const);
+  const curvePath = curve.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x} ${y}`).join(" ");
+  const areaPath = `M ${padL} ${baseY} L ${curve.map(([x, y]) => `${x} ${y}`).join(" L ")} L ${padL + innerW} ${baseY} Z`;
   return (
     <section className="record-section writing-rhythm" aria-labelledby="writing-rhythm-heading">
       <h2 id="writing-rhythm-heading">Writing rhythm</h2>
-      <p className="section-intro">How long the writer paused between one edit and the next. Bar height counts pauses.</p>
+      <p className="section-intro">How long the writer paused between one edit and the next, and how often.</p>
       <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of gaps between edits, with separate bars below 16 milliseconds and above 10 seconds">
-        <PencilHatch id={hatchId} />
         {FP_TICKS.map((tick) => (
           <line key={`line-${tick.ms}`} x1={xForMs(tick.ms)} y1={padT} x2={xForMs(tick.ms)} y2={baseY} className="fp-tick-line" />
         ))}
+        <path className="rhythm-area" d={areaPath} fill={DATA_INK.fill} fillOpacity={DATA_INK.fillOpacity} stroke="none" />
+        <path className="rhythm-curve" d={curvePath} fill="none" stroke={DATA_INK.line} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
         {bins.map((bin, index) => <rect key={index} className="fp-bin" data-count={bin.count}
-          x={padL + index * barWidth} y={baseY - bin.count / maxCount * innerH}
-          width={Math.max(0.5, barWidth - 1)} height={bin.count / maxCount * innerH} {...(bin.count > 0 ? pencil : { fill: "none" })}>
+          x={padL + index * barWidth} y={padT} width={barWidth} height={innerH} fill="transparent">
           <title>{`${bin.count} gaps, approximately ${formatDuration(Math.round(bin.start))} to ${formatDuration(Math.round(bin.end))}`}</title>
         </rect>)}
         <rect className="fp-underflow" data-count={underflow} x={8} y={baseY - underflow / maxCount * innerH}
-          width={boundaryBarWidth} height={underflow / maxCount * innerH} {...(underflow > 0 ? pencil : { fill: "none" })}>
+          width={boundaryBarWidth} height={underflow / maxCount * innerH} {...(underflow > 0 ? edgeBar : { fill: "none" })}>
           <title>{`${underflow} ${underflow === 1 ? "gap" : "gaps"} shorter than 16ms, including simultaneous edits`}</title>
         </rect>
         <rect className="fp-overflow" data-count={overflow} x={W - 36} y={baseY - overflow / maxCount * innerH}
-          width={boundaryBarWidth} height={overflow / maxCount * innerH} {...(overflow > 0 ? pencil : { fill: "none" })}>
+          width={boundaryBarWidth} height={overflow / maxCount * innerH} {...(overflow > 0 ? edgeBar : { fill: "none" })}>
           <title>{`${overflow} ${overflow === 1 ? "gap" : "gaps"} longer than 10 seconds`}</title>
         </rect>
         <line x1={0} y1={baseY} x2={W} y2={baseY} stroke="#3d2f17" strokeWidth={1} />

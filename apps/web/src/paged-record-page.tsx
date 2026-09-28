@@ -1,7 +1,7 @@
-import React, { useEffect, useId, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   CaptureContextSummary,
-  PencilHatch,
+  DATA_INK,
   RecordFooter,
   RecordHeader,
   SignalList,
@@ -156,7 +156,6 @@ export function PagedRecordPage({ summary }: { summary: RecordSummary }) {
 }
 
 function StreamedOverview({ overview, durationMs }: { overview: RecordOverview; durationMs: number }) {
-  const hatchId = `pencil-hatch-${useId().replace(/:/g, "")}`;
   const maximum = Math.max(1, ...overview.bins.map((bin) => bin.count));
   return (
     <section className="record-section edit-timeline" aria-labelledby="edit-timeline-heading">
@@ -173,7 +172,6 @@ function StreamedOverview({ overview, durationMs }: { overview: RecordOverview; 
         role="img"
         aria-label="Verified editing activity across the full record"
       >
-        <PencilHatch id={hatchId} />
         {overview.bins.map((bin, i) => (
           <rect
             key={i}
@@ -181,10 +179,8 @@ function StreamedOverview({ overview, durationMs }: { overview: RecordOverview; 
             y={176 - (164 * bin.count) / maximum}
             width={7}
             height={(164 * bin.count) / maximum}
-            fill={`url(#${hatchId})`}
-            stroke="#3d2f17"
-            strokeWidth={0.8}
-            vectorEffect="non-scaling-stroke"
+            fill={DATA_INK.fill}
+            fillOpacity={DATA_INK.barOpacity}
           >
             <title>{`${formatDuration(bin.start)}–${formatDuration(bin.end)}: ${bin.count} edits${bin.minimum_length === null ? "" : `; measured lengths ${bin.minimum_length}–${formatCharacters(bin.maximum_length)}`}`}</title>
           </rect>

@@ -61,7 +61,11 @@ test.describe("public record page", () => {
     await expect(page.getByRole("heading", { level: 2 })).toHaveText(["Edit timeline", "Writing rhythm", "Check a document", "Technical details"]);
     await expect(page.locator("details.technical-details")).not.toHaveAttribute("open", "");
     await expect(page.locator("svg.fingerprint-chart")).toBeVisible();
-    await expect(page.locator(".writing-rhythm .section-intro")).toHaveText("How long the writer paused between one edit and the next. Bar height counts pauses.");
+    await expect(page.locator("main svg pattern")).toHaveCount(0);
+    await expect(page.locator(".writing-rhythm path.rhythm-curve")).toHaveCount(1);
+    await expect(page.locator(".writing-rhythm path.rhythm-area")).toHaveCount(1);
+    await expect(page.locator(".writing-rhythm .fp-bin").first()).toHaveAttribute("fill", "transparent");
+    await expect(page.locator(".writing-rhythm .section-intro")).toHaveText("How long the writer paused between one edit and the next, and how often.");
     await expect(region(page, "How this was written")).toHaveCount(0);
   });
 

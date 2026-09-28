@@ -227,8 +227,8 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 .dot.curve {
   border-radius: 0;
   width: 1.2em;
-  background: repeating-linear-gradient(-52deg, rgba(61, 47, 23, 0.45) 0 1px, transparent 1px 4px);
-  border-top: 2px solid var(--pencil);
+  background: rgba(139, 94, 52, 0.2);
+  border-top: 2px solid #7a4f2a;
 }
 .dot.large { background: transparent; outline: 2px solid #202124; outline-offset: 1px; }
 
