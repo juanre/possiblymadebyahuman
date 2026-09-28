@@ -17,7 +17,7 @@ it there.
 ### Summary
 
 The dashboard takes the summary from the manifest `description` (132 characters
-at most). The 0.4.0 package says:
+at most). The 0.4.1 package says:
 
 > Content-blind writing records for text fields.
 
@@ -97,9 +97,8 @@ releasing a new version.
 | Small promo tile (440x280) | `apps/browser-extension/store-assets/promo-tile-440x280.png` |
 | Marquee promo tile (1400x560) | Optional; none prepared |
 
-All screenshots are 1280x800 and come from the real extension and viewer; see
-`docs/browser-extension-release.md#store-screenshots` to regenerate them. The
-blog in the screenshots is fictional and served locally.
+All screenshots are 1280x800, captured by hand in Chrome with the published
+extension in a Gmail draft, with the writer's email address removed.
 
 Screenshots 3 and 4 show 0.4.0 behavior that has since been removed.
 Screenshot 3 shows the finish review with its Public context section (page URL,
@@ -149,8 +148,8 @@ health, financial and payment information, authentication information (the
 checkpoint token is issued by our service, not a user credential), personal
 communications, and location.
 
-The 0.4.0 submission also ticked **Web history**, because that version
-published the address and title of the page the user wrote on. Records no
+Earlier submissions ticked **Web history**, because extension versions up to
+0.4.0 published the address and title of the page the user wrote on. Records no
 longer carry either, so untick Web history when uploading the next version.
 The description and the reviewer test instructions above also changed with it
 and must be pasted again.
@@ -213,8 +212,8 @@ Do these in order.
 5. **Fill the Account page.** Publisher display name, a contact email (verify
    it from the email Google sends), and the trader or non-trader declaration
    for the EU. Keep a public email off the listing unless you want one there.
-6. **Download the package** `possiblymadebyahuman-extension-0.4.0.zip` from the
-   GitHub release for tag `v0.4.0`, or the release you are submitting. Run
+6. **Download the package** `possiblymadebyahuman-extension-0.4.1.zip` from the
+   GitHub release for tag `v0.4.1`, or the release you are submitting. Run
    `shasum -a 256` on it and compare with the value in
    [`chrome-web-store-prep.md#package-facts`](chrome-web-store-prep.md#package-facts).
    Upload only a matching file.
@@ -265,7 +264,7 @@ the rejection email.
 These are Juan's decisions; nothing in this repository settles them.
 
 1. **Summary text.** Keep "Content-blind writing records for text fields." for
-   0.4.0, or ship a version with the suggested summary before submitting.
+   0.4.1, or ship a version with the suggested summary before submitting.
 2. **Host permission scope.** Submit with `host_permissions: ["<all_urls>"]`,
    or first narrow it to `https://possiblymadebyahuman.com/*` in a new version
    (the content script keeps `<all_urls>`; two tests pin the current value).
