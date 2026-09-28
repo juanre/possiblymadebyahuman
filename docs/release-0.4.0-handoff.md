@@ -40,7 +40,8 @@ Before deploying on Render:
    set of rate limits.
 2. Keep `PUBLIC_BASE_URL` at the production HTTPS origin.
 
-Then point the service at the `0.4.0` image and deploy. Keep the image's
+Then deploy the service's `:latest` image on Render, which this release
+updated. Keep the image's
 default startup command: migrations 006 (record removal) and 007 (removal
 tombstones) run before the service reports ready. Require `/health` to report
 the tagged commit and `/ready` to succeed.
