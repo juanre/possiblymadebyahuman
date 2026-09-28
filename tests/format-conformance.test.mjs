@@ -93,7 +93,6 @@ test("format 0.2 seals text binding into record_hash and detects tampering", () 
       record_hash: computeRecordHash(events, sessionId, "0.2", textBinding),
       session_id: sessionId,
       producer: { id: "fixture", version: "0.2.0", capabilities: ["timing"] },
-      capture_context: null,
       text_binding: textBinding,
       event_count: events.length,
       duration_ms: 0,
@@ -223,6 +222,15 @@ test("public manifest validation rejects text-derived fields", async () => {
   });
   assert.ok(errors.some((error) => error.includes("final_text_hash is not a content-blind public manifest field")));
   assert.ok(errors.some((error) => error.includes("final_text_length is not a content-blind public manifest field")));
+});
+
+test("public manifest validation rejects any description of where the text was written", async () => {
+  const [golden] = await readJson("packages/conformance/vectors/golden-records.json");
+  assert.equal("capture_context" in golden.record.manifest, false, "golden records carry no capture context");
+  for (const capture_context of [{ surface: "browser", browser: { title: "Drafts - someone@example.com" } }, { surface: "emacs" }, null]) {
+    const errors = validateManifest({ ...golden.record.manifest, capture_context });
+    assert.ok(errors.some((error) => error.includes("capture_context is not a public manifest field")), JSON.stringify(capture_context));
+  }
 });
 
 test("public manifest validation rejects storage-only parent_record_hash", async () => {

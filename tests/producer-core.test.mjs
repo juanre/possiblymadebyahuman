@@ -14,12 +14,9 @@ import {
   SessionFrozenError,
   SessionRegistry,
   UnknownSessionError,
-  buildCaptureContext,
   isExactDescriptorMatch,
   isPartialDescriptorMatch,
-  redactCaptureContext,
   resolveSession,
-  stripQueryAndHash,
   sweepExpired,
 } from "../packages/producer-core/src/index.ts";
 
@@ -111,8 +108,8 @@ function descriptor(overrides = {}) {
   };
 }
 
-function captureForOrigin(origin, desc) {
-  return buildCaptureContext({ origin, descriptor: desc, page_title: "Test Page" });
+function captureForOrigin() {
+  return { surface: "browser" };
 }
 
 function makeRegistry(opts = {}) {
@@ -484,23 +481,19 @@ test("identity helpers expose match policy independently", () => {
   assert.ok(!isPartialDescriptorMatch(left, unrelated));
 });
 
-test("capture context strips query/hash and supports redaction", () => {
-  const ctx = buildCaptureContext({
-    origin: { ...originA, path: "/thread/1" },
-    descriptor: descriptor(),
-    page_title: "Reply on Thread 1",
-  });
-  assert.equal(ctx.browser?.url, "https://a.test/thread/1");
-  assert.equal(ctx.browser?.title, "Reply on Thread 1");
-  const redacted = redactCaptureContext(ctx, { drop_title: true, replace_label: "anonymous reply" });
-  assert.equal(redacted.browser?.title, undefined);
-  assert.equal(redacted.label, "anonymous reply");
-});
-
-test("stripQueryAndHash drops both query and fragment", () => {
-  assert.equal(stripQueryAndHash("https://a.test/thread/1?x=1#top"), "https://a.test/thread/1");
-  assert.equal(stripQueryAndHash("https://a.test/thread/1#top"), "https://a.test/thread/1");
-  assert.equal(stripQueryAndHash("https://a.test/thread/1"), "https://a.test/thread/1");
+test("signed records never describe where the text was written, and sessions keep only their surface", () => {
+  const { registry, clock } = makeRegistry();
+  const desc = descriptor();
+  clock.set(0);
+  // A draft saved by an older version still carries page details locally.
+  const legacy = { surface: "browser", label: "Drafts - someone@example.com", browser: { url: "https://mail.example/u/0/", title: "Drafts - someone@example.com" } };
+  const session = registry.findOrCreate(originA, desc, legacy);
+  assert.deepEqual(registry.list()[0].capture_context, { surface: "browser" });
+  registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" });
+  const draft = registry.sign(session.session_id);
+  assert.equal("capture_context" in draft.manifest, false);
+  assert.deepEqual(validateManifest(draft.manifest), []);
+  assert.equal(JSON.stringify(draft).includes("someone@example.com"), false);
 });
 
 test("resolveSession on an empty registry returns 'fresh'", () => {

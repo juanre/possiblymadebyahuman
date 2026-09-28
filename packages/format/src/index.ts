@@ -15,8 +15,6 @@ export const BLAKE3_HEX_LENGTH = 64;
 // Elapsed milliseconds use BIGINT storage and must remain exact JSON/JS integers.
 export const MAX_TIME_FIELD_VALUE = Number.MAX_SAFE_INTEGER;
 export const MAX_INTEGER_FIELD_VALUE = 2_147_483_647;
-export const MAX_CAPTURE_CONTEXT_STRING_LENGTH = 512;
-export const MAX_CAPTURE_CONTEXT_URL_LENGTH = 2_048;
 export const MAX_ATTESTATION_COUNT = 16;
 export const MAX_ATTESTATION_FIELD_COUNT = 16;
 export const MAX_ATTESTATION_STRING_LENGTH = 512;
@@ -76,20 +74,6 @@ export type ProducerInfo = {
   capabilities: Capability[];
 };
 
-export type CaptureContext = {
-  surface?: string;
-  label?: string;
-  browser?: {
-    url?: string;
-    title?: string;
-    field_kind?: string;
-  };
-  emacs?: {
-    buffer_name?: string;
-    major_mode?: string;
-  };
-};
-
 export type Attestation = {
   type: string;
   [key: string]: string | undefined;
@@ -117,7 +101,6 @@ export type RecordManifest = {
   record_hash: B3Hash;
   session_id: string;
   producer: ProducerInfo;
-  capture_context?: CaptureContext | null;
   text_binding?: TextBinding;
   event_count: number;
   duration_ms: number;
@@ -176,9 +159,6 @@ const SOURCE_SET = new Set<string>(SOURCES);
 const CAPABILITY_SET = new Set<string>(CAPABILITIES);
 const FORMAT_VERSION_SET = new Set<string>(FORMAT_VERSIONS);
 const EVENT_KEYS = new Set(["seq", "t", "op", "pos", "del_len", "ins_len", "source"]);
-const CAPTURE_CONTEXT_KEYS = new Set(["surface", "label", "browser", "emacs"]);
-const CAPTURE_CONTEXT_BROWSER_KEYS = new Set(["url", "title", "field_kind"]);
-const CAPTURE_CONTEXT_EMACS_KEYS = new Set(["buffer_name", "major_mode"]);
 
 export function canonicalizeJson(value: unknown): string {
   if (value === null) return "null";
@@ -657,9 +637,9 @@ export function validateManifest(manifest: unknown): string[] {
       }
     }
   }
-  if (candidate.capture_context !== undefined && candidate.capture_context !== null) {
-    errors.push(...validateCaptureContext(candidate.capture_context));
-  }
+  // A record describes only the writing process: nothing about the page, site,
+  // file or tool it was written in is published.
+  if ("capture_context" in candidate) errors.push("capture_context is not a public manifest field");
   if (candidate.format_version === FORMAT_VERSION_0_1 && "text_binding" in candidate) {
     errors.push("text_binding is not valid for format_version 0.1");
   }
@@ -678,35 +658,6 @@ export function validateManifest(manifest: unknown): string[] {
   validateNullableB3(candidate.parent_record, "parent_record", errors);
   errors.push(...validateAttestations(candidate.attestations));
 
-  return errors;
-}
-
-export function validateCaptureContext(context: unknown): string[] {
-  if (!isPlainObject(context)) return ["capture_context must be an object, null, or absent"];
-  const errors: string[] = [];
-  for (const [key, value] of Object.entries(context)) {
-    if (!CAPTURE_CONTEXT_KEYS.has(key)) {
-      errors.push(`capture_context contains unknown field ${key}`);
-      continue;
-    }
-    if (key === "browser" || key === "emacs") {
-      const allowed = key === "browser" ? CAPTURE_CONTEXT_BROWSER_KEYS : CAPTURE_CONTEXT_EMACS_KEYS;
-      if (!isPlainObject(value)) {
-        errors.push(`capture_context.${key} must be an object`);
-        continue;
-      }
-      for (const [childKey, childValue] of Object.entries(value)) {
-        if (!allowed.has(childKey)) {
-          errors.push(`capture_context.${key} contains unknown field ${childKey}`);
-          continue;
-        }
-        const limit = childKey === "url" ? MAX_CAPTURE_CONTEXT_URL_LENGTH : MAX_CAPTURE_CONTEXT_STRING_LENGTH;
-        validateBoundedString(childValue, `capture_context.${key}.${childKey}`, limit, errors);
-      }
-      continue;
-    }
-    validateBoundedString(value, `capture_context.${key}`, MAX_CAPTURE_CONTEXT_STRING_LENGTH, errors);
-  }
   return errors;
 }
 

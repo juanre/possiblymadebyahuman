@@ -144,9 +144,9 @@ test('discard waits for an in-flight accepted prefix before rollback after delet
  await h.registry.persist();h.registry.appendMutation(id,mutation);await h.registry.persist();assert.equal(h.events.get(id).length,2);
 });
 
-test('failed journal publication keeps capture context frozen with the same capability',async()=>{
+test('failed journal publication retries the exact signed record',async()=>{
  const h=setup();const {session_id:id}=h.create();h.registry.appendMutation(id,mutation);const signed=h.registry.sign(id);h.registry.markFailedUpload(id,'offline');
- assert.throws(()=>h.registry.redactCaptureContext(id,{label:true}),/frozen|state/);assert.deepEqual(h.registry.sign(id),signed);
+ assert.deepEqual(h.registry.sign(id),signed);
 });
 
 test('completed resumable acknowledgement must identify the same private upload',async()=>{
