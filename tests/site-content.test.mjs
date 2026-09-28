@@ -3,6 +3,8 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+const CHROME_WEB_STORE_URL = "https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh";
+
 const siteRoot = "apps/site";
 const contentRoot = join(siteRoot, "content");
 
@@ -73,14 +75,15 @@ test("home content names the three producers, the not-a-detector framing, and no
   assert.match(home, /\/write/, "home must link to /write");
   assert.match(home, /\/docs\/emacs\//, "home must link to /docs/emacs/");
   const ctas = [...home.matchAll(/class="home-cta" href="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(ctas, ["/docs/chrome-extension/", "/write", "/docs/emacs/"], "home CTAs must lead with the extension");
+  assert.deepEqual(ctas, [CHROME_WEB_STORE_URL, "/write", "/docs/emacs/"], "home CTAs must lead with the extension's store listing");
   // Hard rules: no blog, no per-record standing-claim block in body, no
-  // detector wording, no placeholder Chrome Web Store install URL on home
-  // (gated until .26 records the real listing).
+  // detector wording, and no store link other than the published listing.
   assert.doesNotMatch(home, /\/blog\//, "home must not link to a blog");
   assert.doesNotMatch(home, /standing-claim/, "per-record standing claim must not appear on the home page");
   assert.doesNotMatch(home, /\bdetector\s+score\b/i);
-  assert.doesNotMatch(home, /chromewebstore\.google\.com|chrome\.google\.com\/webstore/i, "home must not publish a Chrome Web Store URL before approval");
+  for (const url of home.match(/https:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)[^"\s)]*/gi) ?? []) {
+    assert.equal(url, CHROME_WEB_STORE_URL, "home links only the published store listing");
+  }
 });
 
 test("required doc pages exist and cover the SOT-mandated topics", async () => {
@@ -162,4 +165,10 @@ test("the site names the Chrome extension, since more extensions will follow", a
   }
   const base = await readFile(new URL("../apps/site/layouts/_default/baseof.html", import.meta.url), "utf8");
   assert.match(base, /class="site-nav-cta" href="\/docs\/chrome-extension\/">Chrome extension</);
+});
+
+test("the Chrome extension installs from its store listing, with no developer-mode steps", async () => {
+  const page = await readFile(new URL("../apps/site/content/docs/chrome-extension.md", import.meta.url), "utf8");
+  assert.ok(page.includes(CHROME_WEB_STORE_URL), "extension page links the store listing");
+  assert.doesNotMatch(page, /Developer mode|Load unpacked|Extract the ZIP|GitHub releases/);
 });

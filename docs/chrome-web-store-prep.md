@@ -1,8 +1,8 @@
 # Chrome Web Store preparation
 
-Status: the extension source is at **0.4.0** (tag `v0.4.0`). It has not been
-submitted to the Chrome Web Store, and no listing exists. Developer-mode ZIPs
-are distributed through GitHub releases.
+Status: the extension is published in the Chrome Web Store, where the store
+shows version 0.3.3. The source is at **0.4.0** (tag `v0.4.0`); upload that
+release's ZIP to the listing as an update.
 
 This document holds the technical facts a store submission depends on: what the
 package contains, its single purpose, the permission justifications, and what
@@ -29,10 +29,10 @@ change, recheck this document before the next upload.
 
 ## Listing identity
 
-Record these here once they exist. Do not add them to the site before then.
+The published listing:
 
-- Extension ID: `TBD after the Chrome Web Store dashboard assigns one`.
-- Chrome Web Store listing URL: `TBD after the listing is approved and published`.
+- Extension ID: `akodlnlfkdoiobdcghmbhhoafokmldoh`.
+- Chrome Web Store listing URL: <https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh>.
 - Listing visibility: **TBD by Juan (public or unlisted)**.
 - Publisher account holder: **TBD by Juan**.
 

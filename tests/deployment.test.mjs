@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+const CHROME_WEB_STORE_URL = "https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh";
+
 const execFileAsync = promisify(execFile);
 
 const read = (path) => readFile(path, "utf8");
@@ -157,7 +159,7 @@ test("browser extension release docs define package artifact and store plan", as
   const readme = await read("README.md");
   assert.match(readme, /docs\/browser-extension-release\.md/);
   assert.match(readme, /docs\/chrome-web-store-prep\.md/);
-  assert.match(readme, /do not publish placeholder or "coming soon" install links/);
+  assert.ok(readme.includes(CHROME_WEB_STORE_URL), "README links the published store listing");
   assert.match(readme, /make extension-package/);
 
   const release = await read("docs/browser-extension-release.md");
@@ -172,17 +174,16 @@ test("browser extension release docs define package artifact and store plan", as
     "Edge Add-ons path",
     "Firefox AMO path",
     "Safari/App Store distribution is out of scope",
-    "Do not publish a Chrome Web Store install link until approval produces a real URL",
   ]) {
     assert.match(release, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  assert.doesNotMatch(release, /chromewebstore\.google\.com\/detail\/[a-z0-9_-]+/i);
+  for (const url of release.match(/chromewebstore\.google\.com\/detail\/[a-z0-9_/-]+/gi) ?? []) assert.equal(`https://${url}`, CHROME_WEB_STORE_URL);
 
   const prep = await read("docs/chrome-web-store-prep.md");
   for (const phrase of [
     "public or unlisted install link",
-    "Extension ID: `TBD",
-    "Chrome Web Store listing URL: `TBD",
+    "Extension ID: `akodlnlfkdoiobdcghmbhhoafokmldoh`",
+    `Chrome Web Store listing URL: <${CHROME_WEB_STORE_URL}>`,
     "Package facts",
     "Single purpose",
     "Permission justifications",
@@ -202,9 +203,7 @@ test("browser extension release docs define package artifact and store plan", as
   ]) {
     assert.match(listing, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  assert.doesNotMatch(listing, /chromewebstore\.google\.com\/detail\/[a-z0-9_-]+/i);
   assert.doesNotMatch(listing, /\u2014/, "listing copy uses no em-dashes");
-  assert.doesNotMatch(prep, /chromewebstore\.google\.com\/detail\/[a-z0-9_-]+/i);
 });
 
 test("SOT documents M2.x deployment and reserved routes", async () => {

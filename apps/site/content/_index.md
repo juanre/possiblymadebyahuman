@@ -39,7 +39,7 @@ Oh well. It cannot be done but we are doing it anyway. You can at least assert t
 <p class="home-closer">Think of it as a reverse Turing test.<br>This is what it's come to!</p>
 
 <p class="home-ctas">
-  <a class="home-cta" href="/docs/chrome-extension/">Get the Chrome extension</a>
+  <a class="home-cta" href="https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh">Get the Chrome extension</a>
   <a class="home-cta" href="/write">Write here</a>
   <a class="home-cta" href="/docs/emacs/">Write in Emacs</a>
 </p>

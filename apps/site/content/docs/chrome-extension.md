@@ -7,21 +7,19 @@ weight: 1
 
 The possiblymadebyahuman extension for Chrome records your writing in the text boxes you already use: a comment box, a forum reply, the body of an email. It records only the editor you choose, and only the shape of your editing; your words stay in the page. When you finish, it publishes a writing record at a short link you can share.
 
-Until it is available in the Chrome Web Store, install it from the ZIP package on [GitHub releases](https://github.com/juanre/possiblymadebyahuman/releases).
-
 ## Quick start
 
-1. [Install the extension](#install-or-update) and pin **possiblymadebyahuman** in Chrome's toolbar.
+1. [Add it to Chrome](https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh) from the Chrome Web Store and pin **possiblymadebyahuman** in Chrome's toolbar.
 2. Right-click the text box you want to write in and choose **Start writing record**. The extension's side panel opens.
 3. Write as you normally would.
 4. In the side panel, choose **Finish & get link**, review what will be public, and choose **Confirm & publish**.
 5. Choose **Copy link** and share it.
 
-## Install or update
+## Install
 
-Use Chrome 120 or newer. Extract the ZIP. Open `chrome://extensions`, enable **Developer mode**, and choose **Load unpacked** on the extracted directory. Pin **possiblymadebyahuman** in Chrome's toolbar, then reload any page that was already open.
+Open the extension's [Chrome Web Store page](https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh) and choose **Add to Chrome**. It needs Chrome 120 or newer. Pin **possiblymadebyahuman** in Chrome's toolbar, then reload any page that was already open. Chrome keeps the extension up to date.
 
-To update an unpacked installation, replace its files in the same directory and choose **Reload** on its `chrome://extensions` card. Keep only one enabled possiblymadebyahuman installation; adding a second extension does not stop the old version. Reload already-open pages after the update.
+If you installed an earlier copy from a ZIP file, keep only one copy enabled. Saved links belong to the copy that made them, so use **Export all links** in the old copy before you remove it.
 
 ## Start only where you choose
 

@@ -6,7 +6,7 @@ submission facts (permissions, data use, package checksum) are in
 copy and the submission checklist are in
 [`docs/chrome-web-store-listing.md`](chrome-web-store-listing.md).
 
-Do not publish a Chrome Web Store install link until approval produces a real URL. Reviewed ZIP releases may be linked as developer-mode sideloads.
+The extension is published at <https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh>; link that listing for installation.
 Do not commit store credentials, OAuth tokens, refresh tokens, real publisher
 account details, `.env*` files, source maps, or local build outputs.
 

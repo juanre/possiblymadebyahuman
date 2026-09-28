@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+const CHROME_WEB_STORE_URL = "https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh";
+
 const hugoAvailable = spawnSync("hugo", ["version"], { stdio: "ignore" }).status === 0;
 
 test("hugo builds landing + docs with content-blind copy and no plaintext fixture leak", { skip: !hugoAvailable ? "hugo binary not available" : undefined }, () => {
@@ -118,13 +120,13 @@ test("hugo builds landing + docs with content-blind copy and no plaintext fixtur
     assert.ok(privacy.includes("Server-observed checkpoints"), "privacy missing checkpoint section");
     assert.ok(!home.includes("href=/blog/"), "home must not link to /blog/");
     assert.ok(!home.includes("class=standing-claim"), "per-record standing claim must not appear on the home page");
-    assert.ok(!/chromewebstore\.google\.com|chrome\.google\.com\/webstore/i.test(home), "home must not publish a Chrome Web Store URL before approval");
+    assert.ok(home.includes(CHROME_WEB_STORE_URL), "home links the published store listing");
 
     const emacs = readFileSync(join(out, "docs/emacs/index.html"), "utf8");
     assert.ok(emacs.includes("pmbah-mode"), "emacs page missing pmbah-mode reference");
     assert.ok(emacs.includes("GNU Emacs 29.1"), "emacs page missing GNU Emacs 29.1 requirement");
     assert.ok(emacs.includes("length-derived stats may be unknown"), "emacs page missing the non-empty-start length caveat");
-    assert.ok(!/chromewebstore\.google\.com|chrome\.google\.com\/webstore/i.test(emacs), "emacs page must not publish a Chrome Web Store URL before approval");
+    assert.ok(!/chromewebstore\.google\.com|chrome\.google\.com\/webstore/i.test(emacs), "emacs page links the extension's own page, not the store");
 
     const plaintextFixtures = [" there", "Hi ther!"];
     for (const path of ["index.html", "docs/index.html"]) {
