@@ -25,7 +25,9 @@ function legacyRecord(count = 4) {
   manifest.record_hash = computeRecordHash(events, manifest.session_id, manifest.format_version, undefined, manifest);
   return { manifest, events };
 }
-function assertNothingAboutWhere(body) {
+function assertNothingAboutWhere(response) {
+  // Read the record as a client does, over JSON.
+  const body = JSON.parse(JSON.stringify(response));
   assert.equal('capture_context' in body.manifest, false);
   const text = JSON.stringify(body);
   for (const leak of ['someone@example.com', 'mail.example', 'resignation-letter', 'markdown-mode', 'contenteditable']) assert.equal(text.includes(leak), false, leak);
