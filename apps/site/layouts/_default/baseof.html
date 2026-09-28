@@ -312,6 +312,7 @@
       @media (max-width: 640px) {
         nav.site-nav { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0.8rem; }
         nav.site-nav .site-nav-group { gap: 0.8rem; }
+        nav.site-nav .site-nav-center { order: 1; flex-basis: 100%; gap: 0.55rem; }
         main { padding: 5vh 20px 10vh; }
         .home-hero { grid-template-columns: 1fr; gap: 1.2rem; }
         .home-figure { order: -1; width: 40vw; max-width: 200px; margin: 0 auto 0.4rem; }
@@ -335,6 +336,7 @@
           <a href="/docs/">Docs</a>
         </div>
         <div class="site-nav-group site-nav-center">
+          <a class="site-nav-cta" href="/docs/chrome-extension/">Chrome extension</a>
           <a class="site-nav-cta" href="/write">Write</a>
           <a class="site-nav-cta" href="/docs/emacs/">Emacs</a>
         </div>

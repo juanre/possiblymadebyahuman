@@ -685,3 +685,30 @@ test("rejected appends leave the entire session and pending boundary intact", ()
   assert.equal(after.events[0].pos, null);
   assert.equal(verifyRecord(registry.sign(session.session_id)).valid, true);
 });
+
+test("resume continues without a gap only when restored content matches the recorded chain", () => {
+  const { registry, clock } = makeRegistry();
+  const desc = descriptor();
+  const session = registry.findOrCreate(originA, desc, captureForOrigin(originA, desc));
+  clock.advance(50);
+  const written = registry.appendMutation(session.session_id, { op: "insert", pos: 0, del_len: 0, ins_len: 3, source: "typing" });
+  const continuity = { event_count: 1, chain_tip: written.last_event_chain_tip };
+
+  registry.resume(session.session_id, originA, desc, { continuity });
+  clock.advance(50);
+  assert.equal(registry.appendMutation(session.session_id, { op: "insert", pos: 3, del_len: 0, ins_len: 1, source: "typing" }).events[1].pos, 3);
+
+  registry.resume(session.session_id, originA, desc, { continuity });
+  clock.advance(50);
+  assert.equal(registry.appendMutation(session.session_id, { op: "insert", pos: 4, del_len: 0, ins_len: 1, source: "typing" }).events[2].pos, null);
+
+  const current = registry.get(session.session_id);
+  registry.resume(session.session_id, originA, desc, { continuity: { event_count: 3, chain_tip: written.last_event_chain_tip } });
+  clock.advance(50);
+  assert.equal(registry.appendMutation(session.session_id, { op: "insert", pos: 5, del_len: 0, ins_len: 1, source: "typing" }).events[3].pos, null);
+
+  registry.resume(session.session_id, originA, desc, { continuity: { event_count: 4, chain_tip: current.last_event_chain_tip } });
+  clock.advance(50);
+  assert.equal(registry.appendMutation(session.session_id, { op: "insert", pos: 6, del_len: 0, ins_len: 1, source: "typing" }).events[4].pos, null);
+  assert.equal(verifyRecord(registry.sign(session.session_id)).valid, true);
+});

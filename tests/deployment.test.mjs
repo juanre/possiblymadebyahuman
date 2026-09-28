@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+const CHROME_WEB_STORE_URL = "https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh";
+
 const execFileAsync = promisify(execFile);
 
 const read = (path) => readFile(path, "utf8");
@@ -25,6 +27,20 @@ test("deployment files define single-container and local Postgres paths", async 
   assert.match(prodCompose, /PG_POOL_MAX/);
   assert.match(prodCompose, /RECORD_BODY_LIMIT_BYTES/);
   assert.doesNotMatch(prodCompose, /postgres:16-alpine/);
+});
+
+test("the runtime image installs only production dependencies; build tooling stays in the build stage", async () => {
+  const dockerfile = await read("Dockerfile");
+  assert.match(dockerfile, /AS runtime-deps\nRUN npm ci --omit=dev/);
+  assert.match(dockerfile, /COPY --from=runtime-deps --chown=pmbah:pmbah \/app\/node_modules \/app\/node_modules/);
+  assert.doesNotMatch(dockerfile, /COPY --from=deps [^\n]*node_modules/);
+  for (const path of ["package.json", "apps/web/package.json"]) {
+    const manifest = JSON.parse(await read(path));
+    for (const tool of ["vite", "@vitejs/plugin-react", "react", "react-dom"]) {
+      assert.equal(manifest.dependencies?.[tool], undefined, `${path} ${tool} is a build-time dependency`);
+    }
+  }
+  assert.deepEqual(Object.keys(JSON.parse(await read("package.json")).dependencies).sort(), ["@noble/hashes", "pg"]);
 });
 
 test("Makefile is the primary management surface", async () => {
@@ -143,7 +159,7 @@ test("browser extension release docs define package artifact and store plan", as
   const readme = await read("README.md");
   assert.match(readme, /docs\/browser-extension-release\.md/);
   assert.match(readme, /docs\/chrome-web-store-prep\.md/);
-  assert.match(readme, /do not publish placeholder or "coming soon" install links/);
+  assert.ok(readme.includes(CHROME_WEB_STORE_URL), "README links the published store listing");
   assert.match(readme, /make extension-package/);
 
   const release = await read("docs/browser-extension-release.md");
@@ -158,31 +174,36 @@ test("browser extension release docs define package artifact and store plan", as
     "Edge Add-ons path",
     "Firefox AMO path",
     "Safari/App Store distribution is out of scope",
-    "Do not publish a Chrome Web Store install link until approval produces a real URL",
   ]) {
     assert.match(release, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  assert.doesNotMatch(release, /chromewebstore\.google\.com\/detail\/[a-z0-9_-]+/i);
+  for (const url of release.match(/chromewebstore\.google\.com\/detail\/[a-z0-9_/-]+/gi) ?? []) assert.equal(`https://${url}`, CHROME_WEB_STORE_URL);
 
   const prep = await read("docs/chrome-web-store-prep.md");
   for (const phrase of [
-    "Chrome Web Store Developer account",
     "public or unlisted install link",
-    "Extension ID: `TBD",
-    "Chrome Web Store listing URL: `TBD",
-    "Privacy policy URL",
-    "Draft Chrome Web Store listing copy",
-    "Draft privacy and data-use disclosure answers",
-    "Permission-justification template",
-    "Historical packaging evidence at CWS-prep tip",
-    "Human-input blocker packet for `.26`",
+    "Extension ID: `akodlnlfkdoiobdcghmbhhoafokmldoh`",
+    `Chrome Web Store listing URL: <${CHROME_WEB_STORE_URL}>`,
+    "Package facts",
+    "Single purpose",
+    "Permission justifications",
+    "What leaves the browser",
     "No fake, placeholder, or \"coming soon\" install URL",
-    "not an AI detector",
-    "contain neither your document plaintext",
   ]) {
     assert.match(prep, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
-  assert.doesNotMatch(prep, /chromewebstore\.google\.com\/detail\/[a-z0-9_-]+/i);
+  const listing = await read("docs/chrome-web-store-listing.md");
+  for (const phrase of [
+    "Chrome Web Store",
+    "Privacy policy URL",
+    "https://possiblymadebyahuman.com/docs/privacy/",
+    "Submission checklist",
+    "The text itself\n> is never saved or sent.",
+    "It cannot\n> tell anyone who wrote something",
+  ]) {
+    assert.match(listing, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.doesNotMatch(listing, /\u2014/, "listing copy uses no em-dashes");
 });
 
 test("SOT documents M2.x deployment and reserved routes", async () => {

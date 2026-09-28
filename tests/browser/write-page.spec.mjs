@@ -1,5 +1,5 @@
 import { mockRecordUpload, readWriteSessions, installJournalFailure } from "./journal-fixtures.mjs";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./csp-guard.mjs";
 import { verifyRecord } from "../../packages/format/src/index.ts";
 
 const canaries = ["A🙂B", "LineOne", "LineTwo", "NEWLINE-CANARY", "🙂"];
@@ -58,11 +58,11 @@ test("/write types, signs, shows short URL, and uploads no plaintext", async ({ 
   await page.keyboard.type("A");
   await page.keyboard.insertText("🙂");
   await page.keyboard.type("B");
-  await page.getByRole("button", { name: "sign", exact: true }).click();
-  await page.getByRole("button", { name: "sign & upload" }).click();
+  await page.getByRole("button", { name: "Sign", exact: true }).click();
+  await page.getByRole("button", { name: "Sign & publish" }).click();
 
-  await expect(page.getByText("open record →")).toBeVisible();
-  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/writetest1" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open record" })).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Record link" })).toHaveValue("http://127.0.0.1:4173/writetest1");
 
   expect(uploadedPayload, "record upload payload captured").toBeTruthy();
   expect(verifyRecord({ manifest: uploadedPayload.manifest, events: uploadedPayload.events }).valid).toBe(true);
@@ -132,9 +132,9 @@ test("/write captures Enter as a one-codepoint line break event", async ({ page 
   await page.keyboard.type("LineOne");
   await page.keyboard.press("Enter");
   await page.keyboard.type("LineTwo");
-  await page.getByRole("button", { name: "sign", exact: true }).click();
-  await page.getByRole("button", { name: "sign & upload" }).click();
-  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/newline1" })).toBeVisible();
+  await page.getByRole("button", { name: "Sign", exact: true }).click();
+  await page.getByRole("button", { name: "Sign & publish" }).click();
+  await expect(page.getByRole("textbox", { name: "Record link" })).toHaveValue("http://127.0.0.1:4173/newline1");
 
   expect(uploadedPayload, "record upload payload captured").toBeTruthy();
   expect(verifyRecord({ manifest: uploadedPayload.manifest, events: uploadedPayload.events }).valid).toBe(true);
@@ -194,17 +194,13 @@ test("/write keeps a failed upload available for retry", async ({ page }) => {
   await page.goto("/write");
   await page.getByRole("textbox", { name: "Writing canvas" }).click();
   await page.keyboard.type("Retry me");
-  await page.getByRole("button", { name: "sign", exact: true }).click();
-  await page.getByRole("button", { name: "sign & upload" }).click();
-  // After a failed upload the mode line shows the short status + the full
-  // technical detail is preserved in the title attribute on the error span.
-  const errorSpan = page.locator(".ml-error");
-  await expect(errorSpan).toBeVisible();
-  await expect(errorSpan).toHaveText("record not uploaded");
-  await expect(errorSpan).toHaveAttribute("title", /Record not uploaded: temporary_test_failure/);
+  await page.getByRole("button", { name: "Sign", exact: true }).click();
+  await page.getByRole("button", { name: "Sign & publish" }).click();
+  // A failed publication explains itself on the page and offers the retry.
+  await expect(page.getByRole("status", { name: "Drafting message" })).toContainText("Not published: the service is unavailable right now (temporary_test_failure)");
   await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveAttribute("readonly", "");
-  await page.getByRole("button", { name: "retry" }).click();
-  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/retrytest1" })).toBeVisible();
+  await page.getByRole("button", { name: "Retry publishing" }).click();
+  await expect(page.getByRole("textbox", { name: "Record link" })).toHaveValue("http://127.0.0.1:4173/retrytest1");
   expect(uploadAttempts).toBe(2);
 });
 
@@ -245,10 +241,10 @@ test("/write can sign the process only, binding no document", async ({ page }) =
   await page.goto("/write");
   await page.getByRole("textbox", { name: "Writing canvas" }).click();
   await page.keyboard.type("Process only, no binding here.");
-  await page.getByRole("button", { name: "sign", exact: true }).click();
+  await page.getByRole("button", { name: "Sign", exact: true }).click();
   await page.getByRole("checkbox").uncheck();
-  await page.getByRole("button", { name: "sign & upload" }).click();
-  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/optout1" })).toBeVisible();
+  await page.getByRole("button", { name: "Sign & publish" }).click();
+  await expect(page.getByRole("textbox", { name: "Record link" })).toHaveValue("http://127.0.0.1:4173/optout1");
 
   expect(uploadedPayload.manifest.text_binding, "process-only sign must not bind a document").toBeUndefined();
   expect(verifyRecord({ manifest: uploadedPayload.manifest, events: uploadedPayload.events }).valid).toBe(true);
@@ -270,16 +266,16 @@ test("/write keeps your writing after signing and offers to copy it", async ({ p
   });
 
   await page.goto("/write");
-  await expect(page.locator(".write-modeline")).toContainText("idle");
+  await expect(page.getByRole("textbox", { name: "Writing canvas" })).toBeFocused();
   await page.keyboard.type("My precious writing.");
-  await page.getByRole("button", { name: "sign", exact: true }).click();
-  await page.getByRole("button", { name: "sign & upload" }).click();
-  await expect(page.getByText("open record →")).toBeVisible();
+  await page.getByRole("button", { name: "Sign", exact: true }).click();
+  await page.getByRole("button", { name: "Sign & publish" }).click();
+  await expect(page.getByRole("link", { name: "Open record" })).toBeVisible();
 
   // Signing must NOT wipe the canvas; the writer keeps their words.
   await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveValue("My precious writing.");
   // And there is a button to copy the writing to the clipboard.
-  await expect(page.getByRole("button", { name: "copy text" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Copy text" })).toBeVisible();
 });
 
 test("/write focuses the canvas on load so you can type without clicking", async ({ page }) => {
@@ -287,7 +283,7 @@ test("/write focuses the canvas on load so you can type without clicking", async
   // Wait for the local session to be ready (modeline reads "idle"); the app
   // puts the cursor in the canvas on ready. Then typing with no click must
   // land in the canvas.
-  await expect(page.locator(".write-modeline")).toContainText("idle");
+  await expect(page.getByRole("textbox", { name: "Writing canvas" })).toBeFocused();
   await page.keyboard.type("hello");
   await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveValue("hello");
 });
@@ -308,18 +304,16 @@ test("/write shows its status message on the page, including why an upload faile
 
   await page.goto("/write");
   const message = page.getByRole("status", { name: "Drafting message" });
-  await expect(message).toBeVisible();
-  await expect(message).toContainText("Text stays in this browser");
 
   await page.getByRole("textbox", { name: "Writing canvas" }).click();
   await page.keyboard.type("Say it out loud");
-  await expect(message).toContainText("Capturing content-blind edit events locally.");
-  await page.getByRole("button", { name: "sign", exact: true }).click();
-  await page.getByRole("button", { name: "sign & upload" }).click();
+  await expect(page.getByRole("status", { name: "Save state" })).toHaveText("Saved in this browser");
+  await page.getByRole("button", { name: "Sign", exact: true }).click();
+  await page.getByRole("button", { name: "Sign & publish" }).click();
   // The full reason is readable on the page, not only in a hover title.
   await expect(message).toBeVisible();
-  await expect(message).toContainText("Record not uploaded: temporary_test_failure");
-  await expect(page.locator(".ml-error")).toHaveText("record not uploaded");
+  await expect(message).toContainText("Not published: the service is unavailable right now (temporary_test_failure)");
+  await expect(page.getByRole("button", { name: "Retry publishing" })).toBeVisible();
 });
 
 test("/write uploads a diverged session as unobserved and says so on the page", async ({ page }) => {
@@ -351,12 +345,12 @@ test("/write uploads a diverged session as unobserved and says so on the page", 
   // events queued behind the first one, or the 50-event cadence after it.
   await page.keyboard.type("The server will reject every checkpoint after the first one it sees");
   await expect.poll(() => checkpointCalls).toBeGreaterThanOrEqual(2);
-  await page.getByRole("button", { name: "sign", exact: true }).click();
-  await page.getByRole("button", { name: "sign & upload" }).click();
+  await page.getByRole("button", { name: "Sign", exact: true }).click();
+  await page.getByRole("button", { name: "Sign & publish" }).click();
 
-  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/diverged1" })).toBeVisible();
-  await expect(message).toContainText("server observation");
-  await expect(message).toContainText("diverged");
+  await expect(page.getByRole("textbox", { name: "Record link" })).toHaveValue("http://127.0.0.1:4173/diverged1");
+  await expect(message).toContainText("without server-confirmed timing");
+  await expect(message).toContainText("did not match its history");
   expect(uploadedPayload.observation).toEqual({ state: "unobserved" });
 });
 
@@ -385,26 +379,25 @@ test("/write retries an upload rejected with observation_mismatch as unobserved 
   const message = page.getByRole("status", { name: "Drafting message" });
   await page.getByRole("textbox", { name: "Writing canvas" }).click();
   await page.keyboard.type("Bound once, then unobserved");
-  await page.getByRole("button", { name: "sign", exact: true }).click();
-  await page.getByRole("button", { name: "sign & upload" }).click();
-  await expect(message).toContainText("Record not uploaded: observation_mismatch");
+  await page.getByRole("button", { name: "Sign", exact: true }).click();
+  await page.getByRole("button", { name: "Sign & publish" }).click();
+  await expect(message).toContainText("observation_mismatch");
   expect(uploads[0].observation.token).toBe("x".repeat(32));
 
   await expect(page.getByRole("textbox", { name: "Writing canvas" })).toHaveAttribute("readonly", "");
-  await page.getByRole("button", { name: "retry" }).click();
-  await expect(page.getByRole("link", { name: "http://127.0.0.1:4173/mismatch1" })).toBeVisible();
-  await expect(message).toContainText("server observation");
-  await expect(message).toContainText("diverged");
+  await page.getByRole("button", { name: "Retry publishing" }).click();
+  await expect(page.getByRole("textbox", { name: "Record link" })).toHaveValue("http://127.0.0.1:4173/mismatch1");
+  await expect(message).toContainText("without server-confirmed timing");
+  await expect(message).toContainText("did not match its history");
   expect(uploads.length).toBe(2);
   expect(uploads[1].observation).toEqual({ state: "unobserved" });
 });
 
-test("/write explains on the empty canvas that text stays here and only the shape of editing is recorded", async ({ page }) => {
+test("/write explains on the empty canvas that drafts stay in this browser and only the shape of editing is published", async ({ page }) => {
   await page.goto("/write");
   const canvas = page.getByRole("textbox", { name: "Writing canvas" });
-  await expect(canvas).toHaveAttribute("placeholder", /stays in this browser/);
-  await expect(canvas).toHaveAttribute("placeholder", /shape of the editing/);
-  await expect(canvas).toHaveAttribute("placeholder", /recorded/);
+  await expect(canvas).toHaveAttribute("placeholder", /saved in this browser and never uploaded/);
+  await expect(canvas).toHaveAttribute("placeholder", /only the shape of your editing is published/);
 });
 
 async function captureWriteUpload(page, edit) {
@@ -420,9 +413,9 @@ async function captureWriteUpload(page, edit) {
   await canvas.focus();
   await edit(canvas);
   const value = await canvas.inputValue();
-  await page.getByRole("button", { name: "sign", exact: true }).click();
-  await page.getByRole("button", { name: "sign & upload" }).click();
-  await expect(page.getByText("open record →")).toBeVisible();
+  await page.getByRole("button", { name: "Sign", exact: true }).click();
+  await page.getByRole("button", { name: "Sign & publish" }).click();
+  await expect(page.getByRole("link", { name: "Open record" })).toBeVisible();
   expect(verifyRecord(payload).valid).toBe(true);
   return { payload, value };
 }
@@ -485,11 +478,11 @@ for (const clipboardState of ['missing', 'denied', 'working']) {
     }, clipboardState);
     await captureWriteUpload(page, async () => { await page.keyboard.type('copy fixture'); });
     const message = page.getByRole('status', { name: 'Drafting message' });
-    await page.getByRole('button', { name: 'copy text', exact: true }).click();
+    await page.getByRole('button', { name: 'Copy text', exact: true }).click();
     await expect(message).toContainText(clipboardState === 'working' ? 'Your writing was copied' : 'Your writing could not be copied');
     if (clipboardState === 'working') expect(await page.evaluate(() => window.__copiedText)).toBe('copy fixture');
-    await page.getByRole('button', { name: 'copy record link' }).click();
-    await expect(message).toContainText(clipboardState === 'working' ? 'Record link copied' : 'record link could not be copied');
+    await page.getByRole('button', { name: 'Copy link' }).click();
+    await expect(message).toContainText(clipboardState === 'working' ? 'Link copied' : 'link could not be copied');
     if (clipboardState === 'working') expect(await page.evaluate(() => window.__copiedText)).toContain('/capture1');
     expect(errors).toEqual([]);
   });
@@ -513,8 +506,8 @@ function successfulUpload(route, payload) {
 }
 
 async function finishWrite(page) {
-  await page.getByRole('button', { name: 'sign', exact: true }).click();
-  await page.getByRole('button', { name: 'sign & upload' }).click();
+  await page.getByRole('button', { name: 'Sign', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign & publish' }).click();
 }
 
 test('/write failed local capture save is visible, stops editing, and can be saved again', async ({ page }) => {
@@ -531,9 +524,9 @@ test('/write failed local capture save is visible, stops editing, and can be sav
   await canvas.pressSequentially('x');
   await expect(canvas).toHaveValue('recover fixturex');
   await expect(canvas).not.toBeEditable();
-  await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('could not be saved locally');
+  await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('could not be saved in this browser');
   await page.evaluate(() => { window.__failLocalSave = false; });
-  await page.getByRole('button', { name: 'retry saving' }).click();
+  await page.getByRole('button', { name: 'Retry saving' }).click();
   await expect(canvas).toBeEditable();
   const records = await readWriteSessions(page);
   expect(records[0].events).toHaveLength('recover fixturex'.length);
@@ -548,15 +541,16 @@ test('/write persists a frozen finish before upload and retries identical conten
     return uploads.length === 1 ? route.fulfill({ status: 503, json: { error: 'temporary' } }) : successfulUpload(route, payload);
   });
   await finishWrite(page);
-  await expect(page.getByRole('button', { name: 'retry', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry publishing' })).toBeVisible();
   const saved = (await readWriteSessions(page))[0];
   expect(saved.signed_duration_ms).toBe(uploads[0].manifest.duration_ms);
   expect(saved.format_version).toBe('0.3');
   expect(JSON.stringify(saved)).not.toContain('recover fixture');
   await page.reload();
-  await expect(page.getByRole('textbox', { name: 'Writing canvas' })).toHaveValue('');
-  await page.getByRole('button', { name: 'retry', exact: true }).click();
-  await expect(page.getByText('open record →')).toBeVisible();
+  // The draft text comes back from this browser; the journal never held it.
+  await expect(page.getByRole('textbox', { name: 'Writing canvas' })).toHaveValue('recover fixture');
+  await page.getByRole('button', { name: 'Retry publishing' }).click();
+  await expect(page.getByRole('link', { name: 'Open record' })).toBeVisible();
   expect(uploads).toHaveLength(2);
   expect(uploads[1]).toEqual(uploads[0]);
 });
@@ -565,14 +559,14 @@ test('/write never uploads when freezing cannot be saved locally', async ({ page
   let uploads = 0;
   await installStorageFailure(page);
   await setupRecoveryUpload(page, route => { uploads++; return successfulUpload(route, route.request().postDataJSON()); });
-  await page.getByRole('button', { name: 'sign', exact: true }).click();
+  await page.getByRole('button', { name: 'Sign', exact: true }).click();
   await page.evaluate(() => { window.__failLocalSave = true; });
-  await page.getByRole('button', { name: 'sign & upload' }).click();
-  await expect(page.getByRole('button', { name: 'retry', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Sign & publish' }).click();
+  await expect(page.getByRole('button', { name: 'Retry publishing' })).toBeVisible();
   expect(uploads).toBe(0);
   await page.evaluate(() => { window.__failLocalSave = false; });
-  await page.getByRole('button', { name: 'retry', exact: true }).click();
-  await expect(page.getByText('open record →')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry publishing' }).click();
+  await expect(page.getByRole('link', { name: 'Open record' })).toBeVisible();
   expect(uploads).toBe(1);
 });
 
@@ -585,25 +579,25 @@ test('/write shows the accepted link even if saving upload success fails', async
     return successfulUpload(route, route.request().postDataJSON());
   });
   await finishWrite(page);
-  await expect(page.getByText('open record →')).toBeVisible();
-  await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('Record uploaded, but its link could not be saved locally');
+  await expect(page.getByRole('link', { name: 'Open record' })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('Published, but the link could not be saved in this browser');
   await page.evaluate(() => { window.__failLocalSave = false; });
-  await page.getByRole('button', { name: 'retry saving' }).click();
+  await page.getByRole('button', { name: 'Retry saving' }).click();
   const saved = (await readWriteSessions(page))[0];
   expect(saved.state).toBe('uploaded');
   expect(uploads).toBe(1);
 });
 
-test('/write failed discard keeps both writing and captured events', async ({ page }) => {
+test('/write failed delete keeps both writing and captured events', async ({ page }) => {
   await installStorageFailure(page);
   const canvas = await setupRecoveryUpload(page, route => route.abort());
   await page.evaluate(() => { window.__failLocalSave = true; });
   page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('button', { name: 'discard', exact: true }).click();
-  await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('Could not save the session change');
+  await page.getByRole('button', { name: 'Delete draft', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('The draft could not be deleted');
   await expect(canvas).toHaveValue('recover fixture');
   await page.evaluate(() => { window.__failLocalSave = false; });
-  await page.getByRole('button', { name: 'retry saving' }).click();
+  await page.getByRole('button', { name: 'Retry saving' }).click();
   await expect(canvas).toBeEditable();
   const saved = (await readWriteSessions(page))[0];
   expect(saved.events).toHaveLength('recover fixture'.length);
@@ -618,9 +612,9 @@ test('/write malformed upload success remains frozen and retryable', async ({ pa
   });
   await finishWrite(page);
   await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('Invalid upload response');
-  await expect(page.getByText('open record →')).toHaveCount(0);
-  await page.getByRole('button', { name: 'retry', exact: true }).click();
-  await expect(page.getByText('open record →')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open record' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Retry publishing' }).click();
+  await expect(page.getByRole('link', { name: 'Open record' })).toBeVisible();
   expect(uploads[1]).toEqual(uploads[0]);
 });
 
@@ -638,14 +632,14 @@ test('/write seals trailing idle time and preserves the saved parent when contin
   });
   await page.evaluate(() => { window.__elapsedOffset += 60_000; });
   await finishWrite(page);
-  await expect(page.getByText('open record →')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open record' })).toBeVisible();
   expect(uploads[0].manifest.duration_ms - uploads[0].events.at(-1).t).toBeGreaterThanOrEqual(60_000);
-  await page.getByRole('button', { name: 'keep editing' }).click();
+  await page.getByRole('button', { name: 'Keep writing' }).click();
   await expect(canvas).toBeEditable();
   await page.evaluate(() => { window.__elapsedOffset += 120_000; });
   await canvas.pressSequentially('x');
   await finishWrite(page);
-  await expect(page.getByText('open record →')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open record' })).toBeVisible();
   expect(uploads).toHaveLength(2);
   expect(uploads[1].manifest.parent_record).toBe(uploads[0].manifest.record_hash);
   expect(uploads[1].manifest.session_id).not.toBe(uploads[0].manifest.session_id);
@@ -668,18 +662,18 @@ for (const recordAnotherEdit of [false, true]) {
     });
     await canvas.evaluate(element => { element.value += ' UNOBSERVED'; });
     await finishWrite(page);
-    await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('Capture has a gap');
+    await expect(page.getByRole('status', { name: 'Drafting message' })).toContainText('written while it was not being recorded');
     await expect(canvas).toBeEditable();
     expect(uploads).toEqual([]);
     if (recordAnotherEdit) {
       await canvas.pressSequentially('n');
       await finishWrite(page);
     } else {
-      await page.getByRole('button', { name: 'sign', exact: true }).click();
+      await page.getByRole('button', { name: 'Sign', exact: true }).click();
       await page.getByRole('checkbox').uncheck();
-      await page.getByRole('button', { name: 'sign & upload' }).click();
+      await page.getByRole('button', { name: 'Sign & publish' }).click();
     }
-    await expect(page.getByText('open record →')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Open record' })).toBeVisible();
     expect(uploads).toHaveLength(1);
     expect(Boolean(uploads[0].manifest.text_binding)).toBe(recordAnotherEdit);
     expect(uploads[0].events).toHaveLength('recover fixture'.length + Number(recordAnotherEdit));
@@ -687,3 +681,30 @@ for (const recordAnotherEdit of [false, true]) {
     expect(verifyRecord(uploads[0]).valid).toBe(true);
   });
 }
+
+test("/write sign dialog is modal, closes with Escape and returns focus to Sign", async ({ page }) => {
+  await page.goto("/write");
+  const canvas = page.getByRole("textbox", { name: "Writing canvas" });
+  await expect(canvas).toBeFocused();
+  await page.keyboard.type("Modal check");
+  const sign = page.getByRole("button", { name: "Sign", exact: true });
+  await sign.click();
+  const dialog = page.getByRole("dialog", { name: "Sign and publish this draft?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole("checkbox")).toBeFocused();
+  expect(await dialog.evaluate(element => element.matches(":modal"))).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(sign).toBeFocused();
+});
+
+test("/write asks before leaving while the draft is still being saved", async ({ page }) => {
+  await page.route("**/api/observed-sessions/*/checkpoints", route => route.fulfill({ status: 503, body: "unavailable" }));
+  await page.goto("/write");
+  await expect(page.getByRole("textbox", { name: "Writing canvas" })).toBeFocused();
+  // Draft saves are coalesced for a moment after typing; closing within it must ask.
+  await page.keyboard.type("Unsaved");
+  const prompted = new Promise(resolve => page.once("dialog", async dialog => { resolve(dialog.type()); await dialog.dismiss(); }));
+  await page.close({ runBeforeUnload: true });
+  expect(await prompted).toBe("beforeunload");
+});

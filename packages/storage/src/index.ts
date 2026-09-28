@@ -139,6 +139,14 @@ export class DuplicateRecordConflictError extends Error {
   }
 }
 
+/** The record hash was removed by the operator and cannot be published again. */
+export class RecordRemovedError extends Error {
+  constructor(recordHash: string) {
+    super(`record ${recordHash} was removed`);
+    this.name = "RecordRemovedError";
+  }
+}
+
 export class ObservedSessionTokenError extends Error {
   readonly code: "observed_token_required" | "invalid_observed_token" | "observed_session_not_found";
 
@@ -386,6 +394,7 @@ export class PostgresRecordStore implements RecordStore {
       return { stored, created: true };
     } catch (error) {
       if (isPostgresUniqueViolation(error)) return this.#resolveUniqueViolation(input);
+      if (isRemovedRecordViolation(error)) throw new RecordRemovedError(manifest.record_hash);
       throw error;
     }
   }
@@ -859,6 +868,11 @@ function numberFromRow(value: unknown): number {
 
 function nullableNumberFromRow(value: unknown): number | null {
   return value === null || value === undefined ? null : numberFromRow(value);
+}
+
+/** Raised by the records insert trigger for a hash in removed_records (migration 007). */
+export function isRemovedRecordViolation(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: unknown }).code === "PM410";
 }
 
 function isPostgresUniqueViolation(error: unknown): error is { code: string } {

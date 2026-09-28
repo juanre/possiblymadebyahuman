@@ -11,7 +11,7 @@ Hugo static site for the public-facing landing page and docs.
 ## Non-responsibility
 
 - Public record pages such as `/<short_signature>` (those belong to `apps/web`).
-- The per-record standing disclaimer (rendered by the Vite record app's `DisclaimerBanner`, not by the Hugo home page).
+- The per-record limit statement (rendered in the Vite record app's header, not by the Hugo home page).
 - Backend ingestion APIs.
 - Producer capture.
 - Detector/certificate language or aggregate human/AI scoring.

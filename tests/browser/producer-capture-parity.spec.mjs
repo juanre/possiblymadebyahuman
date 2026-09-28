@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./csp-guard.mjs";
 
 const unknown = { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" };
 const shape = ({ op, pos, del_len, ins_len, source }) => ({ op, pos, del_len, ins_len, source });
@@ -95,9 +95,9 @@ for (const producer of ["extension", "write"]) {
         expect(result.kind).toBe("binding_error");
         expect(result.reason).toContain("Capture has a gap");
       } else {
-        await page.getByRole("button", { name: "sign", exact: true }).click();
-        await page.getByRole("button", { name: "sign & upload", exact: true }).click();
-        await expect(page.getByText("Capture has a gap.", { exact: false })).toBeVisible();
+        await page.getByRole("button", { name: "Sign", exact: true }).click();
+        await page.getByRole("button", { name: "Sign & publish", exact: true }).click();
+        await expect(page.getByText("written while it was not being recorded", { exact: false })).toBeVisible();
       }
     });
 

@@ -243,13 +243,22 @@ export class SessionRegistry {
     return cloneSession(record);
   }
 
-  /** Explicitly reattach an unsigned draft; its original clock and hash chain survive. */
-  resume(session_id: SessionId, origin: FieldOrigin, descriptor: FieldDescriptor, options: { field_is_empty?: boolean } = {}): SessionRecord {
+  /**
+   * Explicitly reattach an unsigned draft; its original clock and hash chain
+   * survive. The next edit is continuous only for an empty field with no
+   * history, or for content the producer restored exactly as it stood after
+   * the recorded chain tip; otherwise it starts after a capture gap.
+   */
+  resume(session_id: SessionId, origin: FieldOrigin, descriptor: FieldDescriptor,
+    options: { field_is_empty?: boolean; continuity?: { event_count: number; chain_tip: B3Hash | null } } = {}): SessionRecord {
     const record = this.#requireMutable(session_id);
     record.origin = { ...origin };
     record.descriptor = { ...descriptor };
     record.identity_certainty = "resumed";
-    record.pending_observation_gap = sessionEventCount(record) > 0 || options.field_is_empty !== true;
+    const continuous = options.continuity !== undefined &&
+      options.continuity.event_count === sessionEventCount(record) &&
+      options.continuity.chain_tip === record.last_event_chain_tip;
+    record.pending_observation_gap = !continuous && (sessionEventCount(record) > 0 || options.field_is_empty !== true);
     return cloneSession(record);
   }
 

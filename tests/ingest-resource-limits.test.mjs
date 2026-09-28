@@ -27,7 +27,7 @@ test("malformed requests below the HTTP byte limit stay within a 128 MiB heap", 
     try {
       for (const body of cases) {
         assert.ok(Buffer.byteLength(body) < DEFAULT_RECORD_BODY_LIMIT_BYTES);
-        const response = await fetch(base + '/api/records', {method:'POST', body});
+        const response = await fetch(base + '/api/records', {method:'POST', headers:{'content-type':'application/json'}, body});
         assert.equal(response.status, 400);
         const result = await response.json();
         assert.ok(result.details.length <= 26);

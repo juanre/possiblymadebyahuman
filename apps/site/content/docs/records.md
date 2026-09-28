@@ -33,7 +33,7 @@ Every record carries a manifest with format version, BLAKE3 `record_hash`, sessi
 
 Format **0.3** additionally seals elapsed finish time and an optional `parent_record` link into the record hash. Its duration includes time from the session's start to the confirmed finish action, even if no edits occurred during the final pause. That signed duration is a client claim. It is separate from the span between checkpoints received by the server. Active and idle statistics measure only intervals between captured edits.
 
-The extension **0.3.0 candidate** opts into this format. Install it after the compatible API/viewer is deployed. Existing records retain their original format and hash; `/write` and Emacs still emit their existing format 0.2 records. Older format 0.1 extension drafts retain their last-edit timing, and failed legacy uploads retry their original frozen record.
+All producers create new records in this format. Records created in earlier formats keep their original format and hash, and still verify; an older draft whose upload failed retries exactly the record it froze.
 
 ## Hash chain and final seal
 
@@ -66,7 +66,7 @@ Here `bytes` means the raw 32-byte digest and `canonical` means UTF-8 JSON with 
 
 ## Continuing after publication
 
-A published record is immutable. The candidate extension's **Continue in chosen field** action creates a new session and a new record linked through `parent_record`. It records new mutations only. Its elapsed clock begins at the previous segment's signed finish, so time away appears before the next captured edit. Older saved records without a signed finish use the retained local upload time as an approximate boundary.
+A published record is immutable. Continuing it (**Continue in chosen field** in the Chrome extension, **Keep writing** on `/write`, or further edits in Emacs) creates a new session and a new record linked through `parent_record`. It records new mutations only. Its elapsed clock begins at the previous segment's signed finish, so time away appears before the next captured edit. Older saved records without a signed finish use the retained local upload time as an approximate boundary.
 
 The relationship does not establish that the document was unchanged or observed during the pause. Unknown positions remain unknown, and the viewer does not extend a known document-length curve across missing measurements. The previous public link stays available.
 

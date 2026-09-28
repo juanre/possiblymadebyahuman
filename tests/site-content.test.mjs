@@ -3,6 +3,8 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+const CHROME_WEB_STORE_URL = "https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh";
+
 const siteRoot = "apps/site";
 const contentRoot = join(siteRoot, "content");
 
@@ -19,12 +21,14 @@ const requiredDocPages = [
   "routing.md",
   "server-observed-commitments.md",
   "emacs.md",
+  "chrome-extension.md",
 ];
 
 const sectionsCoveringProductPromise = [
-  { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/write", "/docs/emacs/"] },
+  { file: "_index.md", needs: ["We cannot prove a human wrote it", "But we can record the writing process", "reverse Turing test", "/docs/chrome-extension/", "/write", "/docs/emacs/"] },
+  { file: "docs/chrome-extension.md", needs: ["title: \"Use the Chrome extension\"", "Quick start", "Start writing record", "Finish & get link", "possiblymadebyahuman"] },
   { file: "docs/emacs.md", needs: ["pmbah-mode", "GNU Emacs 29.1", "Open a writing buffer", "length-derived stats may be unknown"] },
-  { file: "docs/what-pmbah-does.md", needs: ["the words stay with you", "without actually storing your text", "do not prove that you wrote it"] },
+  { file: "docs/what-pmbah-does.md", needs: ["the words stay with you", "without actually storing your text", "do not prove that you wrote it", "(/docs/chrome-extension/)", "(/write)", "(/docs/emacs/)"] },
   { file: "docs/privacy.md", needs: ["content-blind", "capture context", "no public deletion API", "no user system", "chrome.storage.local", "bearer", "Server-observed checkpoints", "GitHub issues"] },
   { file: "docs/terms.md", needs: ["MIT licensed", "provided as-is", "no public deletion API", "not a detector", "Identity and authorship assertions", "Moderation and removal", "project issue tracker"] },
   { file: "docs/records.md", needs: ["buffer mutation", "short_signature", "Hash chain", "Reserved route prefixes"] },
@@ -60,22 +64,26 @@ test("hugo config is configured for the content-blind landing + docs surface", a
   assert.match(hugo, /unsafe = true/);
 });
 
-test("home content names the two producers, the not-a-detector framing, and no fake CWS install URL", async () => {
+test("home content names the three producers, the not-a-detector framing, and no fake CWS install URL", async () => {
   const home = await read(join(contentRoot, "_index.md"));
   // Headline + counter + closer voice.
   assert.match(home, /We cannot prove a human wrote it/);
   assert.match(home, /But we can record the writing process/);
   assert.match(home, /reverse Turing test/);
-  // The two producers the page invites the reader to try.
+  // The three producers the page invites the reader to try, extension first.
+  assert.match(home, /\/docs\/chrome-extension\//, "home must link to /docs/chrome-extension/");
   assert.match(home, /\/write/, "home must link to /write");
   assert.match(home, /\/docs\/emacs\//, "home must link to /docs/emacs/");
+  const ctas = [...home.matchAll(/class="home-cta" href="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ctas, [CHROME_WEB_STORE_URL, "/write", "/docs/emacs/"], "home CTAs must lead with the extension's store listing");
   // Hard rules: no blog, no per-record standing-claim block in body, no
-  // detector wording, no placeholder Chrome Web Store install URL on home
-  // (gated until .26 records the real listing).
+  // detector wording, and no store link other than the published listing.
   assert.doesNotMatch(home, /\/blog\//, "home must not link to a blog");
   assert.doesNotMatch(home, /standing-claim/, "per-record standing claim must not appear on the home page");
   assert.doesNotMatch(home, /\bdetector\s+score\b/i);
-  assert.doesNotMatch(home, /chromewebstore\.google\.com|chrome\.google\.com\/webstore/i, "home must not publish a Chrome Web Store URL before approval");
+  for (const url of home.match(/https:\/\/(chromewebstore\.google\.com|chrome\.google\.com\/webstore)[^"\s)]*/gi) ?? []) {
+    assert.equal(url, CHROME_WEB_STORE_URL, "home links only the published store listing");
+  }
 });
 
 test("required doc pages exist and cover the SOT-mandated topics", async () => {
@@ -112,9 +120,9 @@ test("layout base sets the candid description, provides site nav with producer C
   assert.match(base, /aria-label="Site sections"/);
   // Left rail: Home + Docs.
   assert.match(base, /href="\/docs\/"/);
-  // Center CTAs: Write + Emacs.
-  assert.match(base, /class="site-nav-cta" href="\/write"/);
-  assert.match(base, /class="site-nav-cta" href="\/docs\/emacs\/"/);
+  // Center CTAs: Extension, Write, Emacs, in that order.
+  const navCtas = [...base.matchAll(/class="site-nav-cta" href="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(navCtas, ["/docs/chrome-extension/", "/write", "/docs/emacs/"]);
   // Right rail: GitHub.
   assert.match(base, /href="https:\/\/github\.com\/juanre\/possiblymadebyahuman"/);
   assert.match(base, /class="site-nav-repo"/);
@@ -128,6 +136,15 @@ test("layout base sets the candid description, provides site nav with producer C
   assert.doesNotMatch(base, /href="\/blog\/"/);
 });
 
+test("Write a record docs list the extension first", async () => {
+  const expected = { "chrome-extension.md": 1, "write.md": 2, "emacs.md": 3, "checking-a-document.md": 4 };
+  for (const [file, weight] of Object.entries(expected)) {
+    const body = await read(join(contentRoot, "docs", file));
+    assert.match(body, /^group: "Write a record"$/m, `${file} group`);
+    assert.match(body, new RegExp(`^weight: ${weight}$`, "m"), `${file} weight`);
+  }
+});
+
 test("SOT M5 milestone is reflected by the implemented site structure", async () => {
   const sot = await read("docs/sot.md");
   for (const phrase of [
@@ -137,4 +154,21 @@ test("SOT M5 milestone is reflected by the implemented site structure", async ()
   ]) {
     assert.match(sot, new RegExp(phrase));
   }
+});
+
+test("the site names the Chrome extension, since more extensions will follow", async () => {
+  const files = ["_index.md", ...(await readdir(new URL("../apps/site/content/docs/", import.meta.url))).map(name => `docs/${name}`)];
+  for (const file of files) {
+    const body = await readFile(new URL(`../apps/site/content/${file}`, import.meta.url), "utf8");
+    assert.doesNotMatch(body, /browser extension/i, `${file} says "browser extension"`);
+    assert.doesNotMatch(body, /\/docs\/browser-extension\//, `${file} links the old extension page`);
+  }
+  const base = await readFile(new URL("../apps/site/layouts/_default/baseof.html", import.meta.url), "utf8");
+  assert.match(base, /class="site-nav-cta" href="\/docs\/chrome-extension\/">Chrome extension</);
+});
+
+test("the Chrome extension installs from its store listing, with no developer-mode steps", async () => {
+  const page = await readFile(new URL("../apps/site/content/docs/chrome-extension.md", import.meta.url), "utf8");
+  assert.ok(page.includes(CHROME_WEB_STORE_URL), "extension page links the store listing");
+  assert.doesNotMatch(page, /Developer mode|Load unpacked|Extract the ZIP|GitHub releases/);
 });

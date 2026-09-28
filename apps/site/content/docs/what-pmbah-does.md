@@ -29,5 +29,9 @@ That is elapsed time, not writing effort. A script can prepare the events before
 
 So it is not that hard. It's just annoying and sad enough that we hope that actual humans generally won't cheat.
 
+## Start writing
+
+The [Chrome extension](/docs/chrome-extension/) records the text boxes you choose on any website: comments, forum replies, email. You can also write [here on the site](/write) with nothing to install, or in [Emacs](/docs/emacs/).
+
 ---
 An earlier version was partially written by a human: [historical writing record](https://possiblymadebyahuman.com/8MxUYwiQ3q). That record binds the [original Markdown source, including its front matter](https://raw.githubusercontent.com/juanre/possiblymadebyahuman/416690f934205fc5d1faeb737d8bc046545d998f/apps/site/content/docs/what-pmbah-does.md), not this revised page. To check it, paste that source into the record's document checker; the later record-link footnote is reported as extra trailing text. This historical record has no server-observed checkpoints.

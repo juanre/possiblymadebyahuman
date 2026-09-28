@@ -8,6 +8,7 @@ import {
   EventStreamVerifier,
   validateManifest,
 } from "../../../packages/format/src/index.ts";
+import { MAX_RATE_LIMITED_RETRIES, retryAfterMs, wait } from "../../../packages/producer-core/src/rate-limit.ts";
 import { validateUploadResponse } from "../../../packages/producer-core/src/upload-response.ts";
 
 const MAX_LINE_BYTES = 4096;
@@ -153,10 +154,16 @@ export async function buildJournalManifest(input) {
 }
 
 async function requestJson(base, route, body) {
-  const response = await fetch(`${base.replace(/\/$/, "")}${route}`, {
-    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
-  });
+  let response;
+  for (let attempt = 0; ; attempt++) {
+    response = await fetch(`${base.replace(/\/$/, "")}${route}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (response.status !== 429 || attempt >= MAX_RATE_LIMITED_RETRIES) break;
+    await response.body?.cancel();
+    await wait(retryAfterMs(response.headers.get("retry-after")));
+  }
   let data;
   try { data = await response.json(); } catch { throw new Error(`upload returned invalid JSON (HTTP ${response.status})`); }
   if (!response.ok) {

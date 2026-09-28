@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./csp-guard.mjs";
 import { computeObservedLength, validateEventLog } from "../../packages/format/src/index.ts";
 
 async function events(page) { return page.evaluate(() => window.__pmbah.messages.filter(m => m.kind === "append_mutation").map((m, seq) => ({ seq, t: seq * 10, ...m.mutation }))); }

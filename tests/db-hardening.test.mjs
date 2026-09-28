@@ -255,7 +255,7 @@ test("runtime POST body limit returns 413 before API handling", async () => {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
     const { port } = server.address();
-    const response = await fetch(`http://127.0.0.1:${port}/api/records`, { method: "POST", body: "123456" });
+    const response = await fetch(`http://127.0.0.1:${port}/api/records`, { method: "POST", headers: { "content-type": "application/json" }, body: "123456" });
     assert.equal(response.status, 413);
     assert.deepEqual(await response.json(), { error: "request_body_too_large", max_bytes: 5 });
     assert.equal(handled, false);
@@ -394,7 +394,7 @@ test("runtime server still routes valid API requests under the body limit", asyn
   }
 });
 
-test("runtime server serves the record shell with 404 for an unknown slug and 200 for a stored record or /write", async () => {
+test("runtime server serves the record shell with 404 for an unknown slug and 200 for a stored record, /write or a draft", async () => {
   const store = new InMemoryRecordStore();
   const api = createIngestApi({ store, baseUrl: "https://possiblymadebyahuman.test" });
   const webDistDir = await mkdtemp(join(tmpdir(), "pmbah-web-dist-"));
@@ -423,7 +423,7 @@ test("runtime server serves the record shell with 404 for an unknown slug and 20
     assert.match(missing.headers.get("content-type"), /text\/html/);
     assert.equal(await missing.text(), shell);
 
-    for (const path of [`/${short_signature}`, `/${record_hash}`, "/write", "/write/"]) {
+    for (const path of [`/${short_signature}`, `/${record_hash}`, "/write", "/write/", "/write/0b7f3c52-draft"]) {
       const response = await fetch(`${base}${path}`);
       assert.equal(response.status, 200, path);
       assert.equal(await response.text(), shell, path);

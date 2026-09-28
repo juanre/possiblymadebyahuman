@@ -51,6 +51,16 @@ prefixes. Lifecycle transitions drain writes before changing ownership or
 publication state. An abrupt failure can lose not-yet-durable events; normal
 close and exit drain them. Batch Lisp persistence remains synchronous.
 
+/write drafts amendment, 27 September 2026: the owner requires that
+`/write` keep several drafts, with their text saved only in the writer's
+browser, so a reload or crash never loses writing. Draft text lives in its own
+IndexedDB database (`pmbah.write.drafts.v1`), apart from the content-blind
+event journal, and is never uploaded, sent in checkpoints or logged. Each
+saved text is tagged with the session, event count and chain tip it
+corresponds to; a restored draft resumes without a capture gap only when that
+tag matches the journal, and otherwise its next edit starts after a gap. One
+tab at a time owns the drafts. Public records remain plaintext-free.
+
 ---
 
 ## 1. Product promise
@@ -331,7 +341,7 @@ All v0 producers record the writing process captured after a user starts a sessi
 
 - **Emacs** may enable `pmbah-mode` in a non-empty buffer. It records only mutations after capture starts, using Emacs' absolute positions and lengths for those later mutations. Its helper receives only process metadata (a private journal descriptor, producer info, capture context, duration), not inserted text, text hashes-for-anything-else, initial snapshots/baselines, or text replay fixtures. **Local transient-binding exception:** at sign time the helper may receive the active region when `use-region-p` is true, otherwise the whole buffer, *solely* to compute the approved content-blind text binding (the `canon-letters/0.1` commitment) locally via the shared `packages/format` implementation. The helper must discard that text without persisting, logging, replaying, uploading, or passing it onward; only the sealed binding object (`scheme`, `canonical_length`, `commitment`) and the record survive. The text never leaves the user's machine — this is a local-compute exception, not a storage-policy exception, and plaintext storage/upload remains forbidden.
 - **Browser extension** requires explicit start in an editor for a new independent session; existing text does not prevent starting. Only subsequent mutations are captured. No initial text or length baseline is imported, so a session started in a non-empty editor must preserve unknown total document length rather than infer an empty starting document. Explicit resumption or linked continuation may attach to a non-empty editor on the same site origin; missing edits remain unknown and are never reconstructed. It never enrolls another field by heuristic matching. An additional editor may explicitly join the same active document session; this is a user choice, not an automatic inference. Reload, full-document navigation, stop, and finish retire capture authorization. Historical local drafts remain stopped. It may transiently inspect field text inside a `beforeinput` handler to derive numeric offsets/lengths. Normal extension publication includes a text binding without an opt-out checkbox. If its scope is unavailable or computation fails, offer cancellation or an explicit editing-activity-only fallback. At sign time, the content script may transiently read selected text in the active field/editor, or all current content of that field/editor when no in-field selection is available, solely to compute the content-blind binding commitment; only the binding object may cross to the service worker/upload. It must not retain text snapshots in content-script state, extension storage, service-worker messages, uploads, or logs.
-- **`/write` first-party page** starts from an empty textarea and clears/discards the visible canvas independently of the persisted content-blind session record. At sign time, if binding is enabled, it binds selected text in the writing canvas, or all current canvas content when nothing is selected.
+- **`/write` first-party page** keeps a list of drafts. Each draft's text is saved only in the browser, in a database separate from the content-blind session journal, and restored when the draft is reopened; see the /write drafts amendment above. A new draft starts from an empty textarea. At sign time, if binding is enabled, it binds selected text in the writing canvas, or all current canvas content when nothing is selected.
 - **`packages/producer-core`** accepts only public mutation shapes and session metadata. It must not require plaintext, final text, inserted text, text hashes, or text replay to sign/verify a record.
 
 Tests and audits for each producer must cover this invariant before release.
@@ -513,7 +523,7 @@ Reasons:
 - Avoids premature object-storage split.
 - Neon gives managed Postgres while preserving a standard Postgres development/test surface.
 
-New records store immutable event chunks in PostgreSQL, with separate indexed upload cursors and summaries. Individual requests contain at most 4096 events; neither finalization nor paged reading assembles the complete log. Existing inline JSONB records remain readable through the compatibility API. Migration 005 installs this storage layout.
+New records store immutable event chunks in PostgreSQL, with separate indexed upload cursors and summaries. Individual requests contain at most 4096 events; neither finalization nor paged reading assembles the complete log. Existing inline JSONB records remain readable through the compatibility API. Migration 005 installs this storage layout. Migration 006 records each upload's last activity and received bytes: one upload is capped in events and bytes (413 `upload_too_large`), and an operator command deletes unfinalized staging untouched for 30 days. Producers keep the frozen record and restart a missing upload from event zero. Observed sessions and checkpoints still have no expiry.
 
 ### 7.1 `records`
 
@@ -647,7 +657,7 @@ Approved v0 policy:
 - No public user deletion endpoint.
 - Uploaded records are permanent by default.
 - This is acceptable only because public records must not store plaintext or direct user identity fields.
-- Manual/admin abuse removal can exist operationally outside the public API.
+- Manual/admin abuse removal can exist operationally outside the public API. `make remove-record` removes one record and its dependent rows in one transaction and keeps its hash in a private tombstone (migration 007), so the hash cannot be published again and its URL returns not-found. Continuations keep their signed parent hash and stay published. See [record removal](operations-record-removal.md).
 
 Reasoning:
 
@@ -809,45 +819,43 @@ Main route:
 Component structure:
 
 ```text
-RecordPage
-  DisclaimerBanner
-  CaptureContextSummary
-  QuickStatsPanel
-  ProcessTimeline
-  SignalList
-    SignalCard
-  VerificationPanel
-    ChainVerificationButton
-    ManifestDetails
+RecordPage / PagedRecordPage
+  VerificationAlert
+  RecordHeader
+  EditTimeline
+  TextBindingSection
+    DocumentCheckCard
+    CommensurabilityCard
+  TechnicalDetails
+    VerificationPanel
+      ManifestDetails
+    TimingFingerprint
+    TimingAndCounts
+    SignalList
+      SignalCard
+    CaptureContextSummary
 ```
 
 ### 11.1 Record page content
 
-The page should show:
+The page should show, in this order:
 
-1. Standing disclaimer.
-2. Capture context, if present.
-3. Quick stats:
-   - event count
-   - signed duration for 0.3, reported duration for legacy records, and editing span separately
-   - observed process length, or unknown when process measurements contain nulls
-   - typing events / typed codepoints
-   - insertions / deletions / replacements
-   - paste/unknown counts
-   - largest atomic insert
-   - active vs idle time between captured edits, excluding leading and trailing waits
-   - delay distribution summary
-4. Process timeline.
-5. Analyzer signals as facts.
-6. Verification panel.
+1. A top-level alert, only when a completed hash or format check fails, linking to the signature section.
+2. Header: the title; one strictly descriptive summary sentence (where it was written, naming the site for a browser text field, the signed or estimated span, and the publication date); key facts (writing time, which leaves out pauses of 30 seconds or more, edits, characters deleted, pastes, largest insertion, length, and the signed text size in letters and digits when a document is bound); a check line saying whether the hash chain was checked in the reader's browser and what the server received, linking to the signature section; and one limit caption. Unknown values read "not measured".
+3. Edit timeline. Pauses of 5 minutes or more, including waits before the first edit and before signing, are cut from the time axis and labelled with their length; the end of the axis names a signed finish.
+4. Writing rhythm: gaps between edits on a log scale from 16 ms to 10 s, with separate bars below and above.
+5. Document check, or a statement that no document was bound.
+6. Technical details, collapsed: signature & details, timing and counts (signed or reported duration, editing span, active and paused time between edits, delay summary, typing and operation counts, unknown sources), analyzer signals, capture context.
+
+Each measurement appears once outside the technical details.
 
 ### 11.2 Process timeline in content-blind mode
 
 The public service should not render or reconstruct text. Instead, the timeline visualizes structure:
 
 - document length as a step-after curve, flat between edits and jumping only at a captured edit; stop at unknown measurements and do not extend through uncaptured trailing time
-- explicit no-captured-edit intervals before the first edit and between the last edit and a format 0.3 signed finish
-- readable duration summaries and explicit rhythm counts below 16 ms and above 100 s, without clamping long pauses into finite bins
+- no-captured-edit intervals before the first edit and between the last edit and a format 0.3 signed finish, drawn to scale when short and cut from the axis with their length when 5 minutes or more
+- readable duration summaries and explicit rhythm counts below 16 ms and above 10 s, without clamping long pauses into finite bins
 - insertion/deletion position on a horizontal document bar
 - event size
 - source color
@@ -936,7 +944,7 @@ Extension local retention and resumption:
 - Resume preserves session identity, event history, checkpoint credentials and original clock. The next real edit includes the intervening pause. If prior edits may have been missed, its position is unknown (`pos: null`), so the viewer does not invent a continuous document-length curve. Reattachment adds no event.
 - The extension and `/write` opt into `signedFinishTime`; active 0.2 drafts finish as 0.3 without changing event/checkpoint prefixes. Elapsed finish includes a pause followed only by publication. Old 0.1 drafts retain last-edit timing and failed legacy uploads retain their frozen version/hash. After resumption, a text check remains unavailable until another real edit; publication of editing activity alone is allowed.
 - Published records cannot be resumed or mutated in place. **Continue in chosen field** explicitly starts a new session with a sealed parent hash and only new mutations. Its clock begins at the prior signed finish; legacy saved anchors use their retained local upload time as an approximate boundary. Saved links remain. Reattachment never infers document identity or claims missed edits were captured.
-- Producer-core retains its configurable default TTL. The extension and `/write` disable automatic draft/link expiry. `/write` recovers logs and frozen uploads on reload without restoring writing, and serializes local storage ownership across tabs. Emacs uses durable private recovery files. All three producers now create format 0.3 signed finishes.
+- Producer-core retains its configurable default TTL. The extension and `/write` disable automatic draft/link expiry. `/write` restores each draft's text and history on reload, resuming without a gap only when the saved text matches the recorded chain tip, and serializes local storage ownership across tabs. Emacs uses durable private recovery files. All three producers now create format 0.3 signed finishes.
 
 ### 13.2 Emacs UI
 

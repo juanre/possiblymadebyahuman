@@ -1,15 +1,135 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildActivityBins, buildDelayHistogram, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, formatDelayMs, formatDuration, formatServerObservedSpan, formatUtcMinute, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult } from "./record-utils.ts";
+import { buildActivityColumns, buildDelayDensity, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeObservation, describeRecordSummary, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
-export function DisclaimerBanner() {
+const SITE_NAME = "possiblymadebyahuman";
+
+/** Names the browser tab after the page the reader is looking at. */
+export function usePageTitle(title: string) {
+  useEffect(() => {
+    document.title = `${title} · ${SITE_NAME}`;
+  }, [title]);
+}
+
+// The site's infinity mark, drawn inline so it needs no separate image file.
+function SiteMark({ size, className }: { size: number; className?: string }) {
   return (
-    <section className="banner" aria-label="What this record means">
-      <strong>This is a signed writing record.</strong>
-      <span> It shows the shape of an editing process. It does not prove who originated the ideas, and it is not a human/AI score.</span>
-    </section>
+    <svg className={className} viewBox="0 0 32 32" width={size} height={size} aria-hidden="true" focusable="false">
+      <path d="M6 16C6 11 11 11 16 16C21 21 26 21 26 16C26 11 21 11 16 16C11 21 6 21 6 16Z"
+        fill="none" stroke="#8b5e34" strokeWidth={3.5} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+export function HomeLink() {
+  return (
+    <p className="record-home-line">
+      <a className="record-home" href="/">
+        <SiteMark size={22} />
+        {SITE_NAME}
+      </a>
+    </p>
+  );
+}
+
+export const TECHNICAL_DETAILS_ID = "technical-details";
+const SIGNATURE_HEADING_ID = "signature-and-verification";
+
+/** Opens the technical details and brings the signature section into view. */
+export function revealSignatureDetails(open: () => void) {
+  open();
+  requestAnimationFrame(() => {
+    const heading = document.getElementById(SIGNATURE_HEADING_ID);
+    heading?.scrollIntoView({ block: "start" });
+    heading?.focus({ preventScroll: true });
+  });
+}
+
+// Any completed check that fails is announced once, above the header, on both
+// the inline and the paged record page. Downloads that could not finish are
+// pending, not failures, and never raise this alert.
+export function VerificationAlert({ verification, onShowDetails }: { verification?: VerificationState; onShowDetails: () => void }) {
+  if (!verification || verification.ok || verification.pending) return null;
+  const hashMismatch = verification.messages.some((message) => message.includes("record_hash mismatch") || message.includes("hash does not match"));
+  return (
+    <div className="verification-alert" role="alert">
+      <p>
+        <strong>This record does not verify.</strong>{" "}
+        {hashMismatch
+          ? "Recomputing the hash chain from these events does not reproduce the signed record hash, so its contents cannot be trusted."
+          : "It fails the record format's checks, so its contents cannot be trusted."}
+      </p>
+      <p>
+        <a
+          href={`#${SIGNATURE_HEADING_ID}`}
+          onClick={(event) => {
+            event.preventDefault();
+            revealSignatureDetails(onShowDetails);
+          }}
+        >
+          See what failed in the technical details
+        </a>
+      </p>
+    </div>
+  );
+}
+
+type HeaderSource = Pick<RecordApiResponse, "manifest" | "stats" | "observation">;
+
+// The header keeps the same geometry while the record loads: the title is
+// reserved but hidden, and placeholders stand in for the summary and facts.
+export function RecordHeader({ record, verification, checking = false, onShowDetails }: {
+  record?: HeaderSource; verification?: VerificationState; checking?: boolean; onShowDetails?: () => void;
+}) {
+  return (
+    <header className={`record-header${record ? "" : " record-header-loading"}`}>
+      <HomeLink />
+      <h1 aria-label={record ? undefined : "Loading writing record"}><span aria-hidden={!record}>Signed writing record</span></h1>
+      {record ? (
+        <>
+          <p className="record-summary">{describeRecordSummary(record)}</p>
+          <dl className="record-facts">
+            {recordFacts(record).map((fact) => (
+              <div key={fact.label} className="record-fact"><dt>{fact.label}</dt><dd>{fact.value}</dd></div>
+            ))}
+          </dl>
+          <RecordCheck record={record} verification={verification} checking={checking} onShowDetails={onShowDetails} />
+        </>
+      ) : (
+        <>
+          <p className="record-summary record-placeholder" aria-hidden="true"><span /><span /></p>
+          <div className="record-facts record-placeholder" aria-hidden="true" />
+        </>
+      )}
+      <p className="record-limit">
+        This record shows how the text was edited.{" "}
+        <a href="/docs/what-pmbah-does/">How records work</a>
+      </p>
+    </header>
+  );
+}
+
+// The reader's own check of the record, and what the server saw, stated where
+// the reader looks first. A failure is also raised by VerificationAlert.
+function RecordCheck({ record, verification, checking, onShowDetails }: {
+  record: HeaderSource; verification?: VerificationState; checking: boolean; onShowDetails?: () => void;
+}) {
+  const state = checking ? "checking" : !verification ? "loading" : verification.ok ? "ok" : verification.pending ? "pending" : "failed";
+  const headline = {
+    checking: "Checking the hash chain in your browser…",
+    loading: "Checking the hash chain in your browser…",
+    ok: "Hash chain checked in your browser.",
+    pending: "Not checked yet: this long record is checked in your browser when you choose Verify full record below.",
+    failed: "Hash chain check failed.",
+  }[state];
+  return (
+    <p className={`record-check record-check-${state}`}>
+      {state === "ok" && <svg className="record-check-mark" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false"><path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+      <strong>{headline}</strong> {describeObservation(record.observation)}{" "}
+      {onShowDetails && <a href={`#${SIGNATURE_HEADING_ID}`} onClick={(event) => { event.preventDefault(); revealSignatureDetails(onShowDetails); }}>How it was checked</a>}
+    </p>
   );
 }
 
@@ -34,6 +154,17 @@ function recordTimingWindow(record: RecordApiResponse): { began: string; ended: 
   return null;
 }
 
+function TechnicalSection({ title, id, children }: { title: string; id?: string; children: React.ReactNode }) {
+  const generated = useId();
+  const headingId = id ?? generated;
+  return (
+    <section className="technical-section" aria-labelledby={headingId}>
+      <h3 id={headingId} tabIndex={id ? -1 : undefined}>{title}</h3>
+      {children}
+    </section>
+  );
+}
+
 export function CaptureContextSummary({ record }: { record: RecordApiResponse }) {
   const context = record.manifest.capture_context;
   const timing = recordTimingWindow(record);
@@ -45,15 +176,13 @@ export function CaptureContextSummary({ record }: { record: RecordApiResponse })
   ) : null;
   if (!context) {
     return (
-      <section className="card">
-        <h2>Capture context</h2>
+      <TechnicalSection title="Capture context">
         {timingRows ? <dl className="details">{timingRows}</dl> : <p className="muted">No capture context was included.</p>}
-      </section>
+      </TechnicalSection>
     );
   }
   return (
-    <section className="card">
-      <h2>Capture context</h2>
+    <TechnicalSection title="Capture context">
       <dl className="details">
         {context.surface && <><dt>Surface</dt><dd>{String(context.surface)}</dd></>}
         {context.label && <><dt>Label</dt><dd>{String(context.label)}</dd></>}
@@ -64,48 +193,43 @@ export function CaptureContextSummary({ record }: { record: RecordApiResponse })
         {context.emacs?.major_mode && <><dt>Major mode</dt><dd>{context.emacs.major_mode}</dd></>}
         {timingRows}
       </dl>
-    </section>
+    </TechnicalSection>
   );
 }
 
-export function QuickStatsPanel({ record }: { record: RecordApiResponse }) {
+// Measurements that the header does not already state, for readers who want
+// the arithmetic behind the summary.
+export function TimingAndCounts({ record }: { record: RecordApiResponse }) {
   const stats = record.stats;
   const timing = recordTimingDetails(record);
   return (
-    <section className="card">
-      <h2>Quick facts</h2>
-      <div className="stats-grid">
-        <Stat label="Events" value={stats.event_count} />
-        <Stat label={timing.signedFinish ? "Signed duration" : "Reported duration"} value={formatDuration(stats.duration_ms)} />
-        <Stat label="Editing span" value={formatDuration(timing.editingSpanMs)} />
-        <Stat label="Observed length" value={stats.observed_final_length === null ? "unknown" : `${stats.observed_final_length} codepoints`} />
-        <Stat label="Typing events" value={stats.typed_event_count} />
-        <Stat label="Insert / delete / replace" value={`${stats.insert_op_count} / ${stats.delete_op_count} / ${stats.replace_op_count}`} />
-        <Stat label="Paste / unknown" value={`${stats.paste_event_count} / ${stats.unknown_source_count}`} />
-        <Stat label="Largest atomic insert" value={stats.largest_atomic_insert_codepoints === null ? "unknown" : `${stats.largest_atomic_insert_codepoints} codepoints`} />
-        <Stat label="Active / idle between edits" value={`${formatDuration(stats.active_time_ms)} / ${formatDuration(stats.idle_time_ms)}`} />
-        <Stat label="Delay p50 / p95" value={`${formatDelayMs(stats.inter_event_delay_p50_ms)} / ${formatDelayMs(stats.inter_event_delay_p95_ms)}`} />
-      </div>
-      <p className="muted">Editing span runs from the first captured edit to the last. Active and idle totals cover only intervals between edits; endpoint waits are separate.</p>
-    </section>
+    <TechnicalSection title="Timing and counts">
+      <dl className="details timing-counts">
+        <dt>{timing.signedFinish ? "Signed duration" : "Reported duration"}</dt><dd>{formatDuration(stats.duration_ms)}</dd>
+        <dt>Editing span, first to last edit</dt><dd>{formatDuration(timing.editingSpanMs)}</dd>
+        <dt>Between edits, active and paused</dt><dd>{formatDuration(stats.active_time_ms)} active, {formatDuration(stats.idle_time_ms)} in pauses of 30 seconds or more</dd>
+        <dt>Median and 95th-percentile gap</dt><dd>{formatDelayMs(stats.inter_event_delay_p50_ms)} and {formatDelayMs(stats.inter_event_delay_p95_ms)}</dd>
+        <dt>Longest gap</dt><dd>{formatDelayMs(stats.inter_event_delay_max_ms)}</dd>
+        <dt>Typing edits</dt><dd>{stats.typed_event_count}</dd>
+        <dt>Insertions, deletions, replacements</dt><dd>{stats.insert_op_count}, {stats.delete_op_count}, {stats.replace_op_count}</dd>
+        <dt>Edits with unknown source</dt><dd>{stats.unknown_source_count}</dd>
+      </dl>
+      <p className="muted">Active and paused totals cover only the intervals between edits; time before the first edit and after the last is separate.</p>
+    </TechnicalSection>
   );
-}
-
-function Stat({ label, value }: { label: string; value: React.ReactNode }) {
-  return <div className="stat"><span>{label}</span><strong>{value}</strong></div>;
 }
 
 // Chart geometry is in CSS pixels: the viewBox width follows the rendered
 // width of the SVG, so one user unit is one pixel and labels keep their size
 // at any screen width. The fallback width is used until the SVG is measured.
 const TIMELINE_FALLBACK_W = 1200;
-const TIMELINE_VB_H = 220;
-const TIMELINE_PAD_L = 50;
-const TIMELINE_PAD_R = 20;
-const TIMELINE_PAD_T = 28;
-const TIMELINE_PAD_B = 48;
-const TIMELINE_MIN_TICK_SPACING_PX = 56;
-const TIMELINE_TICK_STEPS_SECONDS = [10, 30, 60, 300, 600, 1800, 3600];
+const TIMELINE_VB_H = 280;
+const TIMELINE_PAD_L = 12;
+const TIMELINE_PAD_R = 12;
+const TIMELINE_PAD_T = 34;
+const TIMELINE_PAD_B = 44;
+const CHART_FONT = "Inter, ui-sans-serif, system-ui, sans-serif";
+const SERIF_FONT = "'Iowan Old Style', 'New York', ui-serif, Georgia, serif";
 
 // Width of an element's content box, tracked as it resizes.
 function useContentWidth<T extends Element>(fallback: number): [React.RefObject<T | null>, number] {
@@ -124,20 +248,10 @@ function useContentWidth<T extends Element>(fallback: number): [React.RefObject<
   return [ref, width];
 }
 
-// The coarsest step that keeps tick labels at least the minimum spacing apart.
-function timelineTickStepSeconds(totalSeconds: number, plotW: number): number {
-  const maxTicks = Math.max(1, Math.floor(plotW / TIMELINE_MIN_TICK_SPACING_PX));
-  for (const step of TIMELINE_TICK_STEPS_SECONDS) {
-    if (totalSeconds / step <= maxTicks) return step;
-  }
-  const largest = TIMELINE_TICK_STEPS_SECONDS[TIMELINE_TICK_STEPS_SECONDS.length - 1]!;
-  return largest * Math.ceil(totalSeconds / (largest * maxTicks));
-}
-
 function sourceFill(source: string): string {
   switch (source) {
     case "typing": return "#2f80ed";
-    case "paste": return "#d9822b";
+    case "paste": return "#c96a16";
     case "cut": return "#bf3f3f";
     case "delete": return "#bf3f3f";
     case "ime": return "#7c3aed";
@@ -148,34 +262,51 @@ function sourceFill(source: string): string {
   }
 }
 
-function formatTimelineTick(seconds: number): string {
-  if (seconds >= 86400) return `${Math.floor(seconds / 86400)}d ${Math.floor(seconds / 3600) % 24}h`;
-  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}h ${Math.floor(seconds / 60) % 60}m`;
-  const m = Math.floor(seconds / 60);
-  const s = Math.floor(seconds % 60);
-  return s === 0 ? `${m}:00` : `${m}:${String(s).padStart(2, "0")}`;
+const SOURCE_NAMES: Record<string, string> = {
+  typing: "Typing",
+  paste: "Paste",
+  cut: "Cut",
+  delete: "Deletion",
+  ime: "IME input",
+  autocomplete: "Autocomplete",
+  drop: "Drop",
+  programmatic: "Programmatic edit",
+};
+
+function describeTimelinePoint(point: { source: string; t: number; ins_len: number | null; del_len: number | null; documentLength: number | null }): string {
+  const name = SOURCE_NAMES[point.source] ?? "Edit of unknown source";
+  const inserted = point.ins_len === null ? "unknown amount added" : `${formatCharacters(point.ins_len)} added`;
+  const removed = point.del_len === null ? "unknown amount removed" : `${formatCharacters(point.del_len)} removed`;
+  const length = point.documentLength === null ? "" : `; length afterwards ${formatCharacters(point.documentLength)}`;
+  return `${name} at ${formatDuration(point.t)}: ${inserted}, ${removed}${length}`;
 }
 
-export function EditTimeline({ record }: { record: RecordApiResponse }) {
+/** The data colour for record charts: a line over a light fill of the same hue. */
+export const DATA_INK = { line: "#7a4f2a", fill: "#8b5e34", fillOpacity: 0.2, barOpacity: 0.45 } as const;
+
+// Width given to each pause cut out of the time axis.
+const TIMELINE_BREAK_W = 28;
+
+function EditTimeline({ record }: { record: RecordApiResponse }) {
   const timing = recordTimingDetails(record);
   const points = useMemo(() => buildTimelinePoints(record.events), [record.events]);
   // The length curve is drawn for the prefix of events whose document length can
   // be inferred; from the first event with an unknown position onwards only
-  // markers and pauses are shown.
+  // markers are shown.
   const firstUnknown = points.findIndex((point) => point.documentLength === null);
   const knownPoints = firstUnknown === -1 ? points : points.slice(0, firstUnknown);
   const lengthKnown = knownPoints.length > 0;
   const lengthKnownThroughout = points.length > 0 && firstUnknown === -1;
   const maxLength = timelineLengthScale(points, record.stats.observed_final_length);
-  const observedDurationMs = Math.max(record.manifest.duration_ms, points.at(-1)?.t ?? 0);
-  const duration = Math.max(1, observedDurationMs);
+  const endMs = Math.max(record.manifest.duration_ms, points.at(-1)?.t ?? 0);
   const [chartRef, chartW] = useContentWidth<SVGSVGElement>(TIMELINE_FALLBACK_W);
   const plotW = Math.max(1, chartW - TIMELINE_PAD_L - TIMELINE_PAD_R);
   const plotH = TIMELINE_VB_H - TIMELINE_PAD_T - TIMELINE_PAD_B;
   const baseline = TIMELINE_PAD_T + plotH;
-  const activity = buildActivityBins(record.events, duration, Math.floor(plotW / 10));
-  const maxActivity = activity.reduce((max, bin) => Math.max(max, bin.count), 1);
-  const tx = (t: number) => TIMELINE_PAD_L + (Math.min(duration, Math.max(0, t)) / duration) * plotW;
+  const axis = useMemo(() => buildTimeAxis(record.events.map(event => event.t), endMs, plotW, TIMELINE_BREAK_W), [record.events, endMs, plotW]);
+  const activity = useMemo(() => buildActivityColumns(record.events, axis), [record.events, axis]);
+  const maxActivity = activity.reduce((max, column) => Math.max(max, column.count), 1);
+  const tx = (t: number) => TIMELINE_PAD_L + axis.x(t);
   const ly = (len: number) => baseline - (Math.min(maxLength, Math.max(0, len)) / maxLength) * plotH;
   // With no inferable length there is no curve; markers sit on a neutral mid line.
   const markerY = (point: { documentLength: number | null }) => point.documentLength !== null ? ly(point.documentLength) : baseline - plotH / 2;
@@ -189,124 +320,119 @@ export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const areaPath = firstStep && lastStep
     ? `M ${tx(firstStep.t)} ${baseline} L ${tx(firstStep.t)} ${ly(firstStep.length)} ${steps.slice(1).map(point => `L ${tx(point.t)} ${ly(point.length)}`).join(" ")} L ${tx(lastStep.t)} ${baseline} Z`
     : "";
+  // The length held across a cut pause, when the curve reaches that far.
+  const lengthAt = (t: number) => lastStep && t < lastStep.t ? [...steps].reverse().find(step => step.t <= t)?.length ?? null : null;
 
-  const pauseSpans = points.filter((point) => point.isLongPause && point.delayFromPreviousMs > 0);
-  // Only NOTABLE events get a marker — pastes, drops, cuts/deletes, and large
-  // atomic inserts. Per-keystroke ticks turn into illegible mush on a long
-  // record; the rising curve already carries the typing story, and these few
-  // markers stay legible at any density.
+  // Only notable events get a marker: pastes, drops, cuts and deletions, and
+  // large insertions. The curve already carries the typing itself, including
+  // multi-character deletions; where there is no curve, those get a marker too.
+  const isDeletion = (point: TimelinePoint) => point.source === "cut" || point.source === "delete"
+    || (point.documentLength === null && (point.del_len ?? 0) > 1);
   const notable = points.filter((point) =>
     point.isLargeInsert
     || point.source === "paste"
     || point.source === "drop"
-    || point.source === "cut"
-    || point.source === "delete"
-    || (point.del_len ?? 0) > 1,
+    || isDeletion(point),
   );
-  const notableSources = new Set(notable.map((point) => point.source));
+  const markerSource = (point: TimelinePoint) => isDeletion(point) && point.source !== "cut" ? "delete" : point.source;
+  const notableSources = new Set(notable.map(markerSource));
   const hasLargeInsert = points.some((point) => point.isLargeInsert);
-  const hasLongPause = pauseSpans.length > 0;
-
-  const totalSeconds = duration / 1000;
-  const tickEverySeconds = timelineTickStepSeconds(totalSeconds, plotW);
-  const ticks: number[] = [];
-  for (let seconds = 0; seconds <= totalSeconds; seconds += tickEverySeconds) ticks.push(seconds);
-  // Mark the end of the record too, unless its label would sit on the last tick's.
-  const lastTickSeconds = ticks[ticks.length - 1] ?? 0;
-  if (((totalSeconds - lastTickSeconds) / totalSeconds) * plotW >= TIMELINE_MIN_TICK_SPACING_PX) ticks.push(totalSeconds);
+  const cutPauses = axis.breaks.length;
+  const labels = layoutTimeAxisLabels(axis, { endPrefix: timing.signedFinish ? "signed at " : "" });
+  // Pause lengths that would collide sit on a second row below the axis.
+  const secondRowH = labels.some(label => label.row === 1) ? 16 : 0;
+  const pauseSentence = cutPauses > 0 ? ` ${cutPauses === 1 ? "A pause" : "Pauses"} of 5 minutes or more ${cutPauses === 1 ? "is" : "are"} cut short and marked with how long ${cutPauses === 1 ? "it" : "they"} lasted.` : "";
+  const finalLength = lastStep?.length ?? null;
+  const chartLabel = [
+    lengthKnown ? `Document length over time${finalLength === null ? "" : `, ending at ${formatCharacters(finalLength)}`}.` : "Edits over time.",
+    timing.signedFinish && timing.afterLastEditMs > 0 ? `Signed ${formatDuration(timing.afterLastEditMs)} after the last edit.` : "",
+    cutPauses > 0 ? `${cutPauses} ${cutPauses === 1 ? "pause" : "pauses"} of 5 minutes or more cut from the time axis.` : "",
+  ].filter(Boolean).join(" ");
 
   return (
-    <section className="card timeline-card">
-      <h2>Edit timeline</h2>
+    <section className="record-section edit-timeline" aria-labelledby="edit-timeline-heading">
+      <h2 id="edit-timeline-heading">Edit timeline</h2>
       {points.length === 0 ? (
-        <p className="muted">No edit events were included in this record.</p>
+        <p className="section-intro">No edit events were included in this record.</p>
       ) : lengthKnownThroughout ? (
-        <p className="muted">Document length over time. Pastes, cuts, and large inserts are marked on the curve; shaded bands are long pauses. The line stays flat between edits and changes at each captured edit.</p>
+        <p className="section-intro">Document length over time. Pastes, cuts, and large insertions are marked on the curve.{pauseSentence}</p>
       ) : lengthKnown ? (
-        <p className="muted">Document length over time, up to edit {knownPoints.length} of {points.length}. Later events lack enough measurements to reconstruct length. Editing activity remains visible below; shaded bands mark long pauses.</p>
+        <p className="section-intro">Document length over time, up to edit {knownPoints.length} of {points.length}. Later events lack enough measurements to reconstruct length, so editing activity continues below.{pauseSentence}</p>
       ) : (
-        <p className="muted">Document length is unknown because this record lacks enough measurements to reconstruct it. The bars show when edits happened and how many were captured, not document length. Shaded bands mark long pauses.</p>
+        <p className="section-intro">Document length is unknown because this record lacks enough measurements to reconstruct it. The bars show when edits happened and how many were captured, not document length.{pauseSentence}</p>
       )}
-      {timing.signedFinish && <p className="muted signed-finish-summary">Signed finish at {formatDuration(record.manifest.duration_ms)} from the session start.
-        {timing.beforeFirstEditMs > 0 && <> No edits were captured during the first {formatDuration(timing.beforeFirstEditMs)}.</>}
-        {timing.afterLastEditMs > 0 && <> The final {formatDuration(timing.afterLastEditMs)} contains no captured edits. The length curve ends at the last measurable edit; it does not describe that later interval.</>}
-      </p>}
-      <svg ref={chartRef} className="timeline-chart" viewBox={`0 0 ${chartW} ${TIMELINE_VB_H}`} role="img" aria-label="Content-blind edit timeline" preserveAspectRatio="xMidYMid meet">
-        {timing.signedFinish && timing.beforeFirstEditMs > 0 && <rect className="before-first-edit-gap" x={tx(0)} y={TIMELINE_PAD_T}
-          width={Math.max(1, tx(timing.beforeFirstEditMs) - tx(0))} height={plotH} fill="#dce3e8" opacity={0.65}>
-          <title>{`No captured edits before the first edit: ${formatDuration(timing.beforeFirstEditMs)}`}</title>
-        </rect>}
-        {timing.signedFinish && timing.afterLastEditMs > 0 && <rect className="signed-finish-gap" x={tx(points.at(-1)?.t ?? 0)} y={TIMELINE_PAD_T}
-          width={Math.max(1, tx(record.manifest.duration_ms) - tx(points.at(-1)?.t ?? 0))} height={plotH} fill="#dce3e8" opacity={0.65}>
-          <title>{`No captured edits between the last edit and signed finish: ${formatDuration(timing.afterLastEditMs)}`}</title>
-        </rect>}
-        {pauseSpans.map((point) => {
-          const startT = Math.max(0, point.t - point.delayFromPreviousMs);
-          const x = tx(startT);
-          const width = Math.max(2, tx(point.t) - x);
-          return <rect key={`pause-${point.seq}`} x={x} y={TIMELINE_PAD_T} width={width} height={plotH} fill="#ead9b8" opacity={0.45} />;
-        })}
-        {!lengthKnown && activity.filter(bin => bin.count > 0).map(bin => {
-          const height = Math.max(3, bin.count / maxActivity * plotH);
-          return <rect className="activity-bar" key={bin.start} x={tx(bin.start)} y={baseline - height}
-            width={Math.max(1, tx(bin.end) - tx(bin.start) - 1)} height={height} fill="#769bc7">
-            <title>{`${bin.count} edit${bin.count === 1 ? "" : "s"} · ${formatDuration(bin.start)}–${formatDuration(bin.end)}`}</title>
+      <svg ref={chartRef} className="timeline-chart" viewBox={`0 0 ${chartW} ${TIMELINE_VB_H + secondRowH}`} role="img" aria-label={chartLabel} preserveAspectRatio="xMidYMid meet">
+        {!lengthKnown && activity.filter(column => column.count > 0).map(column => {
+          const height = Math.max(3, column.count / maxActivity * plotH);
+          return <rect className="activity-bar" key={`${column.start}-${column.x0}`} x={TIMELINE_PAD_L + column.x0} y={baseline - height}
+            width={Math.max(1, column.x1 - column.x0 - 1)} height={height} fill={DATA_INK.fill} fillOpacity={DATA_INK.barOpacity}>
+            <title>{`${column.count} edit${column.count === 1 ? "" : "s"} from ${formatDuration(column.start)} to ${formatDuration(column.end)}`}</title>
           </rect>;
         })}
-        {!lengthKnown && points.length > 0 && <text x={TIMELINE_PAD_L} y={TIMELINE_PAD_T - 10} fontSize={11} fill="#514a40">edits per interval · peak {maxActivity}</text>}
-        <line x1={TIMELINE_PAD_L} y1={baseline} x2={chartW - TIMELINE_PAD_R} y2={baseline} stroke="#d8c8a6" strokeWidth={0.6} />
-        {lengthKnown ? <path className="length-area" d={areaPath} fill="rgba(139, 94, 52, 0.18)" stroke="none" /> : null}
-        {lengthKnown ? <path className="length-curve" d={linePath} fill="none" stroke="#8b5e34" strokeWidth={1.2} strokeLinejoin="round" strokeLinecap="round" /> : null}
-        {knownPoints.length === 1 && !notable.some(point => point.seq === knownPoints[0]!.seq) && <circle className="length-single" cx={tx(knownPoints[0]!.t)} cy={ly(knownPoints[0]!.documentLength ?? 0)} r={3} fill="#8b5e34">
-          <title>{`${knownPoints[0]!.documentLength} codepoints after the first edit`}</title>
-        </circle>}
-        {notable.map((point) => {
-          const x = tx(point.t);
-          const y = markerY(point);
-          const r = point.isLargeInsert ? 4.5 : 3.2;
+        {!lengthKnown && points.length > 0 && <text x={TIMELINE_PAD_L} y={TIMELINE_PAD_T - 12} fontSize={12} fill="#514a40" fontFamily={CHART_FONT}>edits per interval (peak {maxActivity})</text>}
+        <line x1={TIMELINE_PAD_L} y1={baseline} x2={chartW - TIMELINE_PAD_R} y2={baseline} stroke="#3d2f17" strokeWidth={1} />
+        {lengthKnown ? <path className="length-area" d={areaPath} fill={DATA_INK.fill} fillOpacity={DATA_INK.fillOpacity} stroke="none" /> : null}
+        {lengthKnown ? <path className="length-curve" d={linePath} fill="none" stroke={DATA_INK.line} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" /> : null}
+        {axis.breaks.map((gap) => {
+          const x0 = TIMELINE_PAD_L + gap.x0;
+          const x1 = TIMELINE_PAD_L + gap.x1;
+          const held = lengthAt(gap.start);
           return (
-            <circle key={point.seq} cx={x} cy={y} r={r} fill={sourceFill(point.source)} stroke="#fffaf2" strokeWidth={1.2}>
-              <title>{`seq ${point.seq} · ${point.source} · +${point.ins_len ?? "unknown"}/-${point.del_len ?? "unknown"} · len ${point.documentLength ?? "unknown"} · t=${point.t}ms`}</title>
-            </circle>
-          );
-        })}
-        {lengthKnown ? <text x={TIMELINE_PAD_L - 6} y={TIMELINE_PAD_T + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">{maxLength} cp</text> : null}
-        {lengthKnown ? <text x={TIMELINE_PAD_L - 6} y={baseline + 4} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="end">0</text> : null}
-        {ticks.map((seconds) => {
-          const x = tx(seconds * 1000);
-          return (
-            <g key={`tick-${seconds}`}>
-              <line x1={x} y1={baseline} x2={x} y2={baseline + 4} stroke="#a89a82" strokeWidth={0.6} />
-              <text x={x} y={baseline + 18} fontSize={11} fill="#756b60" fontFamily="ui-monospace, monospace" textAnchor="middle">{formatTimelineTick(seconds)}</text>
+            <g className="timeline-break" key={`break-${gap.start}`}>
+              <title>{`No edits for ${formatPauseLength(gap.end - gap.start)}`}</title>
+              <rect x={x0} y={TIMELINE_PAD_T - 4} width={x1 - x0} height={plotH + 12} fill="#fbf8f2" />
+              {held !== null && <line x1={x0} y1={ly(held)} x2={x1} y2={ly(held)} stroke={DATA_INK.line} strokeWidth={1.5} strokeDasharray="2 4" strokeLinecap="round" />}
+              <line x1={x0 + 2} y1={baseline + 6} x2={x0 + 8} y2={baseline - 6} stroke="#3d2f17" strokeWidth={1.2} />
+              <line x1={x1 - 8} y1={baseline + 6} x2={x1 - 2} y2={baseline - 6} stroke="#3d2f17" strokeWidth={1.2} />
             </g>
           );
         })}
-        <text x={chartW - TIMELINE_PAD_R} y={baseline + 34} fontSize={10} fill="#a89a82" fontFamily="ui-monospace, monospace" textAnchor="end">time →</text>
+        {knownPoints.length === 1 && !notable.some(point => point.seq === knownPoints[0]!.seq) && <circle className="length-single" cx={tx(knownPoints[0]!.t)} cy={ly(knownPoints[0]!.documentLength ?? 0)} r={3.5} fill={DATA_INK.line}>
+          <title>{`${formatCharacters(knownPoints[0]!.documentLength)} after the first edit`}</title>
+        </circle>}
+        {notable.map((point) => (
+          <circle key={point.seq} cx={tx(point.t)} cy={markerY(point)} r={point.isLargeInsert ? 5 : 4} fill={sourceFill(markerSource(point))} stroke="#fbf8f2" strokeWidth={1.5}>
+            <title>{describeTimelinePoint(point)}</title>
+          </circle>
+        ))}
+        {lengthKnown && lastStep ? <text className="length-scale" x={tx(lastStep.t)} y={ly(lastStep.length) - 10} fontSize={12} fill="#514a40" fontFamily={CHART_FONT}
+          textAnchor={tx(lastStep.t) > chartW / 2 ? "end" : "start"}>{formatCharacters(lastStep.length)}</text> : null}
+        {labels.map((label) => {
+          const x = TIMELINE_PAD_L + label.x;
+          return (
+            <g key={`${label.kind}-${label.x}`} className={`axis-label axis-label-${label.kind}`}>
+              {label.kind !== "break" && <line x1={x} y1={baseline} x2={x} y2={baseline + 5} stroke="#3d2f17" strokeWidth={1} />}
+              <text x={label.anchor === "start" ? TIMELINE_PAD_L + label.left : label.anchor === "end" ? TIMELINE_PAD_L + label.right : x} y={baseline + 20 + label.row * 16}
+                fontSize={label.kind === "break" ? 13 : 12} fill={label.kind === "break" ? "#6e665d" : "#5e554a"}
+                fontFamily={label.kind === "break" ? SERIF_FONT : CHART_FONT} fontStyle={label.kind === "break" ? "italic" : undefined}
+                textAnchor={label.anchor} style={{ fontVariantNumeric: "tabular-nums" }}>{label.text}</text>
+            </g>
+          );
+        })}
+        <text x={chartW - TIMELINE_PAD_R} y={baseline + 38 + secondRowH} fontSize={11} fill="#756b60" fontFamily={CHART_FONT} textAnchor="end">time since the session started</text>
       </svg>
       {lengthKnown && !lengthKnownThroughout && <div className="activity-strip" aria-label="Editing activity for the complete record">
-        <p className="muted">All {points.length} edits over time — bar height is the number of edits per interval.</p>
+        <p className="muted">All {points.length} edits over time; bar height is the number of edits per interval.</p>
         <svg viewBox={`0 0 ${chartW} 56`} role="img" aria-label="Edit counts over time">
-          {activity.filter(bin => bin.count > 0).map(bin => {
-            const height = Math.max(3, bin.count / maxActivity * 48);
-            return <rect className="activity-bar" key={bin.start} x={tx(bin.start)} y={52 - height}
-              width={Math.max(1, tx(bin.end) - tx(bin.start) - 1)} height={height} fill="#769bc7">
-              <title>{`${bin.count} edits · ${formatDuration(bin.start)}–${formatDuration(bin.end)}`}</title>
+          {activity.filter(column => column.count > 0).map(column => {
+            const height = Math.max(3, column.count / maxActivity * 48);
+            return <rect className="activity-bar" key={`${column.start}-${column.x0}`} x={TIMELINE_PAD_L + column.x0} y={52 - height}
+              width={Math.max(1, column.x1 - column.x0 - 1)} height={height} fill={DATA_INK.fill} fillOpacity={DATA_INK.barOpacity}>
+              <title>{`${column.count} edits from ${formatDuration(column.start)} to ${formatDuration(column.end)}`}</title>
             </rect>;
           })}
         </svg>
       </div>}
       <div className="legend">
         {!lengthKnown && points.length > 0 && <span>bar height: edits per interval</span>}
-        {lengthKnown && <><span className="dot curve" /> document length{" "}</>}
-        {notableSources.has("paste") && <><span className="dot source-paste" /> paste </>}
-        {notableSources.has("drop") && <><span className="dot source-drop" /> drop </>}
-        {(notableSources.has("cut") || notableSources.has("delete")) && <><span className="dot source-cut" /> cut/delete </>}
-        {notableSources.has("ime") && <><span className="dot source-ime" /> IME </>}
-        {notableSources.has("autocomplete") && <><span className="dot source-autocomplete" /> autocomplete </>}
-        {notableSources.has("programmatic") && <><span className="dot source-programmatic" /> programmatic </>}
-        {hasLargeInsert && <><span className="dot large" /> large insert </>}
-        {hasLongPause && <><span className="dot pause" /> long pause</>}
-        {timing.signedFinish && (timing.beforeFirstEditMs > 0 || timing.afterLastEditMs > 0) && <span>gray bands: no captured edits before the first edit or after the last</span>}
+        {lengthKnown && <span><span className="dot curve" /> document length</span>}
+        {notableSources.has("paste") && <span><span className="dot source-paste" /> paste</span>}
+        {notableSources.has("drop") && <span><span className="dot source-drop" /> drop</span>}
+        {(notableSources.has("cut") || notableSources.has("delete")) && <span><span className="dot source-cut" /> cut or deletion</span>}
+        {notableSources.has("ime") && <span><span className="dot source-ime" /> IME input</span>}
+        {notableSources.has("autocomplete") && <span><span className="dot source-autocomplete" /> autocomplete</span>}
+        {notableSources.has("programmatic") && <span><span className="dot source-programmatic" /> programmatic</span>}
+        {hasLargeInsert && <span><span className="dot large" /> large insertion</span>}
       </div>
     </section>
   );
@@ -323,19 +449,24 @@ const MEASURE_DEFINITIONS: Record<string, string> = {
   long_pause_count: "Number of gaps of 30 seconds or more.",
   active_time_ms: "Sum of gaps shorter than 30 seconds between recorded edits. Time before the first edit and after the last is excluded.",
   idle_time_ms: "Total time paused: the sum of gaps of 30 seconds or more.",
-  small_edit_count: "Edits that inserted or deleted only a few codepoints.",
+  small_edit_count: "Edits that inserted or deleted only a few characters.",
   atomic_insert_max_len: "Largest amount of text inserted in a single edit (e.g. a paste).",
   deletion_count: "Number of edits that removed text.",
   deletion_cluster_count: "Number of runs of consecutive deletions.",
 };
 
+// Measure names are long snake_case keys; let them wrap after underscores.
+function BreakableName({ name }: { name: string }) {
+  return <>{name.split("_").map((part, index, parts) => <React.Fragment key={index}>{part}{index < parts.length - 1 && <>_<wbr /></>}</React.Fragment>)}</>;
+}
+
 function MeasureTerm({ name }: { name: string }) {
   const definition = MEASURE_DEFINITIONS[name];
   const [open, setOpen] = useState(false);
-  if (!definition) return <>{name}</>;
+  if (!definition) return <BreakableName name={name} />;
   return (
     <span className="measure-term">
-      {name}
+      <BreakableName name={name} />
       <button
         type="button"
         className="measure-info"
@@ -352,16 +483,20 @@ function MeasureTerm({ name }: { name: string }) {
 }
 
 export function SignalList({ signals }: { signals: Signal[] }) {
-  return <section className="card"><h2>Analyzer signals as facts</h2>{signals.length === 0 ? <p className="muted">No analyzer signals were stored.</p> : signals.map((signal) => <SignalCard key={`${signal.analyzer_id}:${signal.analyzer_version}`} signal={signal} />)}</section>;
+  return (
+    <TechnicalSection title="Analyzer signals">
+      {signals.length === 0 ? <p className="muted">No analyzer signals were stored.</p> : signals.map((signal) => <SignalCard key={`${signal.analyzer_id}:${signal.analyzer_version}`} signal={signal} />)}
+    </TechnicalSection>
+  );
 }
 
 export function SignalCard({ signal }: { signal: Signal }) {
   return (
     <article className="signal-card">
-      <h3>{signal.analyzer_id} <small>v{signal.analyzer_version}</small></h3>
+      <h4>{signal.analyzer_id} <small>v{signal.analyzer_version}</small></h4>
       {!signal.applicable && <p className="pill">Not applicable</p>}
       <p>{signal.explanation}</p>
-      {signal.measures.length > 0 && <dl className="measure-grid">{signal.measures.map((measure) => <React.Fragment key={measure.key}><dt><MeasureTerm name={measure.key} /></dt><dd>{measure.value === null ? "unavailable" : `${String(measure.value)}${measure.unit ? ` ${measure.unit}` : ""}`}</dd></React.Fragment>)}</dl>}
+      {signal.measures.length > 0 && <dl className="measure-grid">{signal.measures.map((measure) => <React.Fragment key={measure.key}><dt><MeasureTerm name={measure.key} /></dt><dd>{measure.value === null ? "not measured" : `${String(measure.value)}${measure.unit ? ` ${measure.unit}` : ""}`}</dd></React.Fragment>)}</dl>}
     </article>
   );
 }
@@ -374,12 +509,11 @@ export function VerificationPanel({ record, verification: suppliedVerification }
   // is only a check of internal consistency.
   const verification = useMemo(() => suppliedVerification ?? verifyRecordChain(record), [record, suppliedVerification]);
   return (
-    <section className="card">
-      <h2>Signature &amp; details</h2>
+    <TechnicalSection title="Signature & details" id={SIGNATURE_HEADING_ID}>
       <ChainStatus verification={verification} />
       <ObservationStatusLine record={record} />
       <ManifestDetails record={record} computedRecordHash={verification.computedRecordHash} />
-    </section>
+    </TechnicalSection>
   );
 }
 
@@ -449,7 +583,7 @@ function observationStatusCopy(observation: RecordObservation, eventCount: numbe
 }
 
 function UtcInstant({ iso }: { iso: string | null }) {
-  if (!iso) return <span className="utc-instant unknown">unknown</span>;
+  if (!iso) return <span className="utc-instant unknown">not recorded</span>;
   return (
     <time className="utc-instant" dateTime={iso} title={iso}>
       {formatUtcMinute(iso)}
@@ -459,7 +593,9 @@ function UtcInstant({ iso }: { iso: string | null }) {
 
 // The reader's own recomputation of the hash chain, stated plainly. This is a
 // check of internal consistency (the events shown are the events signed), not
-// a verdict about authorship.
+// a verdict about authorship. A failure is announced by VerificationAlert at
+// the top of the page, so this block carries the details without a second
+// live announcement.
 function ChainStatus({ verification }: { verification: VerificationState }) {
   if (verification.pending) return <p className="chain-status" role="status">{verification.messages.join(" ")}</p>;
   if (verification.ok) {
@@ -471,7 +607,7 @@ function ChainStatus({ verification }: { verification: VerificationState }) {
   }
   const hashMismatch = verification.messages.some((message) => message.includes("record_hash mismatch"));
   return (
-    <div className="chain-status error" role="status">
+    <div className="chain-status error">
       {hashMismatch ? (
         <p><strong>Hash chain does not match.</strong> Recomputing the chain from the events shown here does not reproduce the record hash, so this response is internally inconsistent.</p>
       ) : (
@@ -487,11 +623,11 @@ function ChainStatus({ verification }: { verification: VerificationState }) {
 export function ManifestDetails({ record, computedRecordHash }: { record: RecordApiResponse; computedRecordHash?: string }) {
   const manifest = record.manifest;
   return (
-    <dl className="details mono">
-      <dt>Full record hash</dt><dd>{manifest.record_hash}</dd>
-      {computedRecordHash && <><dt>Computed hash</dt><dd>{computedRecordHash}</dd></>}
+    <dl className="details manifest-details">
+      <dt>Full record hash</dt><dd className="mono">{manifest.record_hash}</dd>
+      {computedRecordHash && <><dt>Computed hash</dt><dd className="mono">{computedRecordHash}</dd></>}
       {manifest.parent_record && (
-        <><dt>Continues from</dt><dd><a className="parent-record-link" href={`/${manifest.parent_record}`}>{manifest.parent_record}</a></dd></>
+        <><dt>Continues from</dt><dd className="mono"><a className="parent-record-link" href={`/${manifest.parent_record}`}>{manifest.parent_record}</a></dd></>
       )}
       <dt>Producer</dt><dd>{manifest.producer.id} v{manifest.producer.version}</dd>
       <dt>Capabilities</dt><dd>{manifest.producer.capabilities.join(", ") || "none declared"}</dd>
@@ -539,18 +675,13 @@ export function TextBindingSection({ record, verification }: { record: RecordApi
   const binding = record.manifest.text_binding;
   if (!binding) {
     return (
-      <section className="card" aria-label="Document binding">
-        <h2>Document binding</h2>
-        <p className="muted">No document was bound to this record.</p>
+      <section className="record-section" aria-labelledby="check-a-document-heading">
+        <h2 id="check-a-document-heading">Check a document</h2>
+        <p className="section-intro">No document was bound to this record, so it has no text to check against.</p>
       </section>
     );
   }
-  return (
-    <>
-      <DocumentCheckCard record={record} verification={verification} />
-      <CommensurabilityCard record={record} />
-    </>
-  );
+  return <DocumentCheckCard record={record} verification={verification} />;
 }
 
 export function DocumentCheckCard({ record, verification: suppliedVerification }: { record: RecordApiResponse; verification?: VerificationState }) {
@@ -559,15 +690,18 @@ export function DocumentCheckCard({ record, verification: suppliedVerification }
   const verification = useMemo(() => suppliedVerification ?? verifyRecordChain(record), [record, suppliedVerification]);
   const [candidate, setCandidate] = useState("");
   const [result, setResult] = useState<BindingCheckResult | null>(null);
-  const [checkedRecord, setCheckedRecord] = useState<RecordApiResponse | null>(null);
+  const [checkedRecordHash, setCheckedRecordHash] = useState<string | null>(null);
   const [checkedAt, setCheckedAt] = useState<string | null>(null);
-  const currentResult = verification.ok && checkedRecord === record ? result : null;
+  // A result belongs to the record whose binding produced it, identified by
+  // its signed hash rather than by object identity across renders.
+  const currentResult = verification.ok && checkedRecordHash === record.manifest.record_hash ? result : null;
   return (
-    <section className="card" id="check-a-document" aria-label="Check a document">
-      <h2>Check a document against this record</h2>
-      <p className="muted">Have a copy of this writing? Paste it below and your browser tells you whether it is the text signed here, comparing wording, not exact text. (The Check button turns on once you paste something.)</p>
-      <p className="binding-check-privacy">Runs entirely in your browser; the document you paste is never uploaded.</p>
-      {!verification.ok && <p role={verification.pending ? "status" : "alert"}>{verification.pending ? "Verify the full event log before checking a document against its binding." : "This record failed integrity verification. Document checking is unavailable because its binding cannot be trusted."}</p>}
+    <section className="record-section document-check" id="check-a-document" aria-label="Check a document">
+      <h2>Check a document</h2>
+      <p className="section-intro">Have a copy of this writing? Paste it here to check whether its wording is the text the writer signed with this record. The check runs in your browser; nothing you paste is uploaded.</p>
+      {!verification.ok && (verification.pending
+        ? <p className="check-unavailable" role="status">Verify the full record in the edit timeline above before checking a document against it.</p>
+        : <p className="check-unavailable">Checking is unavailable because this record does not verify, so its binding cannot be trusted.</p>)}
       <textarea
         className="binding-check-input"
         value={candidate}
@@ -578,7 +712,7 @@ export function DocumentCheckCard({ record, verification: suppliedVerification }
           setResult(null);
           setCheckedAt(null);
         }}
-        placeholder="paste the document you want to check…"
+        placeholder="Paste the document you want to check"
         aria-label="document to check"
       />
       <div className="binding-check-actions">
@@ -589,7 +723,7 @@ export function DocumentCheckCard({ record, verification: suppliedVerification }
           onClick={() => {
             if (!verification.ok) return;
             setResult(checkCandidateAgainstBinding(binding, candidate, sessionId));
-            setCheckedRecord(record);
+            setCheckedRecordHash(record.manifest.record_hash);
             setCheckedAt(new Date().toLocaleTimeString());
           }}
         >
@@ -618,7 +752,7 @@ function BindingResult({ result }: { result: BindingCheckResult }) {
         <p className="binding-result-note">{TEXT_BINDING_DISCLAIMER}</p>
         {summary.short && (
           <p className="binding-result-warning">
-            This binds only a short run of text ({result.canonicalLength} canonical characters), so a match on it is weak on its own; many documents share a short run.
+            This binds only a short run of text ({formatSignedTextLength(result.canonicalLength)}), so a match on it is weak on its own; many documents share a short run.
           </p>
         )}
       </div>
@@ -626,111 +760,75 @@ function BindingResult({ result }: { result: BindingCheckResult }) {
   );
 }
 
-export function CommensurabilityCard({ record }: { record: RecordApiResponse }) {
-  const binding = record.manifest.text_binding!;
-  const stats = record.stats;
-  const pasteLabel = `${stats.paste_event_count} ${stats.paste_event_count === 1 ? "paste" : "pastes"}`;
-  return (
-    <section className="card commensurability-card" aria-label="How this was written">
-      <h2>How this was written</h2>
-      <p className="muted">A separate judgment, for you to make, not an automated result. Weigh the signed size against the recorded process.</p>
-      <div className="commensurability">
-        <Stat label="Signed text" value={`${binding.canonical_length} letters & digits (no punctuation or spacing)`} />
-        <Stat
-          label="Writing process"
-          value={`${formatDuration(stats.duration_ms)} · ${stats.event_count} edits · ${pasteLabel} · largest insert ${stats.largest_atomic_insert_codepoints ?? "unknown"}`}
-        />
-      </div>
-      <p className="muted">What counts as “enough” is yours to read.</p>
-    </section>
-  );
-}
-
 const FP_FALLBACK_W = 660;
 const FP_TICKS: { ms: number; label: string }[] = [
   { ms: 100, label: "100ms" },
   { ms: 1000, label: "1s" },
-  { ms: 10000, label: "10s" },
-  { ms: RHYTHM_MAX_MS, label: "100s" },
+  { ms: RHYTHM_MAX_MS, label: "10s" },
 ];
 
 export function TimingFingerprint({ record }: { record: RecordApiResponse }) {
   const [chartRef, W] = useContentWidth<SVGSVGElement>(FP_FALLBACK_W);
   const histogram = useMemo(() => buildDelayHistogram(record.events), [record.events]);
+  const density = useMemo(() => buildDelayDensity(record.events), [record.events]);
   if (histogram.total === 0) return null;
   const { bins, underflow, overflow } = histogram;
   const logMin = Math.log10(RHYTHM_MIN_MS);
   const span = Math.log10(RHYTHM_MAX_MS) - logMin;
-  const maxCount = Math.max(underflow, overflow, ...bins.map(bin => bin.count), 1);
-  const stats = record.stats;
-  const timing = recordTimingDetails(record);
-  const H = 150, padL = 54, padR = 64, padT = 10, padB = 26;
+  const maxCount = Math.max(underflow, overflow, ...density.map(point => point.value), 1e-9);
+  const H = 170, padL = 54, padR = 64, padT = 10, padB = 26;
   const innerW = Math.max(1, W - padL - padR);
   const innerH = H - padT - padB;
   const baseY = padT + innerH;
   const xForMs = (ms: number) => padL + (Math.log10(ms) - logMin) / span * innerW;
   const barWidth = innerW / bins.length;
   const boundaryBarWidth = 24;
+  const edgeBar = { fill: DATA_INK.fill, fillOpacity: DATA_INK.barOpacity };
+  // The distribution is drawn as a smoothed line; the buckets below carry exact counts on hover.
+  const curve = density.map((point) => [xForMs(point.ms), baseY - point.value / maxCount * innerH] as const);
+  const curvePath = curve.map(([x, y], index) => `${index === 0 ? "M" : "L"} ${x} ${y}`).join(" ");
+  const areaPath = curve.length === 0 ? "" : `M ${padL} ${baseY} L ${curve.map(([x, y]) => `${x} ${y}`).join(" L ")} L ${padL + innerW} ${baseY} Z`;
   return (
-    <section className="card fingerprint-card" aria-label="Writing rhythm">
-      <h2>Writing rhythm</h2>
-      <p className="muted">Gaps between consecutive edits. The middle bars use a log scale from 16ms to 100s; separate bars show shorter and longer gaps. Bar height counts gaps.</p>
-      <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of gaps between edits, with separate bars below 16 milliseconds and above 100 seconds">
+    <section className="record-section writing-rhythm" aria-labelledby="writing-rhythm-heading">
+      <h2 id="writing-rhythm-heading">Writing rhythm</h2>
+      <p className="section-intro">How long the writer paused between one edit and the next, and how often.</p>
+      <svg ref={chartRef} className="fingerprint-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Distribution of gaps between edits, with separate bars below 16 milliseconds and above 10 seconds">
         {FP_TICKS.map((tick) => (
           <line key={`line-${tick.ms}`} x1={xForMs(tick.ms)} y1={padT} x2={xForMs(tick.ms)} y2={baseY} className="fp-tick-line" />
         ))}
+        <path className="rhythm-area" d={areaPath} fill={DATA_INK.fill} fillOpacity={DATA_INK.fillOpacity} stroke="none" />
+        <path className="rhythm-curve" d={curvePath} fill="none" stroke={DATA_INK.line} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
         {bins.map((bin, index) => <rect key={index} className="fp-bin" data-count={bin.count}
-          x={padL + index * barWidth} y={baseY - bin.count / maxCount * innerH}
-          width={Math.max(0.5, barWidth - 0.5)} height={bin.count / maxCount * innerH} fill="#769bc7">
-          <title>{`${bin.count} gaps · approximately ${formatDuration(Math.round(bin.start))} to ${formatDuration(Math.round(bin.end))}`}</title>
+          x={padL + index * barWidth} y={padT} width={barWidth} height={innerH} fill="transparent">
+          <title>{`${bin.count} gaps, approximately ${formatDuration(Math.round(bin.start))} to ${formatDuration(Math.round(bin.end))}`}</title>
         </rect>)}
         <rect className="fp-underflow" data-count={underflow} x={8} y={baseY - underflow / maxCount * innerH}
-          width={boundaryBarWidth} height={underflow / maxCount * innerH} fill="#769bc7">
-          <title>{`${underflow} gaps shorter than 16ms, including simultaneous edits`}</title>
+          width={boundaryBarWidth} height={underflow / maxCount * innerH} {...(underflow > 0 ? edgeBar : { fill: "none" })}>
+          <title>{`${underflow} ${underflow === 1 ? "gap" : "gaps"} shorter than 16ms, including simultaneous edits`}</title>
         </rect>
         <rect className="fp-overflow" data-count={overflow} x={W - 36} y={baseY - overflow / maxCount * innerH}
-          width={boundaryBarWidth} height={overflow / maxCount * innerH} fill="#769bc7">
-          <title>{`${overflow} gaps longer than 100 seconds`}</title>
+          width={boundaryBarWidth} height={overflow / maxCount * innerH} {...(overflow > 0 ? edgeBar : { fill: "none" })}>
+          <title>{`${overflow} ${overflow === 1 ? "gap" : "gaps"} longer than 10 seconds`}</title>
         </rect>
+        <line x1={0} y1={baseY} x2={W} y2={baseY} stroke="#3d2f17" strokeWidth={1} />
         <text x={20} y={H - 6} className="fp-label" textAnchor="middle">&lt;16ms</text>
         {FP_TICKS.map((tick) => (
           <text key={`text-${tick.ms}`} x={xForMs(tick.ms)} y={H - 6} className="fp-label" textAnchor="middle">{tick.label}</text>
         ))}
-        <text x={W - 24} y={H - 6} className="fp-label" textAnchor="middle">&gt;100s</text>
+        <text x={W - 24} y={H - 6} className="fp-label" textAnchor="middle">&gt;10s</text>
       </svg>
-      <p className="muted rhythm-overflow-summary">{overflow} {overflow === 1 ? "gap longer" : "gaps longer"} than 100 seconds. {underflow} shorter than 16ms, including gaps of zero milliseconds.</p>
-      <dl className="fingerprint-stats">
-        <div><dt>Edits</dt><dd>{stats.event_count}</dd></div>
-        <div><dt>{timing.signedFinish ? "Signed duration" : "Reported duration"}</dt><dd>{formatDuration(stats.duration_ms)}</dd></div>
-        <div><dt>Editing span</dt><dd>{formatDuration(timing.editingSpanMs)}</dd></div>
-        <div><dt>Median gap</dt><dd>{formatDelayMs(stats.inter_event_delay_p50_ms)}</dd></div>
-        <div><dt>95th-percentile gap</dt><dd>{formatDelayMs(stats.inter_event_delay_p95_ms)}</dd></div>
-        <div><dt>Longest pause</dt><dd>{formatDelayMs(stats.inter_event_delay_max_ms)}</dd></div>
-      </dl>
     </section>
   );
 }
 
-export function RecordSignet({ record }: { record?: RecordApiResponse }) {
-  const bound = !!record?.manifest.text_binding;
+/** One collapsed disclosure for everything a reader can verify by hand. */
+export function TechnicalDetails({ open, onToggle, children }: { open: boolean; onToggle: (open: boolean) => void; children: React.ReactNode }) {
   return (
-    <header className={`signet${record ? "" : " signet-loading"}`}>
-      <p className="eyebrow"><a className="eyebrow-home" href="/">← possiblymadebyahuman</a></p>
-      <div className="signet-head">
-        <span className="signet-seal" aria-hidden="true">
-          <img src="/favicon.svg" className="signet-seal-svg" alt="" width="62" height="62" />
-        </span>
-        <div className="signet-titles">
-          <h1 aria-label={record ? undefined : "Loading writing record"}><span aria-hidden={!record}>Signed writing record</span></h1>
-          <p className="signet-scope">This shows the shape of a writing process. It is not a human/AI score or verdict.</p>
-          <p className="signet-statement" aria-hidden={!record}>
-            Signs the <strong>shape of the writing process</strong>
-            {bound ? <> and a commitment to the <strong>wording the signer selected</strong></> : null}.
-          </p>
-        </div>
-      </div>
-      <p className="signet-orient">An inspectable record of an editing process. A document binding, when present, does not establish that these edits produced that text. <a href="/docs/what-pmbah-does/">What is this?</a></p>
-    </header>
+    <details id={TECHNICAL_DETAILS_ID} className="technical-details" open={open} onToggle={(event) => onToggle(event.currentTarget.open)}>
+      <summary><h2>Technical details</h2></summary>
+      <p className="section-intro">The hash check, capture details, and the raw measurements behind this page.</p>
+      {children}
+    </details>
   );
 }
 
@@ -738,7 +836,7 @@ export function RecordFooter() {
   return (
     <footer className="record-footer">
       <div className="record-footer-rule" aria-hidden="true" />
-      <p className="record-footer-mark"><img className="record-footer-seal" src="/favicon.svg" alt="" width="24" height="24" /> possiblymadebyahuman</p>
+      <p className="record-footer-mark"><SiteMark className="record-footer-seal" size={24} /> possiblymadebyahuman</p>
       <p className="record-footer-tagline">We cannot prove a human wrote it. But we can record the writing process, and sign it for you.</p>
       <nav className="record-footer-links" aria-label="Site">
         <a href="/">Home</a>
@@ -754,24 +852,24 @@ export function RecordFooter() {
 
 export function RecordPage({ record }: { record?: RecordApiResponse }) {
   const verification = useMemo(() => record ? verifyRecordChain(record) : undefined, [record]);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  usePageTitle(record ? "Signed writing record" : "Writing record");
   return (
     <main className="page-shell record-page">
-      <RecordSignet record={record} />
+      <VerificationAlert verification={verification} onShowDetails={() => setDetailsOpen(true)} />
+      <RecordHeader record={record} verification={verification} onShowDetails={() => setDetailsOpen(true)} />
+      <p className="visually-hidden" role="status">{record ? "Writing record loaded." : "Loading writing record…"}</p>
       {record ? <>
-      {verification && !verification.ok && <p className="card" role="alert">This record failed integrity verification. Its displayed events and binding may have been changed.</p>}
-      <TimingFingerprint record={record} />
-      <TextBindingSection record={record} verification={verification} />
-      <CaptureContextSummary record={record} />
-      <QuickStatsPanel record={record} />
-      <EditTimeline record={record} />
-      <SignalList signals={record.signals} />
-      <VerificationPanel record={record} verification={verification} />
-      <DisclaimerBanner />
-      </> : <div className="record-loading" aria-busy="true">
-        <p role="status">Loading writing record…</p>
-        <div className="card record-skeleton" aria-hidden="true" />
-        <div className="card record-skeleton" aria-hidden="true" />
-      </div>}
+        <EditTimeline record={record} />
+        <TimingFingerprint record={record} />
+        <TextBindingSection record={record} verification={verification} />
+        <TechnicalDetails open={detailsOpen} onToggle={setDetailsOpen}>
+          <VerificationPanel record={record} verification={verification} />
+          <TimingAndCounts record={record} />
+          <SignalList signals={record.signals} />
+          <CaptureContextSummary record={record} />
+        </TechnicalDetails>
+      </> : <div className="record-section timeline-placeholder" aria-hidden="true" />}
       <RecordFooter />
     </main>
   );

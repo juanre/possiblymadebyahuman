@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { SITE_CSP, securityHeaders } from "../../apps/ingest-api/src/server.ts";
 import { computeRecordHash, createTextBinding } from "../../packages/format/src/index.ts";
 import { BOUND_TEXT } from "./bound-fixture-text.mjs";
 
@@ -287,8 +288,14 @@ if (process.env.PMBAH_REAL_RECORD) {
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    // Serve the production security headers, except on the fixture-only pages
+    // that stand in for third-party sites the extension records.
+    if (!url.pathname.startsWith("/extension")) {
+      for (const [name, value] of Object.entries(securityHeaders(`http://127.0.0.1:${port}`))) res.setHeader(name, value);
+    }
 
     if (url.pathname.startsWith("/docs/")) {
+      res.setHeader("content-security-policy", SITE_CSP);
       const relative = normalize(url.pathname).replace(/^\/+/, "");
       const path = join(siteDistDir, relative, extname(relative) ? "" : "index.html");
       await serveFile(res, path);

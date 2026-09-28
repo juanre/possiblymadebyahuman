@@ -23,7 +23,7 @@ The browser selects the hash rules using `manifest.format_version`. Events form 
 
 For format 0.1, the event tip is the record hash. Format 0.2 uses that tip directly when unbound, or seals it with the optional text binding. Format 0.3 always seals the event tip with canonical JSON containing exactly `format_version`, `duration_ms`, `parent_record` and `text_binding`; absent parent and binding values are explicit `null` in that seal. See [Records and short signatures](/docs/records/) for the formulas.
 
-The extension 0.3.0 candidate uses the new seal; older records still verify without changing their hashes. The API and viewer must support 0.3 before that extension is distributed. `/write` and Emacs have not opted into the new finish behavior.
+New records use the format 0.3 seal. Records in earlier formats still verify under their own rules, so their hashes never change.
 
 ## What this does and does not mean
 

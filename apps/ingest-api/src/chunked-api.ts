@@ -8,7 +8,7 @@ import type { RecordStore, StoredRecord } from "../../../packages/storage/src/in
 import { generateShortSignature, toGetRecordResponse, type ApiResult } from "./index.ts";
 
 type Options = { store: RecordStore; baseUrl: string; now: () => Date; idleThresholdMs: number; initialShortSignatureLength: number; analyzers?: Analyzer[];
-  validateManifestFields: (value: unknown) => string[]; validateContent: (value: unknown) => string[] };
+  maxUploadEvents: number; maxUploadBytes: number; validateManifestFields: (value: unknown) => string[]; validateContent: (value: unknown) => string[] };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 function invalid(code: string, errors: string[]): never { throw new ChunkedUploadError(400, code, errors.slice(0, 20).join("; ")); }
@@ -41,9 +41,10 @@ export function createChunkedApi(options: Options) {
     if (errors.length) invalid("invalid_manifest", errors);
     const manifest = value.manifest as RecordManifest;
     if (!manifest.event_count) invalid("invalid_manifest", ["event_count must be positive"]);
+    if (manifest.event_count > options.maxUploadEvents) throw new ChunkedUploadError(413, "upload_too_large", `uploads are limited to ${options.maxUploadEvents} events`);
     if (manifest.parent_record && !await store.recordExists(manifest.parent_record)) invalid("invalid_manifest", ["parent_record does not refer to a stored record"]);
     const state = await store.chunked.begin({ upload_id: value.upload_id, manifest: { ...manifest, ingested_server_t: options.now().toISOString() },
-      observation: observation(value.observation), next_seq: 0, chain_tip: null, last_t: null, observed_length: 0, analysis_state: createAnalysisAccumulator(options.idleThresholdMs) });
+      observation: observation(value.observation), next_seq: 0, chain_tip: null, last_t: null, received_bytes: 0, observed_length: 0, analysis_state: createAnalysisAccumulator(options.idleThresholdMs) });
     return { status: 200, body: await statusView(state) };
   }
   async function uploadStatus(id: string) {
@@ -57,7 +58,10 @@ export function createChunkedApi(options: Options) {
     if (!object(value) || Object.keys(value).some(key => !["start_seq", "events"].includes(key)) || !Number.isSafeInteger(value.start_seq) || (value.start_seq as number) < 0 ||
       !Array.isArray(value.events) || value.events.length < 1 || value.events.length > MAX_EVENT_CHUNK) invalid("invalid_payload", [`chunks require start_seq and 1–${MAX_EVENT_CHUNK} events`]);
     const events = value.events as EventLog;
+    const bytes = Buffer.byteLength(JSON.stringify(events));
     const state = await store.chunked.append(id, value.start_seq as number, events, current => {
+      if (current.received_bytes + bytes > options.maxUploadBytes) throw new ChunkedUploadError(413, "upload_too_large", `uploads are limited to ${options.maxUploadBytes} bytes of events`);
+      current.received_bytes += bytes;
       const tips: B3Hash[] = [], delays: number[] = [];
       const analysis = current.analysis_state as AnalysisAccumulator;
       for (const event of events) {

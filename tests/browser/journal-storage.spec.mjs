@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './csp-guard.mjs';
 import { build } from 'vite';
 import { fileURLToPath } from 'node:url';
 let bundle;

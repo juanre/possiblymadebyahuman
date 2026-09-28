@@ -2,6 +2,7 @@ import {
   IngestUploadError,
   type JournalUpload,
 } from "../../producer-core/src/adapters.ts";
+import { MAX_RATE_LIMITED_RETRIES, retryAfterMs, wait } from "../../producer-core/src/rate-limit.ts";
 import { withUploadDeadline } from "../../producer-core/src/upload-deadline.ts";
 import { validateUploadResponse } from "../../producer-core/src/upload-response.ts";
 import type { BufferMutation } from "../../format/src/index.ts";
@@ -15,9 +16,17 @@ export type JournalFetch = (
     body: string;
     signal?: AbortSignal;
   },
-) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
+) => Promise<{
+  ok: boolean;
+  status: number;
+  headers?: { get(name: string): string | null };
+  json(): Promise<unknown>;
+}>;
 
-/** Resumable, bounded publication. Each request, including its body, has a deadline. */
+/**
+ * Resumable, bounded publication. Each request, including its body, has a
+ * deadline. A rate-limited request waits as the server asks and is repeated.
+ */
 export async function uploadJournal(args: {
   endpoint: string;
   fetch: JournalFetch;
@@ -26,25 +35,35 @@ export async function uploadJournal(args: {
   timeout_ms?: number;
 }): Promise<IngestRecordResponse> {
   const request = args.fetch;
-  const post = (url: string, body: unknown) =>
-    withUploadDeadline(async (signal) => {
-      const response = await request(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(body),
-        signal,
-      });
-      const json = (await response.json()) as Record<string, unknown>;
-      if (!response.ok) {
-        const code = typeof json?.error === "string" ? json.error : null;
-        throw new IngestUploadError(
-          response.status,
-          code,
-          code ?? `upload_failed_${response.status}`,
-        );
-      }
-      return json;
-    }, args.timeout_ms);
+  const post = async (
+    url: string,
+    body: unknown,
+  ): Promise<Record<string, unknown>> => {
+    for (let attempt = 0; ; attempt++) {
+      const result = await withUploadDeadline(async (signal) => {
+        const response = await request(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal,
+        });
+        if (response.status === 429 && attempt < MAX_RATE_LIMITED_RETRIES)
+          return { retry_after: response.headers?.get("retry-after") ?? null };
+        const json = (await response.json()) as Record<string, unknown>;
+        if (!response.ok) {
+          const code = typeof json?.error === "string" ? json.error : null;
+          throw new IngestUploadError(
+            response.status,
+            code,
+            code ?? `upload_failed_${response.status}`,
+          );
+        }
+        return { json };
+      }, args.timeout_ms);
+      if (result.json) return result.json;
+      await wait(retryAfterMs(result.retry_after));
+    }
+  };
   const { payload } = args;
   const begun = await post(args.endpoint, payload);
   if (begun.upload_id !== payload.upload_id)

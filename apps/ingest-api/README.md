@@ -52,15 +52,37 @@ with these environment variables (production Compose passes them through):
 
 | Setting | Default | Behavior |
 | --- | --- | --- |
-| `MAX_IN_FLIGHT_API_REQUESTS` | 8 | Additional API requests receive 503 and `Retry-After: 1`; `/health` remains available. |
+| `MAX_IN_FLIGHT_API_REQUESTS` | `PG_POOL_MAX` × 4 (20) | Additional API requests receive 503 and `Retry-After: 1`; `/health` remains available. |
+| `MAX_IN_FLIGHT_API_REQUESTS_PER_CLIENT` | 4 | One client address cannot hold more concurrent API requests; excess requests receive 429. |
+| `RATE_LIMIT_WRITES_PER_MINUTE` / `RATE_LIMIT_WRITE_BURST` | 600 / 120 | Token bucket for every `POST /api/*` per client address. |
+| `RATE_LIMIT_NEW_SESSIONS_PER_MINUTE` / `RATE_LIMIT_NEW_SESSION_BURST` | 30 / 30 | Stricter bucket for beginning an upload, a direct record, or a checkpoint without a session token. |
+| `TRUSTED_CLIENT_IP_HEADER` | unset | Header holding the client address, set by a trusted proxy (for example `cf-connecting-ip`). Unset, the socket address is used. |
 | `CHECKPOINT_BODY_LIMIT_BYTES` | 16384 | Checkpoint envelopes have a smaller limit than full records; the record limit remains an upper bound. |
 | `HTTP_REQUEST_TIMEOUT_MS` | 30000 | Bounds receipt of HTTP headers/body; incomplete requests time out. |
 | `PG_STATEMENT_TIMEOUT_MS` | 15000 | Bounds database statements and client query waits. |
 
-These controls bound individual requests and concurrent work. They do not impose
-per-user/IP rates, cumulative storage quotas, or retention/deletion policy. Set
-those deployment policies at a trusted ingress boundary; do not treat forwarded
-IP headers from arbitrary callers as an identity.
+Rate-limited requests receive 429, `Retry-After` in seconds and
+`{"error":"rate_limited"}`. Producers back off checkpoints, and journal uploads
+wait as asked and repeat the request, so a multi-million-event publication paces
+instead of failing. Limits are kept in process memory per instance; idle client
+state is dropped and at most 50,000 client addresses are tracked. IPv6 clients
+are limited per /64. Forwarded address headers are ignored unless
+`TRUSTED_CLIENT_IP_HEADER` names one; the header must hold exactly one address.
+Behind a proxy such as Cloudflare or Render it must be set, or every client
+shares the proxy's address. It must also be one the proxy overwrites, because
+anyone who can reach the origin directly can send it.
+
+Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options:
+DENY`, `Referrer-Policy: strict-origin-when-cross-origin` and a Content Security
+Policy with `frame-ancestors 'none'`. The record viewer and `/write` allow only
+same-origin scripts, styles, workers, images and connections. Hugo pages also
+allow inline styles (their stylesheet and highlighted code blocks); their scripts
+stay same-origin only. `Strict-Transport-Security: max-age=31536000` is sent when
+`PUBLIC_BASE_URL` is HTTPS. The Playwright suites fail on any CSP violation.
+
+All API writes require `Content-Type: application/json` (a charset parameter is
+allowed); other media types receive 415 before the body is read, so other sites
+cannot submit simple cross-origin form or text POSTs.
 
 Migration `004_unknown_size_stats.sql` must run before this API version writes
 nullable size totals/maxima. GET responses correct legacy derived size facts
@@ -106,8 +128,29 @@ Observation summaries include the first and latest 31 commitment anchors, with
 an exact `checkpoint_count` and span over all stored commitments. Every
 commitment, including those omitted from the summary, is checked at publication.
 Migration `005_chunked_records.sql` must run before this API version accepts
-chunk uploads. No automatic expiry, hidden eviction or public segmentation is
-introduced; cumulative storage and admission policies remain deployment choices.
+chunk uploads. No public segmentation is introduced.
+
+One upload is capped at `MAX_UPLOAD_EVENTS` events (default 10,000,000, twice
+the documented four-million-event, two-year session) and `MAX_UPLOAD_BYTES`
+bytes of serialized events (default 1.6 GB, 160 bytes per event; the largest
+schema-valid event is 137 bytes, so the byte cap does not bind first). Begin
+rejects a manifest above the event cap, and a chunk that would pass the byte cap
+is rejected without being stored; both answer 413 `upload_too_large`.
+
+Migration `006_upload_activity.sql` records when an upload was last begun or
+appended to. Unfinalized staging untouched for 30 days can be deleted with
+`make delete-abandoned-uploads DATABASE_URL=...` (optionally
+`OLDER_THAN_DAYS=N`). This is safe because producers keep the frozen record and
+its `upload_id` until publication succeeds, and beginning a deleted upload stages
+it again from event zero. Finalized uploads own published pages and are never
+deleted. Observed sessions and checkpoints have no expiry.
+
+Migration `007_record_removal.sql` supports operator removal of reported
+records (see [record removal](../../docs/operations-record-removal.md)). A
+removed hash is kept in the private `removed_records` table; publishing it again
+through `POST /api/records`, begin or finalize returns 410 `record_removed`,
+while every read of it returns 404. Parent references are no longer a foreign
+key, so continuations of a removed record stay published and verifiable.
 
 Default analyzers share one incremental implementation with bounded legacy array
 callers. Configured custom analyzers that require a complete event array return

@@ -1,4 +1,5 @@
-import { chromium, expect, test } from "@playwright/test";
+import { chromium } from "@playwright/test";
+import { expect, test, watchCspViolations } from "./csp-guard.mjs";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -50,6 +51,7 @@ test.describe("browser extension against the local service", () => {
   let userDataDir;
   let context;
   let extensionId;
+  let cspViolations;
 
   test.beforeAll(async () => {
     distDir = await mkdtemp(join(tmpdir(), "pmbah-extension-dist-"));
@@ -66,8 +68,13 @@ test.describe("browser extension against the local service", () => {
       headless: true,
       args: [`--disable-extensions-except=${distDir}`, `--load-extension=${distDir}`],
     });
+    cspViolations = watchCspViolations(context);
     const worker = context.serviceWorkers()[0] ?? await context.waitForEvent("serviceworker", { timeout: 15_000 });
     extensionId = new URL(worker.url()).host;
+  });
+
+  test.afterEach(() => {
+    expect(cspViolations, "Content Security Policy violations").toEqual([]);
   });
 
   test.afterAll(async () => {
@@ -146,7 +153,7 @@ test.describe("browser extension against the local service", () => {
     recordPage.on("pageerror", (error) => pageErrors.push(error.message));
     await recordPage.goto(`${localBaseUrl}/${shortSignature}`);
     await expect(recordPage.getByRole("heading", { name: "Signed writing record" })).toBeVisible();
-    await expect(recordPage.locator("section.card", { hasText: "Signature & details" })).toContainText(record.manifest.record_hash);
+    await expect(recordPage.locator("dl.manifest-details")).toContainText(record.manifest.record_hash);
 
     // Finishing revokes capture; later edits cannot silently continue or be
     // included in the saved record. Reopening controls restores a usable URL.

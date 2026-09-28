@@ -1,449 +1,259 @@
-# Chrome Web Store prep for v0 browser extension
+# Chrome Web Store preparation
 
-Status: draft listing updated for extension 0.2.1; authenticated Gmail acceptance and store submission remain pending. Historical evidence below describes earlier packages. Release-readiness reference for `default-aaaa.26`. The browser extension
-(`default-aaaa.7`) and the deterministic packaging pipeline (`default-aaaa.17`)
-have landed; what remains is human-owned: developer account, listing visibility
-choice, screenshots, listing copy approval, and submission to the Chrome Web
-Store. This document does **not** mean the extension is listed,
-approved, or installable. Do not publish an install link until `.26` records
-the real Chrome Web Store URL and human approval.
+Status: the extension is published in the Chrome Web Store, where the store
+shows version 0.3.3. The source is at **0.4.0** (tag `v0.4.0`); upload that
+release's ZIP to the listing as an update.
 
-This document is human/store-facing. It records the reconciled final values
-from the implemented extension and enumerates the exact human inputs still
-required.
+This document holds the technical facts a store submission depends on: what the
+package contains, its single purpose, the permission justifications, and what
+data leaves the browser. Paste-ready listing copy, privacy-tab answers and the
+step-by-step submission checklist are in
+[`docs/chrome-web-store-listing.md`](chrome-web-store-listing.md). Every claim
+below was checked against `apps/browser-extension/manifest.template.json`, the
+built `dist/manifest.json`, `src/content/capture.ts`,
+`src/background/service-worker.ts` and `src/lib/adapters.ts`. If any of those
+change, recheck this document before the next upload.
 
 ## Release policy summary
 
-- Required for public v0: a Chrome/Chromium Manifest V3 extension installable
-  through the Chrome Web Store.
-- Acceptable listing visibility: public or unlisted install link, after human
-  approval.
+- Chrome/Chromium through the Chrome Web Store is the public distribution
+  target. Acceptable listing visibility: public or unlisted install link, chosen
+  by Juan.
 - No fake, placeholder, or "coming soon" install URL should appear on the
-  homepage or release docs.
-- Brave/Edge compatibility can be documented after testing. Firefox can be
-  assessed and documented. Safari is out of scope for v0.
-- Do not commit Chrome Web Store credentials, publisher account details, OAuth
-  tokens, refresh tokens, or real store secrets.
+  homepage, docs or README. Link the store only after approval produces a real
+  listing URL.
+- Brave and Edge can be documented after testing. Firefox is not supported by
+  this package. Safari is out of scope.
+- Never commit Chrome Web Store credentials, publisher account details, OAuth
+  tokens or refresh tokens.
 
-## Human publisher checklist
+## Listing identity
 
-The human owner must prepare or approve these items before `default-aaaa.26` can
-close:
+The published listing:
 
-1. **Chrome Web Store Developer account**
-   - Create or confirm access to the publisher account that will own the PMBAH
-     extension.
-   - Complete any one-time developer registration payment, identity verification,
-     tax/profile, or organization checks currently required by Google.
-   - Decide which human(s) can administer the listing.
+- Extension ID: `akodlnlfkdoiobdcghmbhhoafokmldoh`.
+- Chrome Web Store listing URL: <https://chromewebstore.google.com/detail/possiblymadebyahuman/akodlnlfkdoiobdcghmbhhoafokmldoh>.
+- Listing visibility: **TBD by Juan (public or unlisted)**.
+- Publisher account holder: **TBD by Juan**.
 
-2. **Listing visibility decision**
-   - Choose **public** if discovery/search listing is desired at v0.
-   - Choose **unlisted** if v0 should launch via direct install link only.
-   - Record the decision in the release handoff for `default-aaaa.26`.
+## Package facts
 
-3. **Listing identity capture after creation**
-   - Extension ID: `TBD after Chrome Web Store draft/listing is created`.
-   - Chrome Web Store listing URL: `TBD after listing exists`.
-   - Do not add either to site/homepage docs until they are real.
-
-4. **Required assets**
-   - Extension icon assets generated from approved PMBAH art, including the sizes
-     required by the final MV3 manifest and Chrome Web Store listing.
-   - At least the Chrome Web Store-required screenshot set for the current store
-     policy. Use screenshots of the final extension UI, not mockups, unless the
-     store explicitly permits promotional images.
-   - Short description, detailed description, category, language, and support
-     contact.
-   - Privacy policy URL and support URL on the public site.
-   - Any promotional tile or media assets Google requires at submission time.
-
-5. **Manual upload flow for v0**
-   - Build the store-ready zip from the committed command produced by
-     `default-aaaa.17`: `make extension-package`.
-   - Human signs in to the Chrome Web Store Developer Dashboard.
-   - Create or update the extension item.
-   - Upload the generated zip.
-   - Fill listing, privacy, data-use, and permission-justification fields from
-     the final reviewed drafts.
-   - Submit for review only after human approval.
-   - Track review status, rejection details, and approved listing URL in
-     `default-aaaa.26`.
-
-6. **Expected review timing and risk**
-   - Chrome Web Store review can take hours to days and may take longer when
-     permissions, host access, privacy disclosures, or remote-code concerns need
-     manual review.
-   - Any rejection is release-blocking until fixed or the human explicitly changes
-     release policy.
-   - Permission copy must exactly match the final manifest and extension behavior.
-
-## Optional future automation
-
-Manual submission is the v0 default. Future automation can be considered only
-after human approval and a documented credential owner.
-
-Possible future GitHub secrets, names subject to the current Chrome Web Store API
-requirements:
-
-- `CHROME_EXTENSION_ID`
-- `CHROME_CLIENT_ID`
-- `CHROME_CLIENT_SECRET`
-- `CHROME_REFRESH_TOKEN` or the current equivalent upload credential
-
-Rules for future automation:
-
-- Never commit token values or publisher account details.
-- Prefer upload-only automation; keep publish/release-to-users as a separate
-  human-approved step unless the human explicitly approves auto-publish.
-- Document token rotation and revocation before enabling CI submission.
-
-## Draft Chrome Web Store listing copy
-
-All copy below is draft. Reconcile it with the final extension UI and permissions
-before submission.
-
-### Draft name
-
-PossiblyMadeByAHuman Writing Records
-
-### Draft short description
-
-Records the shape of your editing as a content-blind writing record. Sign and
-share a short URL. Not a human/AI detector.
-
-### Draft detailed description
-
-possiblymadebyahuman records the shape of a writing process without uploading the
-words you wrote.
-
-Choose an editor yourself: right-click and choose Start writing record,
-use the keyboard shortcut, or start from the extension side panel. Visiting a
-page, focusing a field, and typing do not activate capture. Other fields remain
-inactive. You can start partway through writing: earlier text is not imported,
-and only later edits are captured. No controls cover the webpage.
-
-The extension measures edit positions and lengths in Unicode codepoints, timing,
-and sources such as typing, paste, and IME when the browser reports them. Plain
-inputs and supported rich-text editors are measured locally. Unknown values stay
-unknown. While a chosen draft is active, the extension sends event counts and
-hash-chain tips for server-timed checkpoints, never document text.
-
-Choose Finish & get link in the side panel, review capture context and binding,
-and confirm to stop capture and publish a content-blind writing record. The
-result shows a complete URL with Open record and Copy link controls. Copying is
-an explicit action; the visible URL remains available if clipboard access fails.
-A binding failure stops publication. Cancel or separately choose a process-only
-record; a stopped editor is not read again to create a different commitment. Further edits do not automatically start another record.
-
-Public records contain neither your document plaintext nor per-event inserted text. Signing includes a salted commitment to selected wording (or the whole field with no selection). When the text-check scope is unavailable or its hash cannot be computed, the panel offers cancellation or explicit publication of editing activity only. The public commitment allows candidate text to be checked, so short or predictable wording may be guessed. The capture context (page URL stripped of query and
-fragment, page title, field kind) is shown for review before upload and can be
-edited or removed.
-
-This is not an AI detector. It does not decide who wrote something, assign a
-confidence score, or certify authorship. It gives readers a content-blind
-view of an editing session's structure and makes large pastes or atomic
-insertions visible as process facts.
-
-### Draft support text
-
-For setup, privacy model, and troubleshooting, see the public PMBAH docs at the
-approved support URL. Report extension issues through the repository issue
-tracker or the support contact selected by the human publisher.
-
-## Draft privacy and data-use disclosure answers
-
-These answers must be reviewed against the final Chrome Web Store privacy form
-and final extension behavior.
-
-### Data observed locally
-
-- Only explicitly activated textarea, plain input, or supported rich-text editor contents are inspected transiently inside the
-  input handler scope, to compute numeric process metadata
-  (codepoint offsets, insertion length, deletion length, source attribution).
-  The text reference is discarded when the handler returns. No text crosses
-  event boundaries; no text is retained in extension state. At signing, the selected text (or whole field with no selection) is read transiently to compute the text binding.
-- Per-event mutation structure: codepoint position, inserted codepoint count,
-  deleted codepoint count, operation type, wall-clock timestamp, source
-  attribution (typing / paste / drop / cut / IME / autocomplete / unknown).
-- Field descriptor used for stable per-field session identity: tag name, field
-  kind, name/id/aria-label attributes, nearest form id, structural DOM
-  signature, and sibling index. Read once at field registration time from
-  attributes only — never includes text.
-- Page metadata selected for capture context: page origin, page path with
-  query/hash stripped, page title, field kind. Shown for review before upload.
-
-### Data stored or processed locally before upload
-
-- Unsigned session event logs containing process metadata only — the public
-  `BufferMutation` shape (seq, t, op, pos, del_len, ins_len, source). No text,
-  no per-event text hashes. A signed draft may retain its optional text-binding commitment for upload retry.
-- Per-session observation state: server-observed checkpoint commitments
-  (`observed_session_id`, `event_count`, `chain_tip`, `observed_at`) and the
-  current bearer `token` for the server-observed session. The bearer token
-  lives only inside `SessionRecord.observation.last_observed_token` and is
-  never logged, never sent to content scripts, never published.
-- Local retention: **no automatic expiry for unfinished drafts or saved links**.
-  The service worker cleans redundant uploaded event logs and checkpoint credentials
-  after a short grace period on startup/registration and an hourly alarm; the saved
-  link remains until explicit removal. Uninstall/browser-data clearing can remove
-  local data. Users can discard drafts explicitly. Capture resumes only through
-  **Resume in chosen field**, retaining the original clock and history; the site
-  supplies the text. Server checkpoint metadata also has no automatic expiry.
-
-### Data transmitted during capture and on explicit sign/upload
-
-- Content-blind PMBAH record manifest and event log:
-  - `manifest`: format version, BLAKE3 record hash, session id, producer
-    identity (`browser-extension` v0.2.1 with capabilities `timing` and
-    `source_attribution`), capture context, event count, duration,
-    optional `text_binding` (scheme, canonical length, salted commitment), and a server-applied ingestion timestamp.
-  - `events`: the ordered list of `BufferMutation` records described above.
-  - `observation`: `{observed_session_id, token}` when at least one server-
-    observed checkpoint has succeeded and observation has not diverged; `{state: "unobserved"}` when no usable commitment exists.
-- Server-observed checkpoint POSTs sent during the session:
-  `{event_count, chain_tip, token?}` to
-  `POST /api/observed-sessions/<observed_session_id>/checkpoints`. Cadence is
-  activity-gated: first mutation immediate; otherwise every 50 events or every
-  60s with at least one new event since the last attempt. No idle heartbeats.
-- No account identity is required by the v0 public service.
-
-### Data not transmitted by the public/default extension
-
-- Document text.
-- Per-event inserted text.
-- Per-insertion text hashes. The text binding is the one text-derived commitment sent at signing.
-- Absolute local file paths.
-- Operating system, browser fingerprint, or hardware identifiers.
-- A human/AI verdict, confidence score, or authorship certification.
-
-### Chrome privacy form notes
-
-- If the final extension reads editable page content, the Chrome disclosure may
-  require acknowledging local access to website content even though plaintext is
-  not transmitted. Do not answer "no access" if the implementation observes text
-  locally.
-- If the final extension transmits capture context URLs/titles, disclose that
-  reviewed metadata can be transmitted on explicit upload.
-- If optional diagnostics/telemetry are added later, update this document and the
-  privacy disclosure before release. v0 should avoid extra telemetry unless
-  explicitly approved.
-- Any host permissions or content-script matches must be justified by the capture
-  behavior and minimized where feasible.
-
-## Permission-justification template (final, reconciled with the shipped manifest)
-
-Extension 0.2.1 declares six API permissions and broad host access. Review
-these disclosures against the actual submitted ZIP. Host permission is not user
-activation: dormant content scripts do not measure editor text, create sessions,
-or send checkpoints before an explicit start.
-
-| Permission / host access | Purpose |
-| --- | --- |
-| `storage` | Persist numeric event logs, descriptors/context, checkpoint credentials, frozen upload state and saved result URLs locally. No document text. Drafts and saved links remain until explicit local removal, without automatic expiry. |
-| `clipboardWrite` | Copy a saved record URL only when the user chooses Copy link. Never read the clipboard. Manual selection remains available on failure. |
-| `alarms` | Hourly cleanup of redundant uploaded event logs and checkpoint credentials; saved links and unfinished drafts remain. |
-| `contextMenus` | Offer Start writing record for the editor the user right-clicked. |
-| `sidePanel` | Keep draft controls and results in browser-owned UI, outside webpage content. |
-| `webNavigation` | Enumerate frames to locate the explicitly focused editor and retire routes on navigation. No browsing-history database is kept. |
-| `host_permissions: ["<all_urls>"]` and matching content scripts with `all_frames: true` | Install dormant targeting listeners in pages and embedded frames, including cross-origin editors. Exact right-click targeting requires the listener before the menu action. The implementation does not claim an activeTab-only permission model. |
-| Network to configured `EXT_BASE_URL` | Checkpoints during explicitly activated drafts and record upload after confirmation. Default origin is `https://possiblymadebyahuman.com`. No document text is transmitted. |
-
-Not requested: `activeTab`, `scripting`, `tabs`, `cookies`, `webRequest`,
-`downloads`, `notifications`, `nativeMessaging`, `management`, `identity`,
-`bookmarks`, or `history`. Do not describe broad access as permission limited to
-the chosen tab; the limitation to a chosen editor is enforced by activation and
-routing logic, not by the host-permission declaration.
-
-## Draft store review notes
-
-Use these notes to keep the submission aligned with PMBAH's product promise:
-
-- The extension is a writing-record producer, not an AI detector.
-- The extension must not claim to verify, certify, or score human authorship.
-- The privacy policy and listing must state that public uploads are
-  content-blind by default.
-- The final listing must describe when capture is active and what user action
-  triggers upload.
-- Permission justifications must be concrete and match the final manifest.
-- The submitted zip must not contain source maps, secrets, real `.env` files, or
-  development-only artifacts unless deliberately approved for review.
-
-## Historical packaging evidence at CWS-prep tip
-
-Code-side work is complete. The remaining steps are all human-owned account /
-listing / screenshot / submission actions.
-
-**Implementation done**:
-
-- `.7` browser extension landed (`fe6edf8` + amendment `2a44c93`): per-field
-  session identity via producer-core, beforeinput-driven content-blind
-  capture with no retained text snapshots, INELIGIBLE policy for non-empty
-  pre-existing fields, server-observed checkpoint integration via the `.40`
-  `CheckpointAdapter`, sign+upload flow with clipboard copy, per-session
-  discard, 3-day TTL sweep via `chrome.alarms`.
-- `.17` packaging contract holds: `make extension-build` and
-  `make extension-package` produce a deterministic zip; `EXT_BASE_URL`
-  overrides the ingest origin at build time.
-- Static + runtime safeguards: producer-core source audit, service-worker
-  bundle DOM/text-read canary, popup bundle DOM-read canary, all-bundles
-  kernel-symbol canary, retained-text identifier canary on
-  `apps/browser-extension/src/content/capture.ts`, FieldEntry struct canary.
-  Copy audit walks `apps/browser-extension/README.md` and the popup HTML/TS.
-- Manifest fields match the justification table above exactly. MV3,
-  `permissions: ["storage", "clipboardWrite", "alarms"]`,
-  `host_permissions: ["<all_urls>"]`, content scripts at `document_idle`
-  with `all_frames: true`.
-
-**Historical artifact metrics** (v0.1.0, default `EXT_BASE_URL`, `extension-package`; the manifest is now v0.2.1, so rebuild and record fresh metrics before submission):
+Built from tag `v0.4.0` with the default `EXT_BASE_URL`
+(`https://possiblymadebyahuman.com`) by `make extension-package`:
 
 | Field | Value |
 | --- | --- |
-| Path | `apps/browser-extension/dist/possiblymadebyahuman-extension-0.1.0.zip` |
-| Size | 115445 bytes (~113 KB) — far below the Chrome Web Store 50 MB per-package limit |
-| Entries | 8 — `manifest.json`, `service-worker.js`, `content.js`, `popup.html`, `popup.js`, `icons/16.png`, `icons/48.png`, `icons/128.png` |
-| SHA-256 | `55189c4c8901d996e912c0198bb1d3b970b5d2110a829bc4d6ffac3bac4767a4` (stable across rebuilds with the same `EXT_BASE_URL`) |
-| Bundle sizes (uncompressed) | service-worker.js 33510 B, content.js 41037 B, popup.js 4460 B, popup.html 3454 B, manifest.json 688 B |
-| Icons | 16.png 952 B, 48.png 4475 B, 128.png 26049 B — PMBAH pencil-figure-derived PNGs copied from `apps/browser-extension/icons/` |
-| Forbidden entries | none — no source maps, no `.ts`, no `.env*`, no `.dev*` (enforced by `scripts/package.mjs` and `tests/browser-extension-package.test.mjs`) |
-| Determinism | confirmed by `tests/browser-extension-package.test.mjs` and by manual hash comparison across two rebuilds |
+| File | `apps/browser-extension/dist/possiblymadebyahuman-extension-0.4.0.zip` |
+| Size | 162174 bytes |
+| SHA-256 | `5c619780d383245d4659183cb704caef4a80f6b57a96ab79dd1705f13a193052` |
+| Manifest | MV3, `name` `possiblymadebyahuman`, `version` `0.4.0`, `minimum_chrome_version` `120` |
+| Store summary | The store takes it from the manifest `description`: "Content-blind writing records for text fields." |
+| Bundling | esbuild, minified, no source maps, no legal comments. All code ships in the package; nothing is fetched and executed at runtime. |
 
-The agent producing this gate cannot submit to the Chrome Web Store. The manual
-checklist in `apps/browser-extension/README.md#support-and-remaining-manual-acceptance` remains the
-authoritative walk-through for the human or reviewer before submission.
+The zip contains exactly these nine entries (enforced by
+`tests/browser-extension-package.test.mjs`):
 
-## Human-input blocker packet for `.26`
+```text
+content.js
+favicon.svg
+icons/128.png
+icons/16.png
+icons/48.png
+manifest.json
+popup.html
+popup.js
+service-worker.js
+```
 
-Each item below is a precise input required before the Chrome Web Store
-listing can be created, submitted, or approved. Items are ordered so that
-each unlocks the next.
+Compare the SHA-256 of the GitHub release asset with the value above before
+uploading. The build is deterministic, so a mismatch means the asset was built
+from a different commit or `EXT_BASE_URL`.
 
-1. **Chrome Web Store Developer account access (Juan).**
-   - Confirm or create the publisher account that will own the extension.
-   - Complete the one-time developer registration payment (currently a flat
-     fee paid to Google) and any identity / tax / organization verification
-     Google currently requires.
-   - Record the publisher account holder (one human is sufficient; multi-admin
-     is optional) here once chosen:
-     > Publisher account holder: **TBD by Juan**.
+## Single purpose
 
-2. **Listing visibility decision (Juan).**
-   - Public listing (discoverable in store search) vs. unlisted (install only
-     via direct link). The release policy in `docs/browser-extension-release.md`
-     allows either for v0.
-   - Record the decision here once made:
-     > Listing visibility: **TBD by Juan — public or unlisted**.
+Paste into the dashboard's single-purpose field:
 
-3. **Approved icon artwork.**
-   - The package uses the PMBAH infinity favicon artwork generated from
-     `apps/site/static/icon-512.png` and committed under
-     `apps/browser-extension/icons/`.
-   - The Chrome Web Store listing icon is the PMBAH infinity mark committed at
-     `apps/browser-extension/store-assets/chrome-web-store-icon-128.png`.
-   - Required sizes per current Chrome Web Store policy: 128 (listing tile),
-     and the in-product 16 / 48 / 128 set already in the manifest.
-   - In-product icon source: `apps/site/static/icon-512.png` →
-     `apps/browser-extension/icons/{16,48,128}.png`.
-   - Store listing icon source: `apps/site/static/icon-512.png` →
-     `apps/browser-extension/store-assets/chrome-web-store-icon-128.png`.
+> possiblymadebyahuman records how a piece of writing was edited in one text
+> field the user explicitly chooses, as timings, positions and lengths of edits
+> without the words, and publishes that record at a shareable link when the
+> user confirms.
 
-4. **Screenshots for the listing (Juan after sideload).**
-   - Chrome Web Store currently requires at least one 1280×800 or 640×400
-     screenshot. Recommended: three or four.
-   - Suggested set (all using real extension UI, no mockups):
-     - The side panel beside an explicitly started editor on a familiar site.
-     - The side panel with two explicitly started drafts.
-     - The side panel after saving, showing the complete URL and Open/Copy controls.
-     - The explanation shown when trying to start in an existing draft.
-   - Record the screenshot bundle location here once captured:
-     > Screenshots: **TBD by Juan**.
+## Permission justifications
 
-5. **Support contact + support URL (Juan).**
-   - The Chrome Web Store listing requires a support contact. The obvious
-     choice for v0 is the GitHub repo's issues page; record the canonical
-     URL once decided:
-     > Support URL: **TBD by Juan** (recommended: GitHub issues on the
-     > `juanre/possiblymadebyahuman` repo).
+The manifest requests six API permissions, host access to `<all_urls>`, and a
+content script matching `<all_urls>` in all frames. Chrome shows the install
+warnings "Read and change all your data on all websites" and "Read your
+browsing history" (from `webNavigation`).
 
-6. **Privacy policy URL + Terms URL (Juan).**
-   - Chrome Web Store requires a hosted privacy policy URL. The reconciled
-     v0 privacy page at `/docs/privacy/` covers the producer-side local
-     storage (extension `chrome.storage.local` + bearer-token discipline,
-     `/write` `localStorage`, Emacs helper), server-observed checkpoints,
-     transient text inspection rule, capture-context redaction flow, and
-     the no-deletion / no-account caveat. The Terms / Service Notes page
-     at `/docs/terms/` covers the as-is service model, identity-assertion
-     scope, and moderation/removal path. Both pages are linked from the
-     site footer.
-   - Record the privacy policy URL and the terms URL here once the site
-     domain is live:
-     > Privacy policy URL: **TBD by Juan** (recommended:
-     > `https://possiblymadebyahuman.com/docs/privacy/`).
-     > Terms / Service Notes URL: **TBD by Juan** (recommended:
-     > `https://possiblymadebyahuman.com/docs/terms/`).
+Not requested: `activeTab`, `scripting`, `tabs`, `cookies`, `webRequest`,
+`downloads`, `notifications`, `nativeMessaging`, `management`, `identity`,
+`bookmarks` or `history`.
 
-7. **Listing copy approval (Juan).**
-   - The "Draft short description", "Draft detailed description", and the
-     privacy/data-use answers in this document are reconciled with the
-     shipped extension. Juan should read them and either approve verbatim or
-     edit before paste into the Chrome Web Store form.
-   - Record approval here once given:
-     > Listing copy approval: **TBD by Juan**.
+Paste each justification into the matching dashboard field.
 
-8. **Sideload manual walkthrough (Juan or human reviewer).**
-   - Load `apps/browser-extension/dist/` as an unpacked extension in Chrome
-     (Developer mode → Load unpacked), then walk through every item in the
-     "Support and remaining manual acceptance" section of `apps/browser-extension/README.md`. The
-     checklist is enumerated there: explicit activation, rich-text measurement, inactive recipient/subject fields,
-     same-document sharing, stop/navigation, selected-text binding, saved links,
-     upload/clipboard failures, and content-blind network-payload inspection.
-   - Record sideload evidence (screenshots, brief notes per item) and any
-     blockers found before submission. Sideload outcome:
-     > Sideload checklist outcome: **TBD by Juan / human reviewer**.
+**`storage`**
 
-9. **Listing submission (Juan).**
-   - After items 1–8 are green, Juan signs in to the Chrome Web Store
-     Developer Dashboard, creates the extension item, uploads
-     `apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip`
-     (or the equivalent zip from a CI artifact at the release tag), pastes
-     the reconciled listing copy and privacy/data-use answers from this
-     document, attaches the approved icons and screenshots, and submits for
-     review.
-   - Record submission timestamp + assigned extension ID here once the
-     dashboard accepts the upload:
-     > Submission timestamp: **TBD**. Extension ID: `TBD until the
-     > Chrome Web Store dashboard assigns one`.
+> Keeps the user's unfinished drafts and saved record links in
+> chrome.storage.local: numeric edit events (time, position, length, input
+> source), the page address and title the user will review before publishing,
+> private draft names, and the token that authenticates the draft's checkpoints
+> with our service. Document text is never stored. Drafts and links stay until
+> the user removes them.
 
-10. **Review outcome + real install URL (Juan).**
-    - Chrome Web Store review currently takes hours to days. Any rejection
-      details should be tracked here for amendment. On approval:
-      > Chrome Web Store listing URL: `TBD until the listing is published`.
-    - Only after the listing URL is real and approved should the site
-      home/docs/README link to it. The current home page is deliberately
-      silent on installation — leave it silent until a real URL exists.
+**`clipboardWrite`**
 
-## What this document is NOT
+> Copies a published record's link to the clipboard when the user clicks Copy
+> link in the side panel. The extension never reads the clipboard.
 
-- It is not a script or automation that can be run by a tool. Every item
-  above either requires a Google account session or human judgement.
-- It is not a substitute for reading
-  `apps/browser-extension/README.md#support-and-remaining-manual-acceptance`. The README is the
-  authoritative sideload walkthrough.
-- It does not record any Chrome Web Store credentials, OAuth tokens, or
-  publisher account secrets. None should ever be committed to this
-  repository. Automation, if introduced later, must follow the
-  `docs/browser-extension-release.md` policy on token rotation and
-  upload-only credentials.
+**`alarms`**
 
-## Historical dependencies before the 0.2.0 UX reset
+> Runs an hourly cleanup that deletes the local edit events and checkpoint
+> tokens of records that have already been published, keeping only the saved
+> link.
 
-- `default-aaaa.7` browser extension behaviour, permissions, manifest, local
-  retention/TTL, capture UI, sign+upload flow — landed and reviewed.
-- `default-aaaa.17` deterministic store zip, package command, versioning,
-  release artifact wiring — landed and reviewed.
+**`contextMenus`**
 
-## Dependencies still open
+> Adds a "Start writing record" item to the right-click menu of editable fields.
+> This is one of the three ways the user starts recording a specific field.
 
-- `.26` items 1–10 above (this list).
-- `.9` end-to-end ship gate consumes the outcome of `.26` and is the next
-  milestone after Juan submits and the listing is approved.
+**`sidePanel`**
+
+> The extension's whole interface lives in Chrome's side panel: starting,
+> stopping and finishing drafts, reviewing what will be published, and the saved
+> links. Nothing is drawn over the web page.
+
+**`webNavigation`**
+
+> Used for two things. When the user starts from the keyboard shortcut or the
+> side panel, getAllFrames lists the frames of the active tab so the extension
+> can find the one frame whose editor has focus, including editors inside
+> iframes. onCommitted tells the extension that a tab navigated, so recording in
+> the old page stops. No browsing history is stored or sent.
+
+**Host permission `<all_urls>` and the content script on `<all_urls>` with `all_frames: true`**
+
+> Users write in text fields on any site: comment boxes, forums, webmail,
+> document editors, often inside iframes from a different origin than the page.
+> The extension cannot know in advance which site the user will write on, so
+> its content script is present on every page and frame, and it stays dormant
+> until the user starts a recording.
+>
+> While dormant, the script only remembers which editable element was last
+> focused or right-clicked (a weak reference kept in memory, never sent
+> anywhere) and answers the side panel's question "is an editor focused in this
+> frame?" with yes or no, plus the draft id when that editor is already
+> recording. It reads no text, creates no session and makes no network request.
+>
+> Recording starts only through an explicit user action on one field: the
+> "Start writing record" context-menu item, the Alt+Shift+W shortcut, or the
+> "Start in focused editor" button in the side panel. The service worker then
+> issues a one-time grant bound to that tab, frame and document, and refuses to
+> register a field without one. From then on the script measures edits in that
+> single field only: numbers for timing, position and length. Other fields stay
+> inactive. Reloading, navigating, Stop or Finish ends recording.
+>
+> activeTab is not sufficient. (1) activeTab grants access to the tab's
+> top-level origin, while many editors live in cross-origin iframes. (2) The
+> side-panel button, the side panel's view of the focused editor, and Resume in
+> a field days later are not activeTab gestures, so none of them would have
+> access. (3) The context-menu target must be the exact element the user
+> right-clicked; a script injected after the click cannot tell which element
+> that was, so a listener has to be present before the menu opens.
+>
+> The host permission also lets the service worker send checkpoints and the
+> finished record to our own service at https://possiblymadebyahuman.com. The
+> extension sends nothing to any other site.
+
+If the dashboard field limits length, use this shorter version (under 1,000
+characters):
+
+> Users write in text fields on any site, often inside cross-origin iframes, so
+> a dormant content script runs on every page and frame. Until the user starts
+> a recording it only tracks which editable element was last focused or
+> right-clicked, in memory; it reads no text and sends nothing. Recording
+> starts only when the user picks one field via the context menu, Alt+Shift+W,
+> or the side panel's Start button, and then measures only timing, positions
+> and lengths of edits in that field. activeTab cannot cover cross-origin
+> iframes, the side-panel start and resume actions, or identifying the exact
+> right-clicked element. The host permission also lets the service worker send
+> checkpoints and the finished record to https://possiblymadebyahuman.com, the
+> only site it contacts.
+
+## Remote code
+
+Answer **No, I am not using remote code.** Every script is bundled in the zip.
+The bundles contain no `eval` or `new Function`, and the only network calls are
+`fetch` POSTs of JSON to the configured service.
+
+## What leaves the browser
+
+Verified against `src/lib/adapters.ts` and the service worker. The only
+destination is the service origin compiled into the build
+(`https://possiblymadebyahuman.com` for store packages).
+
+1. **Checkpoints, while a chosen draft is recording.**
+   `POST /api/observed-sessions/<observed_session_id>/checkpoints` with
+   `{event_count, chain_tip, token?}`: a count of edits and a BLAKE3 hash of the
+   numeric event sequence. The first edit triggers one immediately; after that,
+   every 50 edits or every 60 seconds with new edits, never while idle. The
+   service returns a bearer token that the extension keeps for the next
+   checkpoint.
+2. **The record, only after the user confirms Finish.**
+   `POST /api/records`, or the chunked `/api/record-uploads` path for long
+   records, carrying:
+   - the numeric event log: per edit `seq`, `t`, `op`, `pos`, `del_len`,
+     `ins_len`, `source`;
+   - a manifest with the record hash, session id, producer
+     (`browser-extension` and its version), event count, duration and signed
+     finish time;
+   - the capture context the user reviewed: page URL without query or
+     fragment, page title, field kind and a public label. The user can untick
+     the URL and title and edit the label;
+   - a text-binding commitment (`scheme`, `canonical_length`, salted
+     `commitment`) over the selected text, or the whole field when nothing is
+     selected. It is computed locally at finish. When the scope is unavailable
+     the user can explicitly publish editing activity only, without it;
+   - the checkpoint session id and token, so the service can attach its
+     checkpoints to the record.
+
+Never sent: document text, per-edit inserted text, per-edit hashes, field
+names, ids or labels from the page's markup, private draft names, cookies,
+browsing history, or any identifier of the user or device.
+
+Read locally: the content script reads the chosen field's text inside each
+input event to measure it and discards it when the handler returns. At finish
+it reads the selected text (or whole field) once to compute the commitment.
+Only numbers and the commitment leave the content script.
+
+Stored locally: drafts in `chrome.storage.local` and an IndexedDB event journal
+in the extension's own origin; see the `storage` justification above.
+
+## Review risks
+
+- **Broad host access.** Expect an in-depth review and a longer queue. The
+  justification above is written for it. A rejection for excessive permissions
+  most likely cites this item.
+- **Host permission scope.** `<all_urls>` in `host_permissions` is used for the
+  content script and for the service worker's requests to our service, which
+  sends no CORS headers. Narrowing `host_permissions` to
+  `https://possiblymadebyahuman.com/*` while keeping the content-script match
+  would not change the install warning, but it would read as less broad to a
+  reviewer. That is a manifest change and needs a new release;
+  `tests/browser-extension-package.test.mjs` and
+  `tests/browser-extension-canary.test.mjs` pin the current value.
+- **Name and summary come from the manifest.** The listing title is
+  `possiblymadebyahuman` and the summary is the manifest description. Changing
+  either means editing `manifest.template.json` and shipping a new version.
+- **Privacy policy consistency.** The reviewer compares the privacy tab, the
+  listing and the privacy page. The page at
+  `https://possiblymadebyahuman.com/docs/privacy/` must be deployed with the
+  current text before submitting.
+
+## Optional future automation
+
+Manual submission is the default. Automation needs Juan's approval and a
+documented credential owner. Possible GitHub secrets, subject to the current
+Chrome Web Store API: `CHROME_EXTENSION_ID`, `CHROME_CLIENT_ID`,
+`CHROME_CLIENT_SECRET`, `CHROME_REFRESH_TOKEN`. Prefer upload-only automation,
+keep publishing a separate human step, and document token rotation and
+revocation first. Never commit token values.
