@@ -1,7 +1,8 @@
-# Release 0.4.1 handoff
+# Release 0.4.2 handoff
 
-Release tag `v0.4.1` ships extension 0.4.1, Emacs producer 0.1.3 and the
-application image. Records now describe only the writing process: nothing
+Release tag `v0.4.2` ships extension 0.4.2, Emacs producer 0.1.3 and the
+application image. The `v0.4.1` tag carried the same changes but its release
+checks failed, so it published nothing; 0.4.2 adds the fix below. Records now describe only the writing process: nothing
 about the page, site, file or tool context the text was written in is sent,
 stored or shown.
 
@@ -21,12 +22,15 @@ This release includes:
 - **Record page.** The summary gives only the span and publication date, the
   capture context section is gone, and checkpoint and upload times are listed
   under Timing and counts.
+- **`/write` capture start.** The canvas stays read-only until its draft's
+  session is attached. Before, on a slow machine, keystrokes typed right after
+  the page opened could reach the draft without being recorded.
 
 ## Publication and deployment
 
 The tag workflow runs the reusable checks, publishes
-`ghcr.io/juanre/possiblymadebyahuman:0.4.1` and `:latest`, and attaches
-`possiblymadebyahuman-extension-0.4.1.zip` to the GitHub release. Deploy the
+`ghcr.io/juanre/possiblymadebyahuman:0.4.2` and `:latest`, and attaches
+`possiblymadebyahuman-extension-0.4.2.zip` to the GitHub release. Deploy the
 service's `:latest` image on Render. Migration 008 runs before the service
 reports ready; require `/health` to report the tagged commit and `/ready` to
 succeed. Records published before this release then no longer show where
@@ -36,7 +40,7 @@ The `records.capture_context` column is kept, always empty, so an instance of
 the previous release can keep inserting during the deploy switch. Drop it in a
 later release.
 
-Upload the 0.4.1 ZIP to the Chrome Web Store listing in place of 0.4.0, and
+Upload the 0.4.2 ZIP to the Chrome Web Store listing in place of 0.4.0, and
 update the dashboard as described in
 [`chrome-web-store-listing.md`](chrome-web-store-listing.md): untick Web
 history, paste the updated description, reviewer instructions and `storage`

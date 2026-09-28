@@ -14,7 +14,7 @@ import { canonicalizeTextForBinding, createTextBinding } from "../../../packages
 import { attachWriteCapture } from "./write-capture.ts";
 import { createCoalescingWriter, draftTitle, type DraftRow, type DraftStore } from "./drafts.ts";
 
-type WriteStatus = "ready" | "signing" | "uploaded" | "error" | "storage_error";
+type WriteStatus = "loading" | "ready" | "signing" | "uploaded" | "error" | "storage_error";
 type SaveState = { kind: "saved" } | { kind: "saving" } | { kind: "failed"; reason: string };
 type SavedText = { text: string; tag: DraftRow["text_tag"] };
 
@@ -62,7 +62,9 @@ export function DraftEditor({ registry, store, draft, createSession, onDraftChan
   draftRef.current = draft;
   const currentSessionId = draft.session_ids.at(-1) ?? null;
   const [session, setSession] = useState<SessionRecord | null>(null);
-  const [status, setStatus] = useState<WriteStatus>("ready");
+  // The canvas stays read-only until the draft's session is attached, so no
+  // keystroke can reach the page before capture records it.
+  const [status, setStatus] = useState<WriteStatus>("loading");
   const [message, setMessage] = useState<string>("");
   const [uploaded, setUploaded] = useState<IngestRecordResponse | null>(null);
   const [saveState, setSaveState] = useState<SaveState>({ kind: "saved" });
