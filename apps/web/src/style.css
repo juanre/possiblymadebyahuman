@@ -170,6 +170,38 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
 .record-check-failed strong { color: #a13a3a; }
 .record-check-mark { vertical-align: -2px; margin-right: 6px; }
 .record-check a { white-space: nowrap; }
+/* QR code: a small disclosure under the check line, closed by default. */
+.record-qr { margin: -10px 0 22px; }
+.record-qr > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  color: var(--warm-link);
+  font-size: 0.92rem;
+  cursor: pointer;
+  list-style: none;
+}
+.record-qr > summary::-webkit-details-marker { display: none; }
+.record-qr > summary::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin-left: 2px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 150ms ease;
+}
+.record-qr[open] > summary::before { transform: rotate(45deg); }
+.record-qr > summary:hover { color: var(--warm-link-dim); }
+.record-qr-panel { display: flex; gap: 24px; align-items: flex-start; margin-top: 12px; }
+.record-qr-panel svg { flex: 0 0 auto; width: 168px; height: 168px; border: 1px solid var(--rule); }
+.record-qr-text p { margin: 0 0 10px; font-size: 0.95rem; line-height: 1.5; color: #514a40; }
+.record-qr-text .record-qr-url { color: var(--ink); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.record-qr-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.record-qr-actions .secondary-button { min-height: 36px; padding: 6px 16px; font-size: 0.9rem; }
 .record-limit {
   font-family: var(--serif);
   font-style: italic;
@@ -485,9 +517,10 @@ code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monosp
   .details dt:first-child { margin-top: 0; }
   .observation-commitment { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .measure-popover { max-width: min(260px, 80vw); }
+  .record-qr-panel { flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .binding-result.ok .binding-mark-svg path { animation: none; stroke-dashoffset: 0; }
-  .technical-details > summary::before { transition: none; }
+  .technical-details > summary::before, .record-qr > summary::before { transition: none; }
 }

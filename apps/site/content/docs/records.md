@@ -88,6 +88,8 @@ https://possiblymadebyahuman.com/<short_signature>
 - Reserved route prefixes (`api`, `docs`, `blog`, `write`, `assets`, `record-assets`, `images`, `health`, `ready`, `live`, and similar) are never emitted as short signatures.
 - The full `record_hash` is always shown on the record page and is what browser verification recomputes against.
 
+Every record page also offers a QR code for its address, under **QR code for this record**, to download as SVG or PNG and print on a copy of the text. The page draws it in your browser; no other service is asked to make it.
+
 ## Why a short URL still verifies safely
 
 The short signature is only a friendlier index into the records table. The verifier in the browser recomputes the full BLAKE3 record hash using the stored events and the format’s final-seal rules and compares it to the full `record_hash`. The short signature is an alias; verification uses the full hash, whose collision resistance comes from BLAKE3.
