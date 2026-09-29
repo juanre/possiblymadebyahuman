@@ -183,7 +183,7 @@ export function PagedRecordPage({ summary }: { summary: RecordSummary }) {
           )}
         </section>
       )}
-      <TextBindingSection record={record} verification={verification} />
+      <TextBindingSection record={record} verification={verification} checking={running} />
       <TechnicalDetails open={detailsOpen} onToggle={setDetailsOpen}>
         <VerificationPanel record={record} verification={verification} />
         <TimingAndCounts record={record} />

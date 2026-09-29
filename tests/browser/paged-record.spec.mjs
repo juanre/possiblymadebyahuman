@@ -124,6 +124,9 @@ test("a paged record within the full-view limit verifies on load and reads like 
     "Checking the hash chain in your browser…",
   );
   await expect(page.getByRole("status").filter({ hasText: "Verified 4,096 of 9,000 events" })).toBeVisible();
+  await expect(page.locator(".document-check .check-unavailable")).toHaveText(
+    "The record is being verified; you can check a document as soon as it is.",
+  );
   fixture.release();
   await expect(page.locator(".record-check")).toContainText(
     "Hash chain checked in your browser.",
@@ -158,6 +161,9 @@ test("a paged record over the full-view limit waits for the reader and verifies 
     page.getByRole("button", { name: "Verify full record", exact: true }),
   ).toBeVisible();
   expect(fixture.requests()).toBe(0);
+  await expect(page.locator(".document-check .check-unavailable")).toHaveText(
+    "Verify the full record in the edit timeline above before checking a document against it.",
+  );
   await expect(page.locator(".chain-status")).toContainText(
     "not been downloaded",
   );
