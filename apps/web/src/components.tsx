@@ -264,7 +264,7 @@ export const DATA_INK = { line: "#7a4f2a", fill: "#8b5e34", fillOpacity: 0.2, ba
 // Width given to each pause cut out of the time axis.
 const TIMELINE_BREAK_W = 28;
 
-function EditTimeline({ record }: { record: RecordApiResponse }) {
+export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const timing = recordTimingDetails(record);
   const startingLength = record.stats.starting_length ?? 0;
   const points = useMemo(() => buildTimelinePoints(record.events, startingLength), [record.events, startingLength]);
