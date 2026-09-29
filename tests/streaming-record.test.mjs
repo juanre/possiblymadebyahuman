@@ -253,3 +253,19 @@ test("the paged reader starts a continuation's length from its parent's", async 
   assert.equal(Math.max(...lengths(continued)), 520);
   assert.equal(continued.known_length_events, 20);
 });
+
+test("the paged reader returns the verified events only when asked to keep them", async () => {
+  const { verifyPagedRecord } = await import("../apps/web/src/stream-record.ts");
+  const events = Array.from({ length: 9000 }, (_, i) => event(i));
+  const manifest = manifestFor(events);
+  let tip = null;
+  const tips = events.map(e => (tip = advanceEventHash(tip, e, sessionId, "0.3")));
+  const readPage = async (offset, limit) => {
+    const page = events.slice(offset, offset + limit), next = offset + page.length;
+    return { events: page, total_events: events.length, next_offset: next === events.length ? null : next, chain_tip_before: tips[offset - 1] ?? null, chain_tip_after: tips[next - 1] };
+  };
+  assert.equal((await verifyPagedRecord(manifest, readPage)).events, undefined);
+  const kept = await verifyPagedRecord(manifest, readPage, undefined, 0, true);
+  assert.equal(kept.verification.valid, true);
+  assert.deepEqual(kept.events, events);
+});
