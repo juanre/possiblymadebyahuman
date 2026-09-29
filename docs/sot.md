@@ -473,6 +473,10 @@ unknown_source_count
 inserted_codepoints_total
 deleted_codepoints_total
 largest_atomic_insert_codepoints
+measured_inserted_codepoints
+measured_deleted_codepoints
+measured_largest_insert_codepoints
+unknown_size_edit_count
 
 inter_event_delay_min_ms
 inter_event_delay_p50_ms
@@ -486,6 +490,8 @@ active_time_ms
 idle_time_ms
 long_pause_count
 ```
+
+A size total or maximum is null when any edit's size is unknown. The `measured_` fields hold the same totals over the edits whose sizes are known, and `unknown_size_edit_count` counts the rest, so the record page can show Deleted and Largest insertion over the measured edits with a note (migration 011 fills them for records stored earlier). They are null only for uploads begun before migration 011.
 
 Delay distribution guidance:
 
@@ -560,9 +566,15 @@ autocomplete_event_count            integer not null
 programmatic_event_count            integer not null
 unknown_source_count                integer not null
 
-inserted_codepoints_total           integer not null
-deleted_codepoints_total            integer not null
-largest_atomic_insert_codepoints    integer not null
+starting_length                     integer null default 0
+
+inserted_codepoints_total           integer null
+deleted_codepoints_total            integer null
+largest_atomic_insert_codepoints    integer null
+measured_inserted_codepoints        integer null
+measured_deleted_codepoints         integer null
+measured_largest_insert_codepoints  integer null
+unknown_size_edit_count             integer not null default 0
 
 inter_event_delay_min_ms            bigint null
 inter_event_delay_p50_ms            bigint null
@@ -926,7 +938,7 @@ Extension local retention and resumption:
 - Startup/registration/hourly cleanup removes redundant uploaded event logs and checkpoint credentials after the grace period while preserving the saved link.
 - Reload and navigation detach capture. Select an unfinished draft, focus its field and choose **Resume in chosen field**; the field may contain existing text. Resumption is explicit and restricted to the same site origin, without guessing document identity.
 - Resume preserves session identity, event history, checkpoint credentials and original clock. The next real edit includes the intervening pause. If prior edits may have been missed, its position is unknown (`pos: null`), so the viewer does not invent a continuous document-length curve. Reattachment adds no event.
-- The extension and `/write` opt into `signedFinishTime`; active 0.2 drafts finish as 0.3 without changing event/checkpoint prefixes. Elapsed finish includes a pause followed only by publication. Old 0.1 drafts retain last-edit timing and failed legacy uploads retain their frozen version/hash. After resumption, a text check remains unavailable until another real edit; publication of editing activity alone is allowed.
+- The extension and `/write` opt into `signedFinishTime`; active 0.2 drafts finish as 0.3 without changing event/checkpoint prefixes. Elapsed finish includes a pause followed only by publication. Old 0.1 drafts retain last-edit timing and failed legacy uploads retain their frozen version/hash. When the text may have changed without being captured (a resume or start on existing text with no edit since, or a length change the extension saw but did not capture), finishing records one change of unknown position and size, then signs and binds the current text.
 - Published records cannot be resumed or mutated in place. **Continue in chosen field** explicitly starts a new session with a sealed parent hash and only new mutations. Its clock begins at the prior signed finish; legacy saved anchors use their retained local upload time as an approximate boundary. Saved links remain. Reattachment never infers document identity or claims missed edits were captured.
 - Producer-core retains its configurable default TTL. The extension and `/write` disable automatic draft/link expiry. `/write` restores each draft's text and history on reload, resuming without a gap only when the saved text matches the recorded chain tip, and serializes local storage ownership across tabs. Emacs uses durable private recovery files. All three producers now create format 0.3 signed finishes.
 

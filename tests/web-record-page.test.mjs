@@ -379,6 +379,29 @@ test("record facts show each measurement once, with writing time that leaves out
   assert.equal(facts.Length, "not measured");
 });
 
+test("edits without a recorded size leave the other edits' sizes in the facts, with a note", async () => {
+  const { recordFacts, describeUnknownSizes } = await import("../apps/web/src/record-utils.ts");
+  const record = await summaryFixture();
+  assert.equal(describeUnknownSizes(record.stats), null);
+  Object.assign(record.stats, { event_count: 23_696, deleted_codepoints_total: null, largest_atomic_insert_codepoints: null, observed_final_length: null,
+    measured_deleted_codepoints: 4_210, measured_largest_insert_codepoints: 310, unknown_size_edit_count: 1 });
+  const facts = Object.fromEntries(recordFacts(record).map(({ label, value }) => [label, value]));
+  assert.equal(facts.Deleted, "4,210 characters");
+  assert.equal(facts["Largest insertion"], "310 characters");
+  assert.equal(facts.Length, "not measured");
+  assert.equal(describeUnknownSizes(record.stats), "One edit was recorded without its size, so Deleted and Largest insertion cover the other 23,695.");
+  record.stats.unknown_size_edit_count = 3;
+  assert.equal(describeUnknownSizes(record.stats), "3 edits were recorded without their size, so Deleted and Largest insertion cover the other 23,693.");
+  record.stats.unknown_size_edit_count = 23_696;
+  const noneMeasured = Object.fromEntries(recordFacts(record).map(({ label, value }) => [label, value]));
+  assert.deepEqual([noneMeasured.Deleted, noneMeasured["Largest insertion"]], ["not measured", "not measured"]);
+  assert.equal(describeUnknownSizes(record.stats), null);
+  // Records whose uploads began before the measured totals were kept.
+  Object.assign(record.stats, { unknown_size_edit_count: 1, measured_deleted_codepoints: null, measured_largest_insert_codepoints: null });
+  assert.equal(recordFacts(record).find(fact => fact.label === "Deleted").value, "not measured");
+  assert.equal(describeUnknownSizes(record.stats), null);
+});
+
 test("the server's part in a record is described in one plain sentence", async () => {
   const { describeObservation } = await import("../apps/web/src/record-utils.ts");
   const observation = { state: "observed", commitments: [], checkpoint_count: 12, first_observed_at: null, last_observed_at: null, server_observed_span_ms: 23 * 60_000 };

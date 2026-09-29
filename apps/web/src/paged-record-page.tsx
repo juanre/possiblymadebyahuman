@@ -1,20 +1,40 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   DATA_INK,
+  EditTimeline,
   RecordFooter,
   RecordHeader,
   SignalList,
   TechnicalDetails,
   TextBindingSection,
   TimingAndCounts,
+  TimingFingerprint,
   usePageTitle,
   VerificationAlert,
   VerificationPanel,
 } from "./components.tsx";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 import type { RecordOverview } from "./stream-record.ts";
-import type { VerificationResult } from "../../../packages/format/src/index.ts";
+import type { BufferMutation, VerificationResult } from "../../../packages/format/src/index.ts";
 import { formatCharacters, formatDuration } from "./record-utils.ts";
+
+/**
+ * Paged records with at most this many events are verified as soon as the page
+ * opens, and their verified events are kept in memory so the page can draw the
+ * same edit timeline and writing rhythm as a short record. At the limit the
+ * events and chart geometry take a few tens of megabytes; a record can hold
+ * millions of events, which is too much to keep in a phone's memory, so past the
+ * limit the reader starts verification by hand and sees only the fixed-size
+ * overview.
+ */
+export const FULL_VIEW_EVENT_LIMIT = 250_000;
+
+// Browser tests lower the limit through this global to reach the path for
+// huge records without building one.
+function fullViewEventLimit(): number {
+  const limit = (globalThis as { __pmbahFullViewEventLimit?: unknown }).__pmbahFullViewEventLimit;
+  return typeof limit === "number" ? limit : FULL_VIEW_EVENT_LIMIT;
+}
 
 export type RecordSummary = Omit<RecordApiResponse, "events"> & {
   first_event_t: number;
@@ -27,30 +47,33 @@ type WorkerMessage = {
   message?: string;
   verification?: VerificationResult;
   overview?: RecordOverview;
+  events?: BufferMutation[];
 };
 
 export function PagedRecordPage({ summary }: { summary: RecordSummary }) {
+  const fullView = summary.manifest.event_count <= fullViewEventLimit();
   const [verification, setVerification] = useState<VerificationState>({
     ok: false,
     pending: true,
     messages: ["The event log has not been downloaded and verified."],
   });
   const [count, setCount] = useState(0);
-  const [running, setRunning] = useState(false);
+  const [running, setRunning] = useState(fullView);
   const [overview, setOverview] = useState<RecordOverview>();
+  const [events, setEvents] = useState<BufferMutation[]>();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const worker = useRef<Worker | null>(null);
-  useEffect(() => () => worker.current?.terminate(), []);
   usePageTitle("Signed writing record");
   // Summary timing is separate from event arrays; no fake endpoint events.
-  // One record object per summary, so state tied to it survives re-renders.
+  // One record object per summary and verified event log, so state tied to it
+  // survives re-renders.
   const record = useMemo<RecordApiResponse>(
     () => ({
       ...summary,
-      events: [],
+      events: events ?? [],
       event_times: { first: summary.first_event_t, last: summary.last_event_t },
     }),
-    [summary],
+    [summary, events],
   );
   const verify = () => {
     worker.current?.terminate();
@@ -90,13 +113,26 @@ export function PagedRecordPage({ summary }: { summary: RecordSummary }) {
           messages: value.verification.errors,
           computedRecordHash: value.verification.computedRecordHash,
         });
-        setOverview(value.verification.valid ? value.overview : undefined);
+        const valid = value.verification.valid;
+        setEvents(valid ? value.events : undefined);
+        setOverview(valid && !value.events ? value.overview : undefined);
         setRunning(false);
         current.terminate();
       }
     };
-    current.postMessage({ manifest: summary.manifest, starting_length: summary.stats.starting_length ?? 0 });
+    current.postMessage({
+      manifest: summary.manifest,
+      starting_length: summary.stats.starting_length ?? 0,
+      keep_events: fullView,
+    });
   };
+  useEffect(() => {
+    if (fullView) verify();
+    return () => {
+      worker.current?.terminate();
+      worker.current = null;
+    };
+  }, []);
   const stop = () => {
     worker.current?.terminate();
     worker.current = null;
@@ -111,7 +147,12 @@ export function PagedRecordPage({ summary }: { summary: RecordSummary }) {
     <main className="page-shell record-page">
       <VerificationAlert verification={verification} onShowDetails={() => setDetailsOpen(true)} />
       <RecordHeader record={record} verification={verification} checking={running} onShowDetails={() => setDetailsOpen(true)} />
-      {overview ? (
+      {events ? (
+        <>
+          <EditTimeline record={record} />
+          <TimingFingerprint record={record} />
+        </>
+      ) : overview ? (
         <StreamedOverview overview={overview} durationMs={summary.manifest.duration_ms} />
       ) : (
         <section className="record-section edit-timeline" aria-labelledby="edit-timeline-heading">
@@ -142,7 +183,7 @@ export function PagedRecordPage({ summary }: { summary: RecordSummary }) {
           )}
         </section>
       )}
-      <TextBindingSection record={record} verification={verification} />
+      <TextBindingSection record={record} verification={verification} checking={running} />
       <TechnicalDetails open={detailsOpen} onToggle={setDetailsOpen}>
         <VerificationPanel record={record} verification={verification} />
         <TimingAndCounts record={record} />

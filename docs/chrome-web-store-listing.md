@@ -17,7 +17,7 @@ it there.
 ### Summary
 
 The dashboard takes the summary from the manifest `description` (132 characters
-at most). The 0.4.2 package says:
+at most). The 0.4.3 package says:
 
 > Content-blind writing records for text fields.
 
@@ -207,8 +207,8 @@ Do these in order.
 5. **Fill the Account page.** Publisher display name, a contact email (verify
    it from the email Google sends), and the trader or non-trader declaration
    for the EU. Keep a public email off the listing unless you want one there.
-6. **Download the package** `possiblymadebyahuman-extension-0.4.2.zip` from the
-   GitHub release for tag `v0.4.2`, or the release you are submitting. Run
+6. **Download the package** `possiblymadebyahuman-extension-0.4.3.zip` from the
+   GitHub release for tag `v0.4.6`, or the release you are submitting. Run
    `shasum -a 256` on it and compare with the value in
    [`chrome-web-store-prep.md#package-facts`](chrome-web-store-prep.md#package-facts).
    Upload only a matching file.
@@ -259,7 +259,7 @@ the rejection email.
 These are Juan's decisions; nothing in this repository settles them.
 
 1. **Summary text.** Keep "Content-blind writing records for text fields." for
-   0.4.2, or ship a version with the suggested summary before submitting.
+   0.4.3, or ship a version with the suggested summary before submitting.
 2. **Host permission scope.** Submit with `host_permissions: ["<all_urls>"]`,
    or first narrow it to `https://possiblymadebyahuman.com/*` in a new version
    (the content script keeps `<all_urls>`; two tests pin the current value).

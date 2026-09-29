@@ -9,7 +9,7 @@ import { analyzeEventLog } from "../../packages/analyzers/src/streaming.ts";
 async function pagedFixture(
   page,
   request,
-  { tamper = false, failOnce = false } = {},
+  { tamper = false, failOnce = false, holdAfterFirstPage = false } = {},
 ) {
   const small = await (await request.get("/api/records/bound")).json();
   const count = 9000;
@@ -66,6 +66,8 @@ async function pagedFixture(
     last_event_t: events.at(-1).t,
   };
   let requests = 0;
+  let release = () => {};
+  const held = new Promise((resolve) => (release = resolve));
   await page.route("**/api/records/long-session", (route) =>
     route.fulfill({
       status: 409,
@@ -75,12 +77,13 @@ async function pagedFixture(
   await page.route("**/api/records/long-session/summary", (route) =>
     route.fulfill({ json: summary }),
   );
-  await page.route("**/api/records/*/events?*", (route) => {
+  await page.route("**/api/records/*/events?*", async (route) => {
     requests++;
     const url = new URL(route.request().url());
     const offset = Number(url.searchParams.get("offset"));
     const limit = Number(url.searchParams.get("limit"));
     expect(limit).toBeLessThanOrEqual(4096);
+    if (holdAfterFirstPage && offset > 0) await held;
     if (failOnce && offset > 0) {
       failOnce = false;
       return route.fulfill({ status: 503, json: { error: "temporary" } });
@@ -100,13 +103,55 @@ async function pagedFixture(
       },
     });
   });
-  return { requests: () => requests };
+  return { requests: () => requests, release };
 }
 
-test("large record loads summary without events and verifies in bounded worker pages before allowing document checks", async ({
+// Browser tests lower the full-view limit to reach the path for huge records
+// without building one.
+async function limitFullView(page, limit) {
+  await page.addInitScript((value) => {
+    window.__pmbahFullViewEventLimit = value;
+  }, limit);
+}
+
+test("a paged record within the full-view limit verifies on load and reads like a short record", async ({
   page,
   request,
 }) => {
+  const fixture = await pagedFixture(page, request, { holdAfterFirstPage: true });
+  await page.goto("/long-session");
+  await expect(page.locator(".record-check")).toContainText(
+    "Checking the hash chain in your browser…",
+  );
+  await expect(page.getByRole("status").filter({ hasText: "Verified 4,096 of 9,000 events" })).toBeVisible();
+  await expect(page.locator(".document-check .check-unavailable")).toHaveText(
+    "The record is being verified; you can check a document as soon as it is.",
+  );
+  fixture.release();
+  await expect(page.locator(".record-check")).toContainText(
+    "Hash chain checked in your browser.",
+  );
+  expect(fixture.requests()).toBe(3);
+  await expect(
+    page.getByRole("button", { name: "Verify full record", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.locator(".edit-timeline .length-curve")).toBeVisible();
+  await expect(page.locator(".writing-rhythm path.rhythm-curve")).toBeVisible();
+  await expect(
+    page.getByRole("img", {
+      name: "Verified editing activity across the full record",
+    }),
+  ).toHaveCount(0);
+  await page.locator("details.technical-details > summary").click();
+  await expect(page.locator(".chain-status")).toHaveClass(/ok/);
+  await expect(page.getByRole("heading", { name: "Timing and counts" })).toBeVisible();
+});
+
+test("a paged record over the full-view limit waits for the reader and verifies in bounded worker pages", async ({
+  page,
+  request,
+}) => {
+  await limitFullView(page, 8999);
   const fixture = await pagedFixture(page, request);
   await page.goto("/long-session");
   await expect(
@@ -116,6 +161,9 @@ test("large record loads summary without events and verifies in bounded worker p
     page.getByRole("button", { name: "Verify full record", exact: true }),
   ).toBeVisible();
   expect(fixture.requests()).toBe(0);
+  await expect(page.locator(".document-check .check-unavailable")).toHaveText(
+    "Verify the full record in the edit timeline above before checking a document against it.",
+  );
   await expect(page.locator(".chain-status")).toContainText(
     "not been downloaded",
   );
@@ -136,19 +184,21 @@ test("large record loads summary without events and verifies in bounded worker p
       )
       .count(),
   ).toBe(128);
+  await expect(page.locator(".length-curve")).toHaveCount(0);
+  await expect(page.locator(".writing-rhythm")).toHaveCount(0);
 });
 
-test("tampered paged events never produce a verified binding or overview", async ({
+test("tampered paged events never produce a verified binding or timeline", async ({
   page,
   request,
 }) => {
   await pagedFixture(page, request, { tamper: true });
   await page.goto("/long-session");
-  await page
-    .getByRole("button", { name: "Verify full record", exact: true })
-    .click();
   await expect(page.locator(".chain-status")).toHaveClass(/error/);
   await expect(page.locator(".chain-status")).toContainText("hash");
+  await expect(page.locator(".record-check")).toContainText("Hash chain check failed.");
+  await expect(page.locator(".length-curve")).toHaveCount(0);
+  await expect(page.locator(".writing-rhythm")).toHaveCount(0);
   await expect(
     page.getByRole("img", {
       name: "Verified editing activity across the full record",
@@ -165,9 +215,6 @@ test("a document check on a verified paged record survives later re-renders", as
 }) => {
   await pagedFixture(page, request);
   await page.goto("/long-session");
-  await page
-    .getByRole("button", { name: "Verify full record", exact: true })
-    .click();
   await expect(page.locator(".chain-status")).toHaveClass(/ok/);
   const card = page.getByRole("region", { name: "Check a document", exact: true });
   await card.getByLabel("document to check").fill("bounded reader");
@@ -184,6 +231,18 @@ test("tampered paged events raise the same top-level alert as a full record", as
 }) => {
   await pagedFixture(page, request, { tamper: true });
   await page.goto("/long-session");
+  const alert = page.getByRole("alert");
+  await expect(alert).toHaveCount(1);
+  await expect(alert).toContainText("This record does not verify.");
+});
+
+test("tampered paged events over the full-view limit raise the alert after the reader verifies", async ({
+  page,
+  request,
+}) => {
+  await limitFullView(page, 8999);
+  await pagedFixture(page, request, { tamper: true });
+  await page.goto("/long-session");
   await page
     .getByRole("button", { name: "Verify full record", exact: true })
     .click();
@@ -198,17 +257,16 @@ test("failed page download can retry without mistaking a verified prefix for a c
 }) => {
   await pagedFixture(page, request, { failOnce: true });
   await page.goto("/long-session");
-  await page
-    .getByRole("button", { name: "Verify full record", exact: true })
-    .click();
   await expect(page.locator(".chain-status")).toContainText(
     "could not be loaded",
   );
   // An unfinished download is not a failed check.
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(page.locator(".chain-status")).not.toHaveClass(/error/);
+  await expect(page.locator(".length-curve")).toHaveCount(0);
   await page
     .getByRole("button", { name: "Verify full record", exact: true })
     .click();
   await expect(page.locator(".chain-status")).toHaveClass(/ok/);
+  await expect(page.locator(".edit-timeline .length-curve")).toBeVisible();
 });

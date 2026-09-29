@@ -481,12 +481,28 @@ export function recordFacts(record: SummarySource): RecordFact[] {
   return [
     { label: "Writing time", value: readableDuration(stats.active_time_ms) ?? "under a second" },
     { label: "Edits", value: countFormat.format(stats.event_count) },
-    { label: "Deleted", value: formatCharacters(stats.deleted_codepoints_total) },
+    { label: "Deleted", value: formatCharacters(stats.deleted_codepoints_total ?? measuredSize(stats, stats.measured_deleted_codepoints)) },
     { label: "Pastes", value: stats.paste_event_count === 0 ? "none" : countFormat.format(stats.paste_event_count) },
-    { label: "Largest insertion", value: formatCharacters(stats.largest_atomic_insert_codepoints) },
+    { label: "Largest insertion", value: formatCharacters(stats.largest_atomic_insert_codepoints ?? measuredSize(stats, stats.measured_largest_insert_codepoints)) },
     { label: "Length", value: formatCharacters(stats.observed_final_length) },
     ...(binding ? [{ label: "Signed text", value: formatSignedTextLength(binding.canonical_length) }] : []),
   ];
+}
+
+type SizeStats = Pick<RecordApiResponse["stats"], "event_count" | "unknown_size_edit_count" | "measured_deleted_codepoints" | "measured_largest_insert_codepoints">;
+
+// A size over the edits whose sizes were recorded, when there are some.
+function measuredSize(stats: SizeStats, measured: number | null | undefined): number | null {
+  const unknown = stats.unknown_size_edit_count ?? 0;
+  return measured === null || measured === undefined || unknown >= stats.event_count ? null : measured;
+}
+
+/** Says which edits Deleted and Largest insertion cover when some sizes were not recorded. */
+export function describeUnknownSizes(stats: SizeStats): string | null {
+  const unknown = stats.unknown_size_edit_count ?? 0;
+  if (unknown === 0 || measuredSize(stats, stats.measured_deleted_codepoints) === null) return null;
+  const which = unknown === 1 ? "One edit was recorded without its size" : `${countFormat.format(unknown)} edits were recorded without their size`;
+  return `${which}, so Deleted and Largest insertion cover the other ${countFormat.format(stats.event_count - unknown)}.`;
 }
 
 /** Bound text is measured in the canonical form: letters and digits only. */

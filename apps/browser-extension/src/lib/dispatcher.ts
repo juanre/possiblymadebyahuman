@@ -58,6 +58,16 @@ export class BackgroundDispatcher {
     await this.registry.persist();
   }
 
+  /**
+   * Records that the text changed while it was not being captured, as one
+   * edit of unknown position and size, and saves it with the other events.
+   * Finishing then signs, and may bind, the current text.
+   */
+  async recordUnrecordedChange(session_id: SessionRecord["session_id"]): Promise<void> {
+    this.registry.recordUnrecordedChange(session_id);
+    await this.registry.persist();
+  }
+
   async handle(message: ContentToBackground): Promise<BackgroundResponse> {
     await this.ensureInitialised();
     try {
@@ -171,9 +181,7 @@ export class BackgroundDispatcher {
   }
 
   async #handleSign(message: Extract<ContentToBackground, { kind: "sign_session" }>): Promise<BackgroundResponse> {
-    if (message.text_binding && this.registry.get(message.session_id)?.pending_observation_gap) {
-      return { kind: "error", reason: "This draft has no captured edits since it was resumed. Make an edit before including the current text, or publish only its earlier editing activity." };
-    }
+    if (this.registry.get(message.session_id)?.pending_observation_gap) await this.recordUnrecordedChange(message.session_id);
     const result = await this.#runSignUpload(message.session_id, message.text_binding);
     return { kind: "sign_session_result", result };
   }

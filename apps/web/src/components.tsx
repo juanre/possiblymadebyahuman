@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildActivityColumns, buildDelayDensity, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeObservation, describeRecordSummary, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
+import { buildActivityColumns, buildDelayDensity, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeObservation, describeRecordSummary, describeUnknownSizes, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 const SITE_NAME = "possiblymadebyahuman";
@@ -98,6 +98,7 @@ export function RecordHeader({ record, verification, checking = false, onShowDet
               <div key={fact.label} className="record-fact"><dt>{fact.label}</dt><dd>{fact.value}</dd></div>
             ))}
           </dl>
+          {describeUnknownSizes(record.stats) && <p className="record-facts-note">{describeUnknownSizes(record.stats)}</p>}
           <RecordCheck record={record} verification={verification} checking={checking} onShowDetails={onShowDetails} />
         </>
       ) : (
@@ -263,7 +264,7 @@ export const DATA_INK = { line: "#7a4f2a", fill: "#8b5e34", fillOpacity: 0.2, ba
 // Width given to each pause cut out of the time axis.
 const TIMELINE_BREAK_W = 28;
 
-function EditTimeline({ record }: { record: RecordApiResponse }) {
+export function EditTimeline({ record }: { record: RecordApiResponse }) {
   const timing = recordTimingDetails(record);
   const startingLength = record.stats.starting_length ?? 0;
   const points = useMemo(() => buildTimelinePoints(record.events, startingLength), [record.events, startingLength]);
@@ -648,7 +649,7 @@ function truncateHash(hash: string): string {
   return `${hash.slice(0, 9)}…${hash.slice(-4)}`;
 }
 
-export function TextBindingSection({ record, verification }: { record: RecordApiResponse; verification?: VerificationState }) {
+export function TextBindingSection({ record, verification, checking = false }: { record: RecordApiResponse; verification?: VerificationState; checking?: boolean }) {
   const binding = record.manifest.text_binding;
   if (!binding) {
     return (
@@ -658,10 +659,10 @@ export function TextBindingSection({ record, verification }: { record: RecordApi
       </section>
     );
   }
-  return <DocumentCheckCard record={record} verification={verification} />;
+  return <DocumentCheckCard record={record} verification={verification} checking={checking} />;
 }
 
-export function DocumentCheckCard({ record, verification: suppliedVerification }: { record: RecordApiResponse; verification?: VerificationState }) {
+export function DocumentCheckCard({ record, verification: suppliedVerification, checking = false }: { record: RecordApiResponse; verification?: VerificationState; checking?: boolean }) {
   const binding = record.manifest.text_binding!;
   const sessionId = record.manifest.session_id;
   const verification = useMemo(() => suppliedVerification ?? verifyRecordChain(record), [record, suppliedVerification]);
@@ -677,7 +678,9 @@ export function DocumentCheckCard({ record, verification: suppliedVerification }
       <h2>Check a document</h2>
       <p className="section-intro">Have a copy of this writing? Paste it here to check whether its wording is the text the writer signed with this record. The check runs in your browser; nothing you paste is uploaded.</p>
       {!verification.ok && (verification.pending
-        ? <p className="check-unavailable" role="status">Verify the full record in the edit timeline above before checking a document against it.</p>
+        ? <p className="check-unavailable" role="status">{checking
+          ? "The record is being verified; you can check a document as soon as it is."
+          : "Verify the full record in the edit timeline above before checking a document against it."}</p>
         : <p className="check-unavailable">Checking is unavailable because this record does not verify, so its binding cannot be trusted.</p>)}
       <textarea
         className="binding-check-input"

@@ -18,7 +18,7 @@ account details, `.env*` files, source maps, or local build outputs.
 | Package command | `npm --workspace @possiblymadebyahuman/browser-extension run package` or `make extension-package` |
 | Build output directory | `apps/browser-extension/dist/` |
 | Package output | `apps/browser-extension/dist/possiblymadebyahuman-extension-<version>.zip` |
-| Version source | `apps/browser-extension/package.json` `version` (currently `0.4.2`) |
+| Version source | `apps/browser-extension/package.json` `version` (currently `0.4.3`) |
 | Manifest source | `apps/browser-extension/manifest.template.json`, with version injected at build time |
 | Bundler | `esbuild`, minified, targeting Chrome 120 |
 | Upload base URL | `EXT_BASE_URL`, defaulting to `https://possiblymadebyahuman.com`, normalized before appending `/api/records` |

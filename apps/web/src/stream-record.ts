@@ -29,13 +29,19 @@ export type EventPage = {
 };
 export type StreamProgress = { count: number; overview: RecordOverview };
 
-/** One bounded page and one fixed-size overview; no accumulated event history. */
+/**
+ * One bounded page and one fixed-size overview. The event history is
+ * accumulated only when `keepEvents` is set, so the caller decides whether a
+ * record is small enough to hold in memory.
+ */
 export async function verifyPagedRecord(
   manifest: RecordManifest,
   readPage: (offset: number, limit: number) => Promise<EventPage>,
   progress?: (value: StreamProgress) => void,
   startingLength: number | null = 0,
-): Promise<{ verification: VerificationResult; overview: RecordOverview }> {
+  keepEvents = false,
+): Promise<{ verification: VerificationResult; overview: RecordOverview; events?: BufferMutation[] }> {
+  const events: BufferMutation[] | undefined = keepEvents ? [] : undefined;
   const verifier = new EventStreamVerifier(manifest);
   const duration = Math.max(1, manifest.duration_ms);
   const overview: RecordOverview = {
@@ -66,6 +72,7 @@ export async function verifyPagedRecord(
       throw new Error("Event page does not continue the verified prefix");
     for (const event of page.events) {
       verifier.append(event);
+      events?.push(event);
       overview.first_t ??= event.t;
       overview.last_t = event.t;
       const bin =
@@ -97,5 +104,5 @@ export async function verifyPagedRecord(
       throw new Error("Event page cursor is inconsistent");
     progress?.({ count: verifier.eventCount, overview });
   }
-  return { verification: verifier.finish(), overview };
+  return { verification: verifier.finish(), overview, events };
 }

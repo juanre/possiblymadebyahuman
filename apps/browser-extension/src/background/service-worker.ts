@@ -86,7 +86,7 @@ async function focusedEditor(share?: string, resume?: string, continuation?: str
   if (candidates.length !== 1) return { kind: "start_editor_result", reason: "Click inside the editor, then use Alt+Shift+W or right-click → Start writing record." };
   return startEditor(tab.id, candidates[0]!.frameId, "focused", share, resume, continuation, { id: candidates[0]!.documentId });
 }
-async function freeze(session: string, bind = false, expectedScopeToken?: string): Promise<Snapshot> {
+async function freeze(session: string, purpose: "finish" | "stop" | "discard", bind = false, expectedScopeToken?: string): Promise<Snapshot> {
   if (routing.snapshots[session]) return routing.snapshots[session]!;
   const pending = finishing.get(session); if (pending) return pending;
   const task = (async (): Promise<Snapshot> => {
@@ -104,12 +104,18 @@ async function freeze(session: string, bind = false, expectedScopeToken?: string
     }));
     const changed = results.find((result) => result.kind === "binding_scope_changed");
     if (changed?.kind === "binding_scope_changed") return { binding: null, scope_changed: true, ...changed, reason: "The text selection changed. Review the scope and confirm again." };
+    // Text an editor saw change without capturing it, or that may have changed
+    // before capture resumed or started, is recorded as one change of unknown
+    // position and size before the snapshot freezes, so finishing signs the
+    // current text.
+    const unrecorded = results.some((result) => result.kind === "binding_result" && result.unrecorded_change) ||
+      (purpose === "finish" && dispatcher.registry.get(session)?.pending_observation_gap === true);
+    if (unrecorded && purpose !== "discard") await dispatcher.recordUnrecordedChange(session);
     // Multiple deliberately shared surfaces can differ; never choose one
     // silently for a wording binding.
     let snapshot: Snapshot = { binding: null, reason: "The editor is no longer available for text binding." };
     if (shared) snapshot = { binding: null, reason: "This record spans multiple editors. Save editing activity without a text binding." };
     else if (results.length === 1) snapshot = results[0]!.kind === "binding_result" ? { binding: (results[0] as Extract<ComputeBindingResponse, {kind:"binding_result"}>).text_binding } : { binding: null, reason: (results[0] as Extract<ComputeBindingResponse, {kind:"binding_error"}>).reason };
-    if (bind && dispatcher.registry.get(session)?.pending_observation_gap) snapshot = { binding: null, reason: "This draft has no captured edits since it was resumed. Resume it and make an edit before including the current text, or publish only its earlier editing activity." };
     routing.snapshots[session] = snapshot;
     await persist();
     await Promise.all(routes.map((route) => badge(route.tab)));
@@ -140,7 +146,6 @@ async function currentEditor(windowId: number): Promise<CurrentEditor> {
 async function inspectFinish(session: string): Promise<FinishScopePreview> {
   const routes = routing.routes.filter(route => route.session === session && route.active);
   if (routing.shared?.[session] || routing.routes.filter(route => route.session === session).length > 1) return { scope: "unavailable", reason: "This draft spans multiple editors. Readers can inspect the editing activity but cannot check a copy of the text." };
-  if (dispatcher.registry.get(session)?.pending_observation_gap) return { scope: "unavailable", reason: "Make an edit after resuming to include a text check. You can still publish the earlier editing activity." };
   if (routes.length !== 1) return { scope: "unavailable", reason: "The editor is not active. Readers can still inspect its editing activity." };
   try { return await chrome.tabs.sendMessage(routes[0]!.tab, { kind: "inspect_finish", session_id: session }, target(routes[0]!)) as FinishScopePreview; }
   catch { return { scope: "unavailable", reason: "The editor is no longer available." }; }
@@ -225,7 +230,7 @@ async function routeMessage(message: ContentToBackground, sender: Sender): Promi
   }
   if ("session_id" in message && resuming.has(message.session_id)) return { kind: "error", reason: "This draft is being resumed. Try again when it is ready." };
   if (message.kind === "prepare_finish" || message.kind === "stop_session") {
-    const snapshot = await freeze(message.session_id, message.kind === "prepare_finish" && message.bind, message.kind === "prepare_finish" ? message.expected_scope_token : undefined);
+    const snapshot = await freeze(message.session_id, message.kind === "prepare_finish" ? "finish" : "stop", message.kind === "prepare_finish" && message.bind, message.kind === "prepare_finish" ? message.expected_scope_token : undefined);
     if (message.kind === "stop_session") return { kind: "stop_session_result", ok: true };
     if (snapshot.scope_changed) return { kind: "prepare_finish_result", text_binding: null, scope_changed: true, scope: snapshot.scope, scope_token: snapshot.scope_token, reason: snapshot.reason };
     return { kind: "prepare_finish_result", text_binding: message.bind ? snapshot.binding : null, ...(message.bind && (!snapshot.binding || snapshot.reason) ? { reason: snapshot.reason ?? "The editor has no text to bind. Choose editing activity only to continue." } : {}) };
@@ -235,7 +240,7 @@ async function routeMessage(message: ContentToBackground, sender: Sender): Promi
     if (!snapshot) return { kind: "error", reason: "Finish preparation is required." };
     if (message.text_binding && JSON.stringify(message.text_binding) !== JSON.stringify(snapshot.binding)) return { kind: "error", reason: "The requested binding is not the frozen editor snapshot." };
   }
-  if (message.kind === "discard_session") await freeze(message.session_id);
+  if (message.kind === "discard_session") await freeze(message.session_id, "discard");
   if (message.kind === "sign_session" || message.kind === "retry_failed_upload") {
     if (signing.has(message.session_id)) return { kind: "error", reason: "This record is already being saved." };
     signing.add(message.session_id);

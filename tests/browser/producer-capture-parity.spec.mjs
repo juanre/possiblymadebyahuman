@@ -92,8 +92,11 @@ for (const producer of ["extension", "write"]) {
           const session_id = window.__pmbah.messages.find(message => message.kind === "append_mutation").session_id;
           window.__pmbah.listeners.forEach(listener => listener({ kind: "freeze_session", session_id, bind: true }, {}, resolve));
         }));
-        expect(result.kind).toBe("binding_error");
-        expect(result.reason).toContain("Capture has a gap");
+        // The binding covers the current text ("a🙂" has one letter). The
+        // content script only reports the gap; the service worker records
+        // it as one unknown change before signing the bound current text.
+        expect(result).toEqual({ kind: "binding_result", text_binding: expect.objectContaining({ canonical_length: 1 }), unrecorded_change: true });
+        expect((await events()).at(-1)).not.toEqual(unknown);
       } else {
         // /write records the unseen change and signs; publication itself is not
         // routed here, so the journal shows what the record will contain.
@@ -170,10 +173,8 @@ for (const rich of [false, true]) {
         const session_id = window.__pmbah.messages.find(message => message.kind === "append_mutation").session_id;
         window.__pmbah.listeners.forEach(listener => listener({ kind: "freeze_session", session_id, bind }, {}, resolve));
       }), bind);
-      if (bind) {
-        expect(result.kind).toBe("binding_error");
-        expect(result.reason).toContain("Capture has a gap");
-      } else expect(result).toEqual({ kind: "binding_result", text_binding: null });
+      if (bind) expect(result).toEqual({ kind: "binding_result", text_binding: expect.objectContaining({ canonical_length: "unobservedchange".length }), unrecorded_change: true });
+      else expect(result).toEqual({ kind: "binding_result", text_binding: null, unrecorded_change: true });
       expect(await page.evaluate(() => window.__pmbah.messages.filter(message => message.kind === "append_mutation").length)).toBe(1);
     });
   }

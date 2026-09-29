@@ -384,6 +384,23 @@ test("unknown size statistics display not measured rather than numeric zero or n
   await expect(page.locator('main')).not.toContainText(/\bnull\b|unknown codepoints/);
 });
 
+test("an edit without a recorded size leaves the other edits' sizes in the facts, with a note", async ({ page, request }) => {
+  const record = await (await request.get('/api/records/bound')).json();
+  Object.assign(record.stats, { deleted_codepoints_total: null, largest_atomic_insert_codepoints: null,
+    measured_deleted_codepoints: 3, measured_largest_insert_codepoints: 6, unknown_size_edit_count: 1 });
+  await page.route('**/api/records/bound', route => route.fulfill({ json: record }));
+  await page.goto('/bound');
+  await expect(page.locator('.record-fact').filter({ hasText: 'Deleted' }).locator('dd')).toHaveText('3 characters');
+  await expect(page.locator('.record-fact').filter({ hasText: 'Largest insertion' }).locator('dd')).toHaveText('6 characters');
+  await expect(page.locator('.record-facts-note')).toHaveText(`One edit was recorded without its size, so Deleted and Largest insertion cover the other ${record.stats.event_count - 1}.`);
+});
+
+test("a record whose edit sizes were all recorded has no size note", async ({ page }) => {
+  await page.goto('/bound');
+  await expect(page.locator('.record-fact').first()).toBeVisible();
+  await expect(page.locator('.record-facts-note')).toHaveCount(0);
+});
+
 for (const tamper of ["events", "binding"]) {
   test(`a tampered ${tamper} record cannot produce a successful document check`, async ({ page, request }) => {
     const record = await (await request.get('/api/records/bound')).json();
