@@ -302,6 +302,47 @@ test.describe("browser extension against the local service", () => {
     await panel.close();
   });
 
+  test("a draft finished right after resuming records the unrecorded change and binds the current text", async ({ baseURL }) => {
+    const page = await context.newPage();
+    await page.goto(`${baseURL}/extension-page`);
+    const panel = await context.newPage();
+    await panel.goto(`chrome-extension://${extensionId}/popup.html`);
+    const field = page.getByLabel("plain field");
+    await page.bringToFront();
+    await field.focus();
+    await panel.evaluate(() => document.getElementById("start").click());
+    await expect(panel.locator("#toast")).toContainText("Writing record started");
+    await page.keyboard.type("before");
+    await panel.reload();
+    const draft = panel.locator("article.selected");
+    const sessionId = await draft.getAttribute("data-session-id");
+    await draft.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(draft.getByRole("button", { name: "Resume in chosen field" })).toBeEnabled();
+    await page.reload();
+    await field.fill("offline text");
+    await page.bringToFront();
+    await field.focus();
+    await draft.getByRole("button", { name: "Resume in chosen field" }).evaluate(button => button.click());
+    await expect(panel.locator("#toast")).toContainText("Draft resumed");
+    await panel.reload();
+    await draft.getByRole("button", { name: "Finish & get link" }).click();
+    await expect(panel.getByText("Whole field", { exact: true })).toBeVisible();
+    await panel.locator(".sign-confirm-go").click();
+    await expect(panel.locator("#latest").getByRole("heading", { name: "Record saved" })).toBeVisible();
+    await expect(panel.locator("#latest")).toContainText("Text check included.");
+    const url = await panel.locator("#latest").getByLabel("Complete record link").inputValue();
+    const record = await (await fetch(`${localBaseUrl}/api/records/${new URL(url).pathname.slice(1)}`)).json();
+    expect(record.manifest.session_id).toBe(sessionId);
+    expect(record.manifest.event_count).toBe(7);
+    const { op, pos, del_len, ins_len, source } = record.events[6];
+    expect({ op, pos, del_len, ins_len, source }).toEqual({ op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" });
+    expect(record.manifest.text_binding.canonical_length).toBe(canonicalizeTextForBinding("offline text").length);
+    expect(verifyRecord({ manifest: record.manifest, events: record.events }).valid).toBe(true);
+    expect(JSON.stringify(record)).not.toContain("offline text");
+    await page.close();
+    await panel.close();
+  });
+
   for (const crossOrigin of [false, true]) {
   test(`freezes selected wording in the chosen ${crossOrigin ? "cross-origin" : "same-origin"} iframe, without binding the parent editor`, async ({ baseURL }) => {
     const page = await context.newPage();

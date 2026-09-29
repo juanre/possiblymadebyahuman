@@ -74,7 +74,7 @@ export type ComputeBindingRequest = {
 };
 
 export type ComputeBindingResponse =
-  | { kind: "binding_result"; text_binding: TextBinding | null }
+  | { kind: "binding_result"; text_binding: TextBinding | null; unrecorded_change?: true }
   | { kind: "binding_error"; reason: string }
   | ({ kind: "binding_scope_changed" } & FinishScopePreview);
 

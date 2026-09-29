@@ -2,6 +2,19 @@ import "fake-indexeddb/auto";
 import test from "node:test";
 import assert from "node:assert/strict";
 
+const UNRECORDED_CHANGE = { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" };
+const shape = ({ op, pos, del_len, ins_len, source }) => ({ op, pos, del_len, ins_len, source });
+const journalEvents = (session_id) => new Promise((resolve, reject) => {
+  const request = indexedDB.open("pmbah.extension.journal.v1");
+  request.onerror = () => reject(request.error);
+  request.onsuccess = () => {
+    const db = request.result;
+    const read = db.transaction("events").objectStore("events").getAll();
+    read.onsuccess = () => { db.close(); resolve(read.result.filter(row => row.session_id === session_id).map(row => row.event)); };
+    read.onerror = () => { db.close(); reject(read.error); };
+  };
+});
+
 // Exercise the real worker boundary: content senders must not receive stored
 // checkpoint tokens, drive signing, or register without a browser gesture.
 test("explicit browser activation scopes permission to one document and freeze drains before signing", async () => {
@@ -19,6 +32,7 @@ test("explicit browser activation scopes permission to one document and freeze d
   let knownSession;
   let freezeCalls = 0;
   let skipDrain = false;
+  let freezeReply = { kind: "binding_result", text_binding: null };
   let freezing = false;
   let delayProbe = false;
   let releaseProbe;
@@ -42,6 +56,7 @@ test("explicit browser activation scopes permission to one document and freeze d
         return { active: !freezing };
       }
       if (message.kind === "probe_editor") return { focused: options.frameId === 3 };
+      if (message.kind === "inspect_finish") return { scope: "whole_field", scope_token: "whole" };
       if (message.kind === "start_editor") {
         if (knownSession) return { kind: "start_editor_result", session_id: knownSession };
         registrations++;
@@ -67,7 +82,7 @@ test("explicit browser activation scopes permission to one document and freeze d
           const appended = await invoke({ kind: "append_mutation", session_id: message.session_id, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } }, content);
           assert.equal(appended.kind, "append_mutation_result");
         }
-        return { kind: "binding_result", text_binding: null };
+        return freezeReply;
       }
       throw new Error("unexpected content command");
     } },
@@ -143,18 +158,32 @@ test("explicit browser activation scopes permission to one document and freeze d
     assert.equal(resumed.session_id, fresh.session_id);
     assert.equal(storage["pmbah:explicit-capture:v1"].snapshots[fresh.session_id], undefined, "resume invalidates the frozen snapshot");
     skipDrain = true;
+    assert.equal((await invoke({ kind: "inspect_finish", session_id: fresh.session_id })).scope, "whole_field", "a resumed draft offers its text check before a new edit");
+    const resumedBinding = { scheme: "resumed-text", canonical_length: 12, commitment: "c" };
+    // The content script also saw the field change after resume; the whole
+    // uncaptured interval is still one change of unknown position and size.
+    freezeReply = { kind: "binding_result", text_binding: resumedBinding, unrecorded_change: true };
     const noNewEdit = await invoke({ kind: "prepare_finish", session_id: fresh.session_id, bind: true });
-    assert.match(noNewEdit.reason, /no captured edits since it was resumed/);
-    assert.equal(noNewEdit.text_binding, null);
+    freezeReply = { kind: "binding_result", text_binding: null };
+    assert.equal(noNewEdit.reason, undefined);
+    assert.deepEqual(noNewEdit.text_binding, resumedBinding, "resuming without a new edit still binds the current text");
+    const afterGap = await journalEvents(fresh.session_id);
+    assert.equal(afterGap.length, 2, "one change records the gap before signing");
+    assert.deepEqual(shape(afterGap.at(-1)), UNRECORDED_CHANGE);
     const oldActivity = await invoke({ kind: "prepare_finish", session_id: fresh.session_id, bind: false });
     assert.equal(oldActivity.reason, undefined);
+    assert.equal((await journalEvents(fresh.session_id)).length, 2, "a repeated finish records nothing more");
     assert.equal((await invoke({ kind: "start_focused_editor", resume_session_id: fresh.session_id })).session_id, fresh.session_id);
     skipDrain = false;
     assert.equal((await invoke({ kind: "start_focused_editor", resume_session_id: fresh.session_id })).session_id, undefined, "an already active draft cannot be reattached");
     assert.equal((await invoke({ ...mutation, session_id: fresh.session_id }, { ...content, frameId: 99 })).kind, "error", "resume stays frame scoped");
     assert.equal((await invoke({ ...mutation, session_id: fresh.session_id }, { ...content, documentId: "prior-document" })).kind, "error", "resume stays document scoped");
     assert.equal((await invoke({ ...mutation, session_id: fresh.session_id }, content)).kind, "append_mutation_result");
+    freezeReply = { kind: "binding_result", text_binding: null, unrecorded_change: true };
     await invoke({ kind: "stop_session", session_id: fresh.session_id });
+    freezeReply = { kind: "binding_result", text_binding: null };
+    const stoppedEvents = await journalEvents(fresh.session_id);
+    assert.deepEqual(stoppedEvents.slice(-2).map(shape), [mutation.mutation, UNRECORDED_CHANGE], "a change the content script saw but did not capture is recorded when capture stops");
     handlers.removed(12);
     const afterClose = await invoke({ kind: "list_sessions" });
     assert.equal(afterClose.capture_status[fresh.session_id], "stopped", "closing a tab stops its route");

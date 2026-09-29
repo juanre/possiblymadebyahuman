@@ -436,11 +436,16 @@ async function freezeSession(session_id: string, bind = false, expected_scope_to
     result = { kind: "binding_error", reason: "An edit was still incomplete. The record has stopped; a text binding is unavailable." };
   } else if (!entry.element.isConnected) {
     result = { kind: "binding_error", reason: "The selected editor was closed." };
-  } else if (!bind) {
-    result = { kind: "binding_result", text_binding: null };
   } else {
-    try { result = computeBindingForSession(session_id); }
-    catch (error) { result = { kind: "binding_error", reason: String(error) }; }
+    const unrecorded = hasUncapturedChange(entry.element);
+    if (!bind) result = { kind: "binding_result", text_binding: null };
+    else {
+      try { result = computeBindingForSession(session_id); }
+      catch (error) { result = { kind: "binding_error", reason: String(error) }; }
+    }
+    // Only the fact of the gap leaves here; the worker records it as one
+    // change of unknown position and size before it signs.
+    if (unrecorded && result.kind === "binding_result") result = { ...result, unrecorded_change: true };
   }
   releaseCaptureIndex(entry);
   if (transient) transient.rich_gap = false;
@@ -458,17 +463,19 @@ async function freezeSession(session_id: string, bind = false, expected_scope_to
 function computeBindingForSession(session_id: string): ComputeBindingResponse {
   const element = entries().find((entry) => entry.session_id === session_id)?.element;
   if (!(element instanceof HTMLElement)) return { kind: "binding_result", text_binding: null };
-  const transient = transients.get(element);
-  if (transient) {
-    if (isTextField(element)) transient.text_gap ||= codepointCount(element.value) !== transient.text_length;
-    else transient.rich_gap ||= measureRichText(element).length !== transient.rich_length;
-    if (transient.text_gap || transient.rich_gap) {
-      return { kind: "binding_error", reason: "Capture has a gap. The record has stopped; a text binding is unavailable. You can publish its recorded editing activity without a text binding." };
-    }
-  }
   const text = bindingTextForElement(element);
   if (canonicalizeTextForBinding(text).length === 0) return { kind: "binding_result", text_binding: null };
   return { kind: "binding_result", text_binding: createTextBinding(text, session_id) };
+}
+
+// Compares only lengths: whether the editor changed since its last captured
+// edit, or a gap is still waiting for the next edit to mark it.
+function hasUncapturedChange(element: HTMLElement): boolean {
+  const transient = transients.get(element);
+  if (!transient) return false;
+  if (isTextField(element)) transient.text_gap ||= codepointCount(element.value) !== transient.text_length;
+  else transient.rich_gap ||= measureRichText(element).length !== transient.rich_length;
+  return transient.text_gap || transient.rich_gap;
 }
 
 // Scope inspection reads selection coordinates only, never the field's words.
