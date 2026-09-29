@@ -473,6 +473,10 @@ unknown_source_count
 inserted_codepoints_total
 deleted_codepoints_total
 largest_atomic_insert_codepoints
+measured_inserted_codepoints
+measured_deleted_codepoints
+measured_largest_insert_codepoints
+unknown_size_edit_count
 
 inter_event_delay_min_ms
 inter_event_delay_p50_ms
@@ -486,6 +490,8 @@ active_time_ms
 idle_time_ms
 long_pause_count
 ```
+
+A size total or maximum is null when any edit's size is unknown. The `measured_` fields hold the same totals over the edits whose sizes are known, and `unknown_size_edit_count` counts the rest, so the record page can show Deleted and Largest insertion over the measured edits with a note (migration 011 fills them for records stored earlier). They are null only for uploads begun before migration 011.
 
 Delay distribution guidance:
 
@@ -560,9 +566,15 @@ autocomplete_event_count            integer not null
 programmatic_event_count            integer not null
 unknown_source_count                integer not null
 
-inserted_codepoints_total           integer not null
-deleted_codepoints_total            integer not null
-largest_atomic_insert_codepoints    integer not null
+starting_length                     integer null default 0
+
+inserted_codepoints_total           integer null
+deleted_codepoints_total            integer null
+largest_atomic_insert_codepoints    integer null
+measured_inserted_codepoints        integer null
+measured_deleted_codepoints         integer null
+measured_largest_insert_codepoints  integer null
+unknown_size_edit_count             integer not null default 0
 
 inter_event_delay_min_ms            bigint null
 inter_event_delay_p50_ms            bigint null
