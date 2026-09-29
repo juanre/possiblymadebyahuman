@@ -2,6 +2,7 @@ import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } f
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
 import { buildActivityColumns, buildDelayDensity, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeObservation, describeRecordSummary, describeUnknownSizes, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
+import { recordQrCode, recordQrSvg } from "./record-qr.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 const SITE_NAME = "possiblymadebyahuman";
@@ -100,6 +101,7 @@ export function RecordHeader({ record, verification, checking = false, onShowDet
           </dl>
           {describeUnknownSizes(record.stats) && <p className="record-facts-note">{describeUnknownSizes(record.stats)}</p>}
           <RecordCheck record={record} verification={verification} checking={checking} onShowDetails={onShowDetails} />
+          <RecordQr />
         </>
       ) : (
         <>
@@ -113,6 +115,56 @@ export function RecordHeader({ record, verification, checking = false, onShowDet
       </p>
     </header>
   );
+}
+
+// A QR code for the address of this record page, drawn in the browser so no
+// other service learns which records are opened. Authors print it on a copy of
+// the text so readers can reach the record.
+function RecordQr() {
+  const address = `${window.location.origin}${window.location.pathname.replace(/\/+$/, "")}`;
+  const code = useMemo(() => recordQrCode(address), [address]);
+  const fileName = `possiblymadebyahuman-${window.location.pathname.replace(/^\/+|\/+$/g, "").replace(/[^A-Za-z0-9_-]+/g, "-")}`;
+  const downloadSvg = () => saveFile(new Blob([recordQrSvg(address)], { type: "image/svg+xml" }), `${fileName}.svg`);
+  const downloadPng = () => {
+    const scale = 16;
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = code.size * scale;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "#fff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.scale(scale, scale);
+    context.fillStyle = "#000";
+    context.fill(new Path2D(code.path));
+    canvas.toBlob((blob) => { if (blob) saveFile(blob, `${fileName}.png`); }, "image/png");
+  };
+  return (
+    <details className="record-qr">
+      <summary>QR code for this record</summary>
+      <div className="record-qr-panel">
+        <svg viewBox={`0 0 ${code.size} ${code.size}`} role="img" aria-label={`QR code for ${address}`} shapeRendering="crispEdges">
+          <rect width="100%" height="100%" fill="#fff" />
+          <path fill="#000" d={code.path} />
+        </svg>
+        <div className="record-qr-text">
+          <p>Scan it to open this record. Put it on a printed copy of the text so readers can see how it was written.</p>
+          <p className="record-qr-url">{address}</p>
+          <p className="record-qr-actions">
+            <button type="button" className="secondary-button" onClick={downloadSvg}>Download SVG</button>
+            <button type="button" className="secondary-button" onClick={downloadPng}>Download PNG</button>
+          </p>
+        </div>
+      </div>
+    </details>
+  );
+}
+
+function saveFile(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 // The reader's own check of the record, and what the server saw, stated where
