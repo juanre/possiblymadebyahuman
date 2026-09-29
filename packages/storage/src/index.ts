@@ -22,6 +22,12 @@ export type RecordStats = {
   inserted_codepoints_total: number | null;
   deleted_codepoints_total: number | null;
   largest_atomic_insert_codepoints: number | null;
+  /** Totals over the edits whose sizes are known (null for uploads begun before they were kept). */
+  measured_inserted_codepoints: number | null;
+  measured_deleted_codepoints: number | null;
+  measured_largest_insert_codepoints: number | null;
+  /** Edits whose inserted or deleted size is unknown. */
+  unknown_size_edit_count: number;
   inter_event_delay_min_ms: number | null;
   inter_event_delay_p50_ms: number | null;
   inter_event_delay_p90_ms: number | null;
@@ -476,6 +482,10 @@ export class PostgresRecordStore implements RecordStore {
          s.inserted_codepoints_total,
          s.deleted_codepoints_total,
          s.largest_atomic_insert_codepoints,
+         s.measured_inserted_codepoints,
+         s.measured_deleted_codepoints,
+         s.measured_largest_insert_codepoints,
+         s.unknown_size_edit_count,
          s.starting_length,
          s.observed_final_length,
          s.inter_event_delay_min_ms,
@@ -758,6 +768,10 @@ function rowToStoredRecord(row: RecordRow, observation: RecordObservation): Stor
       inserted_codepoints_total: nullableNumberFromRow(row.inserted_codepoints_total),
       deleted_codepoints_total: nullableNumberFromRow(row.deleted_codepoints_total),
       largest_atomic_insert_codepoints: nullableNumberFromRow(row.largest_atomic_insert_codepoints),
+      measured_inserted_codepoints: nullableNumberFromRow(row.measured_inserted_codepoints),
+      measured_deleted_codepoints: nullableNumberFromRow(row.measured_deleted_codepoints),
+      measured_largest_insert_codepoints: nullableNumberFromRow(row.measured_largest_insert_codepoints),
+      unknown_size_edit_count: numberFromRow(row.unknown_size_edit_count),
       inter_event_delay_min_ms: nullableNumberFromRow(row.inter_event_delay_min_ms),
       inter_event_delay_p50_ms: nullableNumberFromRow(row.inter_event_delay_p50_ms),
       inter_event_delay_p90_ms: nullableNumberFromRow(row.inter_event_delay_p90_ms),
@@ -937,8 +951,9 @@ export async function insertRecordData(client: PostgresQueryable, input: SaveRec
       inserted_codepoints_total, deleted_codepoints_total, largest_atomic_insert_codepoints,
       inter_event_delay_min_ms, inter_event_delay_p50_ms, inter_event_delay_p90_ms,
       inter_event_delay_p95_ms, inter_event_delay_p99_ms, inter_event_delay_max_ms,
-      active_time_ms, idle_time_ms, long_pause_count, delay_histogram, starting_length
-    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb,$27)`,
+      active_time_ms, idle_time_ms, long_pause_count, delay_histogram, starting_length,
+      measured_inserted_codepoints, measured_deleted_codepoints, measured_largest_insert_codepoints, unknown_size_edit_count
+    ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26::jsonb,$27,$28,$29,$30,$31)`,
     [
       input.stats.record_hash,
       input.stats.observed_final_length,
@@ -967,6 +982,10 @@ export async function insertRecordData(client: PostgresQueryable, input: SaveRec
       input.stats.long_pause_count,
       JSON.stringify(input.stats.delay_histogram),
       input.stats.starting_length,
+      input.stats.measured_inserted_codepoints,
+      input.stats.measured_deleted_codepoints,
+      input.stats.measured_largest_insert_codepoints,
+      input.stats.unknown_size_edit_count,
     ],
   );
 

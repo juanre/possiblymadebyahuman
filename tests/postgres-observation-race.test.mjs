@@ -301,6 +301,34 @@ test("Postgres forward migration preserves old records and observations, then st
   assert.deepEqual(migrated.applied.map(({ version }) => version), ["003", "004", "005", "006", "007"]);
   assert.deepEqual(migrated.skipped.map(({ version }) => version), ["001", "002"]);
 
+  // A chunked record stored before migration 011, with one edit of unknown size.
+  const chunked = await freshRecord();
+  chunked.events = [
+    { seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 40, source: "paste" },
+    { seq: 1, t: 200, op: "delete", pos: 5, del_len: 3, ins_len: 0, source: "typing" },
+    { seq: 2, t: 400, op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" },
+    { seq: 3, t: 600, op: "insert", pos: null, del_len: 0, ins_len: 2, source: "typing" },
+  ];
+  chunked.manifest.event_count = 4;
+  chunked.manifest.record_hash = computeRecordHash(chunked.events, chunked.manifest.session_id, chunked.manifest.format_version);
+  const chunkedStats = computeRecordStats(chunked);
+  const chunkedUpload = randomUUID();
+  await pool.query(`insert into records (record_hash, short_signature, format_version, session_id, producer_id, producer_version,
+      producer_capabilities, event_count, duration_ms, created_client_t, ingested_server_t, attestations, events, event_storage)
+    values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12::jsonb, '[]'::jsonb, 'chunks')`,
+  [chunked.manifest.record_hash, "oldchunked", chunked.manifest.format_version, chunked.manifest.session_id, chunked.manifest.producer.id, chunked.manifest.producer.version,
+    JSON.stringify(chunked.manifest.producer.capabilities), 4, chunked.manifest.duration_ms, chunked.manifest.created_client_t, firstAt.toISOString(), "[]"]);
+  await pool.query(`insert into record_stats (record_hash, ${statColumns.join(", ")}, delay_histogram)
+    values ($1, ${statColumns.map((_, i) => `$${i + 2}`).join(", ")}, $${statColumns.length + 2}::jsonb)`,
+  [chunked.manifest.record_hash, ...statColumns.map(column => chunkedStats[column]), JSON.stringify(chunkedStats.delay_histogram)]);
+  await pool.query(`insert into record_uploads (upload_id, manifest, next_seq, analysis_state, finalized_record_hash, published_owner)
+    values ($1, $2::jsonb, 4, '{}'::jsonb, $3, true)`, [chunkedUpload, JSON.stringify(chunked.manifest), chunked.manifest.record_hash]);
+  const chunkedTips = computeEventHashChain(chunked.events, chunked.manifest.session_id, chunked.manifest.format_version);
+  for (const [start, end] of [[0, 3], [3, 4]]) {
+    await pool.query("insert into record_event_chunks (upload_id, start_seq, end_seq, events, chain_tips) values ($1, $2, $3, $4::jsonb, $5)",
+      [chunkedUpload, start, end, JSON.stringify(chunked.events.slice(start, end)), chunkedTips.slice(start, end)]);
+  }
+
   // Earlier releases stored where records were written, in the record and in
   // staged uploads. Migrations 008 and 009 remove it and its column.
   const legacyContext = JSON.stringify({ surface: "browser", label: "Drafts - someone@example.com", browser: { title: "Drafts - someone@example.com" } });
@@ -309,7 +337,11 @@ test("Postgres forward migration preserves old records and observations, then st
   await pool.query("insert into record_uploads (upload_id, manifest, analysis_state) values ($1, $2::jsonb || jsonb_build_object('capture_context', $3::jsonb), '{}'::jsonb)",
     [stagedId, JSON.stringify(staged.manifest), legacyContext]);
   const cleaned = await applyMigrations(pool, migrations);
-  assert.deepEqual(cleaned.applied.map(({ version }) => version), ["008", "009", "010"]);
+  assert.deepEqual(cleaned.applied.map(({ version }) => version), ["008", "009", "010", "011"]);
+  const measured = async hash => (await pool.query(`select measured_inserted_codepoints, measured_deleted_codepoints, measured_largest_insert_codepoints,
+      unknown_size_edit_count from record_stats where record_hash = $1`, [hash])).rows[0];
+  assert.deepEqual(await measured(chunked.manifest.record_hash), { measured_inserted_codepoints: 42, measured_deleted_codepoints: 3,
+    measured_largest_insert_codepoints: 40, unknown_size_edit_count: 1 }, "migration 011 totals the measured edits of chunked records");
   const column = await pool.query("select 1 from information_schema.columns where table_name = 'records' and column_name = 'capture_context'");
   assert.equal(column.rowCount, 0, "records keep no column for where they were written");
   const stagedManifest = (await pool.query("select manifest from record_uploads where upload_id = $1", [stagedId])).rows[0].manifest;
@@ -319,6 +351,9 @@ test("Postgres forward migration preserves old records and observations, then st
   assert.deepEqual(oldAfter.events, old.events);
   assert.equal(oldAfter.stats.observed_final_length, oldStats.observed_final_length);
   assert.equal(oldAfter.stats.starting_length, 0, "records stored before migration 010 started empty");
+  assert.deepEqual([oldAfter.stats.measured_inserted_codepoints, oldAfter.stats.measured_deleted_codepoints, oldAfter.stats.measured_largest_insert_codepoints, oldAfter.stats.unknown_size_edit_count],
+    [oldStats.measured_inserted_codepoints, oldStats.measured_deleted_codepoints, oldStats.measured_largest_insert_codepoints, oldStats.unknown_size_edit_count],
+    "migration 011 totals the measured edits of inline records");
   assert.equal(verifyRecord(JSON.parse(JSON.stringify({ manifest: oldAfter.manifest, events: oldAfter.events }))).valid, true);
   const rawAfter = (await pool.query("select record_hash, events, duration_ms from records where record_hash = $1", [old.manifest.record_hash])).rows[0];
   assert.equal(rawAfter.record_hash, rawBefore.record_hash);

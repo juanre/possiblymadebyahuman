@@ -253,3 +253,26 @@ test("the paged reader starts a continuation's length from its parent's", async 
   assert.equal(Math.max(...lengths(continued)), 520);
   assert.equal(continued.known_length_events, 20);
 });
+
+test("stats total the measured edits and count the ones of unknown size", () => {
+  const edits = [
+    { seq: 0, t: 0, op: "insert", pos: 0, del_len: 0, ins_len: 30, source: "paste" },
+    { seq: 1, t: 150, op: "delete", pos: 10, del_len: 4, ins_len: 0, source: "typing" },
+    { seq: 2, t: 300, op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" },
+    { seq: 3, t: 450, op: "insert", pos: null, del_len: 0, ins_len: 2, source: "typing" },
+  ];
+  const state = createAnalysisAccumulator();
+  for (const e of edits) appendAnalysisEvent(state, e);
+  const stats = finalizeAnalysis(JSON.parse(JSON.stringify(state)), manifestFor(edits), { p50: 150, p90: 150, p95: 150, p99: 150 }).stats;
+  assert.equal(stats.inserted_codepoints_total, null, "the complete total is unknown");
+  assert.equal(stats.measured_inserted_codepoints, 32);
+  assert.equal(stats.measured_deleted_codepoints, 4);
+  assert.equal(stats.measured_largest_insert_codepoints, 30);
+  assert.equal(stats.unknown_size_edit_count, 1);
+
+  const begunEarlier = createAnalysisAccumulator();
+  delete begunEarlier.measured_inserted; delete begunEarlier.measured_deleted; delete begunEarlier.measured_largest;
+  for (const e of edits) appendAnalysisEvent(begunEarlier, e);
+  const earlier = finalizeAnalysis(begunEarlier, manifestFor(edits), { p50: 150, p90: 150, p95: 150, p99: 150 }).stats;
+  assert.deepEqual([earlier.measured_inserted_codepoints, earlier.measured_deleted_codepoints, earlier.measured_largest_insert_codepoints, earlier.unknown_size_edit_count], [null, null, null, 1]);
+});

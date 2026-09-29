@@ -33,6 +33,10 @@ export type AnalysisAccumulator = {
   inserted: number | null;
   deleted: number | null;
   largest: number | null;
+  /** Totals over the edits whose sizes are known; absent in uploads begun before they were kept. */
+  measured_inserted?: number;
+  measured_deleted?: number;
+  measured_largest?: number;
   inserts: number;
   deletes: number;
   replaces: number;
@@ -94,6 +98,9 @@ export function createAnalysisAccumulator(
     inserted: 0,
     deleted: 0,
     largest: 0,
+    measured_inserted: 0,
+    measured_deleted: 0,
+    measured_largest: 0,
     inserts: 0,
     deletes: 0,
     replaces: 0,
@@ -151,6 +158,12 @@ export function appendAnalysisEvent(
     s.largest === null || e.ins_len === null
       ? null
       : Math.max(s.largest, e.ins_len);
+  if (e.ins_len !== null && s.measured_inserted !== undefined && s.measured_largest !== undefined) {
+    s.measured_inserted += e.ins_len;
+    s.measured_largest = Math.max(s.measured_largest, e.ins_len);
+  }
+  if (e.del_len !== null && s.measured_deleted !== undefined)
+    s.measured_deleted += e.del_len;
   if (e.ins_len !== null && e.del_len !== null) {
     s.known_sizes++;
     if (e.ins_len + e.del_len <= s.small_threshold) s.small++;
@@ -208,6 +221,10 @@ export function finalizeAnalysis(
     inserted_codepoints_total: s.inserted,
     deleted_codepoints_total: s.deleted,
     largest_atomic_insert_codepoints: s.largest,
+    measured_inserted_codepoints: s.measured_inserted ?? null,
+    measured_deleted_codepoints: s.measured_deleted ?? null,
+    measured_largest_insert_codepoints: s.measured_largest ?? null,
+    unknown_size_edit_count: s.count - s.known_sizes,
     inter_event_delay_min_ms: s.min_delay,
     inter_event_delay_max_ms: s.max_delay,
     inter_event_delay_p50_ms: percentiles.p50,
