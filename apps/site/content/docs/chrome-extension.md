@@ -53,7 +53,7 @@ If the text-check scope is unavailable or its hash cannot be computed, nothing i
 
 Resume keeps the original session and clock. The next captured edit includes the time away, and the signed finish includes the pause even if you return only to publish. Edits made while capture was stopped are not recovered. The document-length curve stops where measurements no longer establish it; the extension does not pretend the text was unchanged during the pause.
 
-If you finish immediately after resuming without another captured edit, you can publish the earlier editing activity, but cannot attach a check of the current field text. To include that check, resume again and make an edit before finishing. Records you already published never change.
+If the text changed while it was not being recorded, for example while capture was stopped or because a page script changed the field, publishing records that as one change of unknown position and size and includes the current text in the text check. This also applies when you finish right after resuming, before typing anything. The record page shows where it happened. Records you already published never change.
 
 Reloading or navigating to a new page document ends capture authorization. Typing afterward does not automatically start or resume a session. The website must preserve your text: the extension does not store or restore your words.
 

@@ -1217,25 +1217,37 @@ test("dispatcher: failed uploaded-log cleanup cannot erase the durable saved lin
 });
 
 
-test("dispatcher: resume without a new edit can publish earlier activity but cannot bind current text", async () => {
-  const { dispatcher, clock, upload } = makeDispatcher();
-  const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
-  const sid = (await dispatcher.handle(registration)).result.session_id;
-  clock.advance(1000);
-  await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } });
-  clock.advance(60 * 24 * 60 * 60 * 1000);
-  await dispatcher.handle({ ...registration, field_is_empty: false, resume_session_id: sid });
-  const refused = await dispatcher.handle({ kind: "sign_session", session_id: sid, text_binding: createTextBinding("offline text", sid) });
-  assert.equal(refused.kind, "error");
-  assert.match(refused.reason, /no captured edits since it was resumed/);
-  assert.equal(upload.calls.length, 0);
-  const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid });
-  assert.equal(signed.result.kind, "uploaded");
-  assert.equal(upload.calls[0].events.length, 1, "resume and finish do not invent mutations");
-  assert.equal(upload.calls[0].manifest.duration_ms, 60 * 86400000 + 1000, "signed finish includes the pause without inventing an edit");
-  assert.equal(verifyRecord(upload.calls[0]).valid, true);
-  assert.equal(upload.calls[0].manifest.text_binding, undefined);
-});
+const UNRECORDED_CHANGE = { op: "replace", pos: null, del_len: null, ins_len: null, source: "unknown" };
+const mutationShape = ({ op, pos, del_len, ins_len, source }) => ({ op, pos, del_len, ins_len, source });
+
+for (const bind of [true, false]) {
+  test(`dispatcher: resume without a new edit records one unrecorded change and signs when binding=${bind}`, async () => {
+    const { dispatcher, clock, storage, upload } = makeDispatcher();
+    const registration = { kind: "register_field", activation_id: "explicit", tab_id: 1, frame_id: 0, origin_url: "https://a.test", page_path: "/post", descriptor: SAMPLE_DESCRIPTOR, field_is_empty: true };
+    const sid = (await dispatcher.handle(registration)).result.session_id;
+    clock.advance(1000);
+    await dispatcher.handle({ kind: "append_mutation", session_id: sid, mutation: { op: "insert", pos: 0, del_len: 0, ins_len: 1, source: "typing" } });
+    clock.advance(60 * 24 * 60 * 60 * 1000);
+    await dispatcher.handle({ ...registration, field_is_empty: false, resume_session_id: sid });
+    const binding = createTextBinding("offline text", sid);
+    let persistedAtUpload;
+    const postRecord = upload.postRecord.bind(upload);
+    upload.postRecord = async (payload) => { persistedAtUpload = (await storage.read())[0].events.map(mutationShape); return postRecord(payload); };
+    const signed = await dispatcher.handle({ kind: "sign_session", session_id: sid, ...(bind ? { text_binding: binding } : {}) });
+    assert.equal(signed.kind, "sign_session_result");
+    assert.equal(signed.result.kind, "uploaded");
+    const events = upload.calls[0].events.map(mutationShape);
+    assert.equal(events.length, 2, "exactly one change is recorded for the gap");
+    assert.deepEqual(events.at(-1), UNRECORDED_CHANGE);
+    assert.deepEqual(persistedAtUpload, events, "the unrecorded change is saved locally before the upload starts");
+    assert.equal(upload.calls[0].manifest.duration_ms, 60 * 86400000 + 1000, "signed finish includes the pause");
+    assert.equal(verifyRecord(upload.calls[0]).valid, true);
+    if (bind) {
+      assert.deepEqual(upload.calls[0].manifest.text_binding, binding);
+      assert.deepEqual(signed.result.text_binding, binding);
+    } else assert.equal(upload.calls[0].manifest.text_binding, undefined);
+  });
+}
 
 test("dispatcher: interrupted upload restarts frozen and retries the identical durable record", async () => {
   const clock = mutableClock(1000);
