@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Signal } from "../../../packages/format/src/index.ts";
 import type { ObservationCommitment, RecordObservation } from "../../../packages/storage/src/index.ts";
-import { buildActivityColumns, buildDelayDensity, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeObservation, describeRecordSummary, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
+import { buildActivityColumns, buildDelayDensity, buildDelayHistogram, buildTimeAxis, formatPauseLength, layoutTimeAxisLabels, buildLengthStepPoints, recordTimingDetails, RHYTHM_MIN_MS, RHYTHM_MAX_MS, buildTimelinePoints, checkCandidateAgainstBinding, describeBindingMatch, describeObservation, describeRecordSummary, describeUnknownSizes, formatCharacters, formatDelayMs, formatDuration, formatServerObservedSpan, formatSignedTextLength, formatUtcMinute, recordFacts, TEXT_BINDING_DISCLAIMER, timelineLengthScale, verifyRecordChain, type BindingCheckResult, type TimelinePoint } from "./record-utils.ts";
 import type { RecordApiResponse, VerificationState } from "./types.ts";
 
 const SITE_NAME = "possiblymadebyahuman";
@@ -98,6 +98,7 @@ export function RecordHeader({ record, verification, checking = false, onShowDet
               <div key={fact.label} className="record-fact"><dt>{fact.label}</dt><dd>{fact.value}</dd></div>
             ))}
           </dl>
+          {describeUnknownSizes(record.stats) && <p className="record-facts-note">{describeUnknownSizes(record.stats)}</p>}
           <RecordCheck record={record} verification={verification} checking={checking} onShowDetails={onShowDetails} />
         </>
       ) : (
