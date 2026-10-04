@@ -1,0 +1,8 @@
+schemaVersion: 2
+name: pmbah-developer
+description: Implement one assigned PMBAH surface in an isolated worktree with tests and review.
+work: worktree
+capabilities:
+  oats.developer: { from: package }
+knowledge: none
+tasks: none

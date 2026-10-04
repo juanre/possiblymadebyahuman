@@ -1,0 +1,8 @@
+schemaVersion: 2
+name: pmbah-producers-expert
+description: Own shared capture, durable journals, browser extension, /write capture, and Emacs.
+work: workspace
+capabilities:
+  oats.engineering-expert: { from: package }
+knowledge: none
+tasks: none
