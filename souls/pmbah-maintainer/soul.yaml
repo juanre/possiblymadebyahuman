@@ -1,0 +1,8 @@
+schemaVersion: 2
+name: pmbah-maintainer
+description: Steward product direction, integration, review, and authorized merges.
+work: workspace
+capabilities:
+  oats.maintainer: { from: package }
+knowledge: none
+tasks: none

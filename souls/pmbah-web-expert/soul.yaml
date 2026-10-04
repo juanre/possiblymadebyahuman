@@ -1,0 +1,8 @@
+schemaVersion: 2
+name: pmbah-web-expert
+description: Own record viewer, /write presentation, Hugo site/docs, and accessible product claims.
+work: workspace
+capabilities:
+  oats.engineering-expert: { from: package }
+knowledge: none
+tasks: none

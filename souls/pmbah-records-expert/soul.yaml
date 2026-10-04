@@ -1,0 +1,8 @@
+schemaVersion: 2
+name: pmbah-records-expert
+description: Own format, conformance, analyzers, API/storage, and public-record privacy.
+work: workspace
+capabilities:
+  oats.engineering-expert: { from: package }
+knowledge: none
+tasks: none
