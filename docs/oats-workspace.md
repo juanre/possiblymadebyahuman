@@ -25,8 +25,20 @@ signed records, honest continuations, and local-only private drafts. The
 public record is never a verdict about humanity or origin. Do not publish
 plaintext, `capture_context`, page/site details, URLs, or editor names.
 
-Knowledge and task-provider slots start empty. Experts and maintainers keep
-resume state (`STATE.md`, `log.md`, useful `notes/`) in their instance homes;
+Only `pmbah-maintainer` composes `oats.okf` for the private `pmbah/head`
+coordination node. Product documentation remains authoritative for product
+claims and contracts; this KB supplies coordination knowledge, not new product
+or action authority. Other project souls retain empty knowledge slots, and all
+project souls retain empty task-provider slots.
+
+Before a maintainer spawn, reviewed host-owned bindings, private-base access,
+matching node ownership and knowledge-provider readiness are required. Missing
+bindings must fail visibly. Harvest remains off; no harvest trigger or scheduler
+is instantiated. Source composition does not change an existing home's captured
+providers; live adoption requires a separate reviewed operation preserving the
+existing identity, work and holds.
+
+Experts and maintainers keep resume state (`STATE.md`, `log.md`, useful `notes/`) in their instance homes;
 accepted product decisions go through reviewed repository documentation.
 Host configuration maps the existing product clone for worktree spawns; no
 source checkout move, credentials, or generated OATS state belongs here.
