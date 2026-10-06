@@ -4,5 +4,7 @@ description: Steward product direction, integration, review, and authorized merg
 work: workspace
 capabilities:
   oats.maintainer: { from: package }
-knowledge: none
+  oats.okf: { from: package }
+knowledge:
+  harvest: off
 tasks: none

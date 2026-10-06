@@ -25,8 +25,11 @@ member through the workspace view. Delegate tracked changes to a
 `pmbah-developer` with an isolated worktree, including documentation changes.
 Use `oats` operational commands from instance home.
 
-No knowledge provider or task tracker is configured. Consult repository
-docs and this instance's notes; do not assume OKF or a tracker exists. Keep
+Consult the accepted `pmbah/head` OKF node for private coordination knowledge
+and repository docs for product authority. Product docs prevail if they differ.
+Check the current owner handoff for live holds; knowledge does not grant action
+authority. If the knowledge binding is missing, report it; do not assume empty
+knowledge or create a substitute. No task tracker is configured. Keep
 `STATE.md`, append-only `log.md`, and useful `notes/` in instance home, outside
 the work view. At start/resume read them, then verify Git/PR/message state.
 At every task boundary record the goal and requester, success criteria,
